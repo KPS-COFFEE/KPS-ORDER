@@ -1950,7 +1950,32 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     }catch(e){if(root?.isConnected&&chatSurfaceActive()){const error=$('.form-error',root);if(error&&!error.textContent){error.textContent=tr('تعذر تحديث الرسائل مؤقتًا؛ ستتم إعادة المحاولة تلقائيًا.','Messages could not refresh; retrying automatically.');error.dataset.pollFailed='true';}}}finally{conversationPolling=false;}
   }
 
-  async function imageUpload(path,file,extra={}) { if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>5*1024*1024)throw new Error(tr('اختر صورة JPEG أو PNG أو WebP لا تتجاوز 5 MB.','Choose a JPEG, PNG or WebP image up to 5 MB.')); const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result).split(',')[1]);r.onerror=()=>reject(new Error(tr('تعذر قراءة الصورة.','Could not read the image.')));r.readAsDataURL(file);});return mutation(path,{...extra,data_base64:data,content_type:file.type}); }
+  async function prepareUploadImage(file) {
+    const maxBytes=5*1024*1024;
+    if(!file?.size||!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>40*1024*1024)throw new Error(tr('اختر صورة JPEG أو PNG أو WebP بحجم مناسب.','Choose a JPEG, PNG or WebP image of a reasonable size.'));
+    const image=new Image(),url=URL.createObjectURL(file);
+    try{
+      await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(new Error(tr('تعذر قراءة الصورة؛ اختر صورة سليمة.','Could not read the image; choose a valid image.')));image.src=url;});
+      const width=image.naturalWidth,height=image.naturalHeight;
+      if(!width||!height)throw new Error(tr('ملف الصورة غير صالح.','Invalid image file.'));
+      // Keep normal evidence byte-for-byte. Phone originals can exceed the
+      // server's 5 MB / 16 MP limits even when their file type is supported.
+      if(file.size<=maxBytes&&width*height<=16000000)return file;
+      const scale=Math.min(1,2400/Math.max(width,height)),canvas=document.createElement('canvas');
+      canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale));
+      const ctx=canvas.getContext('2d');
+      if(!ctx)throw new Error(tr('تعذر تجهيز الصورة؛ حاول بصورة أصغر.','Could not prepare the image; try a smaller image.'));
+      ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0,canvas.width,canvas.height);
+      const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.85));
+      if(!blob||blob.size>maxBytes)throw new Error(tr('تعذر تصغير الصورة؛ اختر صورة أصغر.','Could not resize the image; choose a smaller image.'));
+      return blob;
+    }finally{URL.revokeObjectURL(url);}
+  }
+  async function imageUpload(path,file,extra={}) {
+    const prepared=await prepareUploadImage(file);
+    const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result).split(',')[1]);r.onerror=()=>reject(new Error(tr('تعذر قراءة الصورة.','Could not read the image.')));r.onabort=()=>reject(new Error(tr('توقفت قراءة الصورة؛ أعد المحاولة.','Image reading stopped; retry.')));r.readAsDataURL(prepared);});
+    return mutation(path,{...extra,data_base64:data,content_type:prepared.type});
+  }
 
   function photoTransition(id,stage){
     let photoId=null,previewUrl=null,captured=null,stream=null,closed=false,generation=0,captureLocation=null;

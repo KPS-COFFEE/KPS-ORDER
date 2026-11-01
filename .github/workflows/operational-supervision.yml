@@ -35,6 +35,7 @@ on:
       - tests/test_hardening_order_pipeline.py
       - tools/rollback_application_overlay/**
       - tests/test_order_interventions.py
+      - tests/test_intervention_customer_messages.py
       - tests/test_employee_permissions.py
       - tests/test_order_financial_cases.py
       - .github/workflows/operational-supervision.yml
@@ -77,9 +78,9 @@ jobs:
           node-version: '22'
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - name: Browser-side workflow and branch routing contracts
-        run: node --test tests/test_intervention_workflow_ui.cjs tests/test_admin_supervision_ui.cjs tests/test_preparation_routing_ui.cjs tests/test_intervention_reachability.cjs tests/test_central_operations_adapter.cjs tests/test_alert_permission_poll.cjs
+        run: node --test tests/test_image_upload_prepare.cjs tests/test_intervention_workflow_ui.cjs tests/test_admin_supervision_ui.cjs tests/test_preparation_routing_ui.cjs tests/test_intervention_reachability.cjs tests/test_central_operations_adapter.cjs tests/test_alert_permission_poll.cjs
       - name: Real database permission, workflow, routing and accounting preservation
-        run: python tools/enbishan_test.py tests/test_admin_operational_supervision.py tests/test_employee_permissions.py tests/test_order_interventions.py tests/test_manager_intervention_evidence_upload.py tests/test_order_financial_cases.py tests/test_preparation_routing.py tests/test_central_operations.py tests/test_branch_printing.py tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py tests/test_order_amendments.py tests/test_collected_rollback_guard.py tests/test_owner_test_void.py tests/test_hardening_order_pipeline.py::test_atomic_checkout_response_matches_existing_projection_and_single_write
+        run: python tools/enbishan_test.py tests/test_admin_operational_supervision.py tests/test_employee_permissions.py tests/test_order_interventions.py tests/test_intervention_customer_messages.py tests/test_manager_intervention_evidence_upload.py tests/test_order_financial_cases.py tests/test_preparation_routing.py tests/test_central_operations.py tests/test_branch_printing.py tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py tests/test_order_amendments.py tests/test_collected_rollback_guard.py tests/test_owner_test_void.py tests/test_hardening_order_pipeline.py::test_atomic_checkout_response_matches_existing_projection_and_single_write
       - name: Require executed database evidence
         run: |
           python - <<'PY'
