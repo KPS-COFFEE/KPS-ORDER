@@ -236,7 +236,7 @@ def test_real_preview_responsive_colors_restriction_banner_and_missing_otp(live_
     context, page, errors = _context(chromium_browser, live_app)
     try:
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(34)
+        expect(page.locator('.product-card')).to_have_count(31)
         expect(page.locator('#branch-select option')).to_have_count(21)
         expect(page.locator('#catalog-notice')).not_to_be_visible()  # Final owner approval, branch operating data still unconfigured.
         expect(page.locator('#banner-content')).to_contain_text('اختبار واجهة — بيانات تجريبية')
@@ -334,7 +334,7 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
     owner_context = None
     try:
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(34)
+        expect(page.locator('.product-card')).to_have_count(31)
         # Persisted general contact uses real HTTP even while this branch is closed
         # for orders. This seeded test session proves UI scope, not SMS delivery.
         page.locator('#legal-contact-button').click()
@@ -1043,7 +1043,7 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
     try:
         # Save an actual source-product draft on the default KPS storefront.
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(34)
+        expect(page.locator('.product-card')).to_have_count(31)
         page.locator('.product-content h3 button').first.click()
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
@@ -1095,7 +1095,7 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
         page.keyboard.press('Escape')
         assert page.evaluate("localStorage.getItem('kps-unconfirmed-basket-v2:kps')")==kps_draft
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(34)
+        expect(page.locator('.product-card')).to_have_count(31)
         expect(page.locator('.cart-line')).to_have_count(1)
         expect(page.locator('#brand-name')).to_contain_text('KPS')
         expect(page.locator('#brand-logo')).to_be_visible()

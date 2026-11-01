@@ -89,7 +89,7 @@ def test_catalog_reads_stops_immediately_and_preserves_scope(client):
     before = client.get(path)
     assert before.status_code == 200
     assert before.headers['cache-control'] == 'no-store'
-    product_id = 'kps-01'
+    product_id = 'kps-08'  # Canonical cold-brew menu identity; promotional IDs remain historical.
     assert next(p for p in before.json()['products'] if p['id'] == product_id)['available']
     with db.tx() as conn:
         conn.execute("UPDATE branches SET settings=jsonb_set(settings,'{product_availability}',%s) WHERE id='kps-branch-1'",

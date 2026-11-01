@@ -146,7 +146,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         conn.execute('UPDATE users SET branch_ids=%s,permissions=%s WHERE id=%s',
                      (db.json(['kps-branch-1','kps-branch-9']),db.json(['accounting_reports','accounting_review']),users['admin']['id']))
         conn.execute("UPDATE app_settings SET settings=settings||'{\"operational_day_start\":\"00:00\"}'::jsonb WHERE brand_id='kps'")
-        product = conn.execute("SELECT id,name,price_halalas FROM products WHERE brand_id='kps' AND coalesce(jsonb_array_length(settings->'option_groups'),0)=0 AND coalesce(jsonb_array_length(settings->'available_cities'),0)=0 ORDER BY id LIMIT 1").fetchone()
+        product = conn.execute("SELECT id,name,price_halalas FROM products WHERE brand_id='kps' AND id='kps-08' AND coalesce(jsonb_array_length(settings->'option_groups'),0)=0 AND coalesce(jsonb_array_length(settings->'available_cities'),0)=0 ORDER BY id LIMIT 1").fetchone()
     contexts, pages, errors, fonts = {}, {}, [], {}
     try:
         for role, user in users.items():
@@ -214,7 +214,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         contexts['guest'], pages['guest'] = customer_context, customer
         errors.append(customer_errors)
         customer.goto('/')
-        expect(customer.locator('.product-card')).to_have_count(34)
+        expect(customer.locator('.product-card')).to_have_count(31)
         fonts['guest'] = _font_evidence(customer)
         customer.locator('#branch-select').select_option('kps-branch-1')
         expect(customer.locator('#branch-directions')).to_have_attribute('href', __import__('re').compile(r'destination=28\.4001%2C45\.9001'))
@@ -452,7 +452,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             response = context.request.get(base+'/api/reports/'+rid+'/renderings/v5/'+fmt)
             assert response.status == 200 and response.body() == contents
         customer.reload()
-        expect(customer.locator('.product-card')).to_have_count(34)
+        expect(customer.locator('.product-card')).to_have_count(31)
         owner.reload()
         expect(owner.locator('#app-shell')).to_be_visible()
         owner.locator('[data-page=reports]').click()

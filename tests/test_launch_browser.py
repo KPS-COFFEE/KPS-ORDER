@@ -48,7 +48,7 @@ def _configure_branches(context, base, headers):
     }
     for identifier, configuration in settings.items():
         _patch(context, base, headers, '/api/admin/branches/' + identifier, {'settings': configuration})
-    _patch(context, base, headers, '/api/admin/products/kps-01', {'settings': {'unavailable_branch_ids': ['kps-branch-3']}})
+    _patch(context, base, headers, '/api/admin/products/kps-08', {'settings': {'unavailable_branch_ids': ['kps-branch-3']}})
 
 
 def _evidence(page, name, full_page=True, **details):
@@ -208,7 +208,7 @@ def test_customer_geolocation_ranks_eligible_branches_filters_cart_delivery_and_
         # Required location does not force selection or hide manual controls.
         page.locator('#branch-select').select_option('kps-branch-1')
         page.locator('input[name=service][value=pickup]').check()
-        page.locator('.product-card[data-product-id="kps-01"] .product-content h3 button').click()
+        page.locator('.product-card[data-product-id="kps-08"] .product-content h3 button').click()
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
         expect(page.locator('#nearest-branches .nearest-branch-card[data-branch-id="kps-branch-3"]')).to_have_count(0)
