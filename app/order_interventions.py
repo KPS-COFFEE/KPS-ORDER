@@ -422,8 +422,13 @@ def read(oid:str,user=Depends(auth.require_roles('owner','delivery_manager','adm
                 ORDER BY m.created_at DESC,m.id DESC LIMIT 100''',
                 (oid,o['brand_id'],o['customer_id'],o['brand_id'],o['customer_id'])).fetchall()
             from .chat import allowed
-            customer_messages=[{'id':m['evidence_id'],'text':m['text'],'created_at':m['message_created_at']}
-                for m in message_rows if m['text'].strip() and allowed(user,m,c,supervision=True)]
+            conversation_access={}
+            for m in message_rows:
+                if not m['text'].strip():continue
+                if m['id'] not in conversation_access:
+                    conversation_access[m['id']]=allowed(user,m,c,supervision=True)
+                if conversation_access[m['id']]:
+                    customer_messages.append({'id':m['evidence_id'],'text':m['text'],'created_at':m['message_created_at']})
         elif user['role']=='driver':
             rows=[{'id':r['id'],'created_at':r['created_at'],'details':{'kind':r['details']['kind'],'pending_role':effective_pending_role(r['details'],has_print,has_collection),'reason_code':r['details']['reason_code'],'contact_result':r['details'].get('contact_result')},'decision':{'status':(r['decision'] or {}).get('status')} if r['decision'] else None} for r in rows if r['actor_id']==user['id']]
         from .operations import safe
