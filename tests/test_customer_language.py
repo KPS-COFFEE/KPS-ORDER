@@ -120,7 +120,7 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
             id:el.dataset.productId,image:el.querySelector('img')?.getAttribute('src'),
             title:el.querySelector('h3')?.textContent}))""")
         assert [(c['id'], c['image']) for c in translated_cards] == [(c['id'], c['image']) for c in source_cards]
-        assert translated_cards[0]['title'] == 'Cold Brew'
+        assert next(card for card in translated_cards if card['id'] == 'kps-08')['title'] == 'Cold Brew'
         assert all(not re.search(r'[\u0600-\u06ff]', c['title']) for c in translated_cards)
         assert 'Drinks' in page.locator('#categories').inner_text()
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
