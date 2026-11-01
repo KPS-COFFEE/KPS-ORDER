@@ -274,6 +274,10 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 from .complimentary_authorizations import check
                 authorization=check(conn,body,order_id=order_id,actor_id=user['id'])
                 quote=complimentary.prepare(quote,body.kind,body.reason,user['id'],authorization)
+            if body.service=='delivery' and quote.get('delivery_period')=='morning':
+                # Decision authority is shared across shifts; retain the prior
+                # application's existing morning preparation and dispatch path.
+                quote['journey_controls_version']=1
             if body.service=='delivery' and quote.get('delivery_period')!='morning':
                 from .journey_timing import capture
                 journey_policy=capture(quote)

@@ -9,7 +9,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARDS = 3
+SHARDS = 9
 
 
 def collect():
@@ -75,7 +75,7 @@ def verify(directory, revision):
     paths = sorted(directory.rglob('full-shard-*.json'))
     manifests = [json.loads(path.read_text()) for path in paths]
     if len(manifests) != SHARDS or {m['shard'] for m in manifests} != set(range(SHARDS)):
-        raise RuntimeError('All three completed shard manifests are required.')
+        raise RuntimeError(f'All {SHARDS} completed shard manifests are required.')
     expected = set(manifests[0]['all_collected'])
     selected = [node for m in manifests for node in m['selected']]
     for m in manifests:

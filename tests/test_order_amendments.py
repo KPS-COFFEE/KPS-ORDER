@@ -45,7 +45,7 @@ def amendment_case(ops,monkeypatch):
     def quote(c,b,for_update=False):
         items=[{'product_id':x.product_id,'name':'قهوة تجربة','quantity':x.quantity,'unit_price_halalas':1000,'line_total_halalas':1000*x.quantity,'units':[],'note':x.note} for x in b.items]
         total=sum(x['line_total_halalas'] for x in items)
-        return {'brand_id':'ops-brand','branch_id':'ops-branch','branch_name':'فرع اختبار','service':b.service,'items':items,'notes':b.notes,'subtotal_halalas':total,'delivery_fee_halalas':0,'total_halalas':total}
+        return {'brand_id':b.brand_id,'branch_id':b.branch_id,'branch_name':'فرع اختبار','service':b.service,'items':items,'notes':b.notes,'subtotal_halalas':total,'delivery_fee_halalas':0,'total_halalas':total}
     monkeypatch.setattr(catalog,'quote_order',quote)
     def make(service='pickup',quantity=2,source=None):
         oid=order(service=service,total=1000*quantity,source=source,items=[{'product_id':'ops-product','name':'قهوة تجربة','quantity':quantity,'unit_price_halalas':1000,'line_total_halalas':1000*quantity,'units':[],'note':''}])

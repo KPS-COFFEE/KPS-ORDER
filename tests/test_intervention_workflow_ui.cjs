@@ -145,3 +145,23 @@ test('manager selects customer chat proof without duplicate image and can escala
  f.elements.kind.value='problem';f.elements.reason_code.value='wrong_address';f.elements.evidence_message_id.value='message-1';f.elements.customer_message_confirmed.value='on';f.elements.escalate.value='on';await h.submit(f);
  assert.equal(h.writes[0].body.evidence_message_id,'message-1');assert.equal(h.writes[0].body.customer_message_confirmed,true);assert.equal(h.writes[0].body.evidence_attachment_id,null);assert.equal(h.writes[0].body.escalate,true);
 });
+
+for(const mode of ['create','resubmit']){
+ test(`${mode} can escalate a failed attachment without retrying the failed file upload`,async()=>{
+  const uploads=[],h=harness(evidenceFormData(mode),'delivery_manager',{uploadEvidence:async file=>{uploads.push(file);throw new Error('تعذر رفع الصورة');}});
+  await h.open();const form=h.forms()[0];fillEvidenceForm(form,mode,picture());
+  await h.submit(form);assert.equal(uploads.length,1);assert.equal(h.writes.length,0);
+  assert.match(h.alert,/تعذر رفع الصورة/);assert.match(form.html,/تعذر الإرفاق — تصعيد للمدير/);
+  form.elements.attachment_unavailable_reason.value='انقطع الاتصال وتعذر رفع صورة المحادثة';
+  await h.submit(form,'attachment_unavailable');
+  assert.equal(uploads.length,1,'exception action must not call the failed upload again');
+  assert.equal(h.writes.length,1);assert.equal(h.writes[0].body.attachment_unavailable,true);
+  assert.equal(h.writes[0].body.evidence_attachment_id,null);assert.equal(h.writes[0].body.escalate,undefined);
+  assert.equal(h.writes[0].body.attachment_unavailable_reason,'انقطع الاتصال وتعذر رفع صورة المحادثة');
+ });
+ test(`${mode} attachment exception requires an explanation and preserves the draft`,async()=>{
+  const h=harness(evidenceFormData(mode),'delivery_manager');await h.open();const form=h.forms()[0];fillEvidenceForm(form,mode);
+  form.elements.attachment_unavailable_reason.value='';await h.submit(form,'attachment_unavailable');
+  assert.equal(h.writes.length,0);assert.equal(h.forms()[0],form);assert.match(h.alert,/سبب تعذر الإرفاق/);
+ });
+}

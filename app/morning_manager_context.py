@@ -36,6 +36,9 @@ for _module in ('operations', 'orders', 'reporting', 'chat', 'order_support',
 ENDPOINTS['operations'].discard('task_transition')
 ENDPOINTS['orders'].update({'authorize_complimentary','revoke_complimentary_authorization','list_complimentary_authorizations','customer_lookup', 'customer_search', 'change_delivery_location'})
 ENDPOINTS['order_requests'] = {'decide'}
+# Same scoped morning order checks run before every intervention endpoint;
+# this adds decisions/evidence to the existing shift without altering dispatch.
+ENDPOINTS['order_interventions'] = {'read','create','pending_cancellations','return_request','resubmit_request','decide'}
 ENDPOINTS['driver_support'] = {'list_requests', 'request_support', 'accept_support', 'resolve_request'}
 ENDPOINTS['order_financial_cases'] = {'cancel','nonreceipt','free_item_return','journey','inbox'}
 ENDPOINTS['financial_clarifications'] = {'listing','decide'}
@@ -127,13 +130,14 @@ def apply(conn, user, request, *, session=False):
     module = getattr(endpoint, '__module__', '').rsplit('.', 1)[-1]
     name = getattr(endpoint, '__name__', '')
     scoped = resolve(conn, user, allow_bootstrap=session or module == 'operations' and name in {'open_shift', 'shifts'})
-    if request.method=='GET' and ((module=='order_financial_cases' and name in {'journey','inbox'}) or (module=='orders' and name=='get_order')):
+    if request.method=='GET' and ((module=='order_financial_cases' and name in {'journey','inbox'}) or (module=='orders' and name=='get_order') or (module=='order_interventions' and name=='read')):
         scoped['_morning_history_read']=True
     if module=='financial_clarifications' and name in {'listing','decide'}:
         # Evidence follow-up reads its immutable source before its own versioned
         # transition; current-duty historical provenance remains mandatory.
         scoped['_morning_history_read']=True
-    if request.method=='POST' and module=='order_financial_cases' and name=='cancel':
+    if request.method=='POST' and ((module=='order_financial_cases' and name=='cancel')
+            or (module=='order_interventions' and name=='decide')):
         scoped['_morning_cancellation_replay']=True
     if request.method=='POST' and module=='driver_incentives' and name=='decide':
         scoped['_morning_cancelled_incentive_review']=True

@@ -36,13 +36,35 @@ def test_manager_resolves_unassigned_order(live_app,chromium_browser,lang,decisi
             page.locator('#dispatch-orders [data-action=assign][data-id="'+oid+'"]').click()
         else:
             page.locator('#modal-body [data-action=reject]').click()
-        if decision=='assign':page.locator('#modal-body [name=driver_shift_id]').select_option(sid)
-        else:page.locator('#modal-body [name=reason]').fill('TEST unable to fulfill')
-        page.locator('#modal-body button[type=submit]').click()
+        if decision=='assign':
+            page.locator('#modal-body [name=driver_shift_id]').select_option(sid)
+            page.locator('#modal-body button[type=submit]').click()
+        else:
+            # Controlled delivery rejection records the operational reason in
+            # the same order-treatment widget, then the manager executes it.
+            # No customer consent/image or higher approver is invented.
+            dialog=page.locator('.intervention-dialog')
+            expect(dialog).to_be_visible()
+            create=dialog.locator('form:has([name=kind])')
+            create.locator('[name=kind]').select_option('cancel')
+            create.locator('[name=reason_code]').select_option('branch_unavailable')
+            create.locator('[name=note]').fill('TEST unable to fulfill')
+            create.locator('button').first.click()
+            approval=dialog.locator('.intervention-request form:has(button[value=approve])')
+            expect(approval.locator('button[value=approve]')).to_be_visible()
+            approval.locator('[name=note]').fill('TEST manager confirmed unable to fulfill before acceptance')
+            approval.locator('button[value=approve]').click()
+            expect(dialog.locator('.intervention-state')).to_have_text('تم الاعتماد')
+            dialog.locator('[data-close]').click()
+            page.locator('#modal-close').click()
         expect(page.locator('#modal')).not_to_be_visible(timeout=20000)
         with db.tx() as c:
             row=c.execute('SELECT preparation_status,delivery_status FROM orders WHERE id=%s',(oid,)).fetchone()
             assert row==({'preparation_status':'accepted','delivery_status':'assigned'} if decision=='assign' else {'preparation_status':'cancelled','delivery_status':'cancelled'})
+            if decision=='reject':
+                original=c.execute("SELECT details FROM order_events WHERE order_id=%s AND event_type='intervention.requested'",(oid,)).fetchone()['details']
+                assert original['reason_code']=='branch_unavailable' and original['note']=='TEST unable to fulfill'
+                assert c.execute('SELECT count(*) n FROM driver_tasks WHERE order_id=%s',(oid,)).fetchone()['n']==0
             c.execute("UPDATE users SET permission_denials='[\"delivery_assign\",\"orders_cancel\"]' WHERE id=%s",(manager['id'],))
         # Same authenticated session must immediately lose both server capabilities.
         for path,body in [('assign',{'driver_shift_id':sid,'accept_order':True}),('preparation',{'status':'cancelled','version':2,'reason':'TEST denied'})]:

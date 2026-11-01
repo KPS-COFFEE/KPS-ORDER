@@ -274,6 +274,11 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 from .complimentary_authorizations import check
                 authorization=check(conn,body,order_id=order_id,actor_id=user['id'])
                 quote=complimentary.prepare(quote,body.kind,body.reason,user['id'],authorization)
+            if body.service=='delivery' and quote.get('delivery_period')=='morning':
+                # The same decision/evidence authority applies in both shifts.
+                # Morning timing, preparation and auto-assignment stay frozen in
+                # their existing quote and dispatch path.
+                quote['journey_controls_version']=1
             if body.service=='delivery' and quote.get('delivery_period')!='morning':
                 from .journey_timing import capture
                 journey_policy=capture(quote)
