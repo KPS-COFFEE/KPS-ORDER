@@ -169,8 +169,8 @@ def quote_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles(
         if not can_approve:delivery_center_scope(conn,user,body.branch_id)
         from . import complimentary
         from .complimentary_authorizations import check
-        authorization=check(conn,body) if body.authorization_id or not can_approve else None
         quote=catalog.quote_order(conn,body,complimentary=True)
+        authorization=check(conn,body,quote=quote) if body.authorization_id or not can_approve else None
         if can_approve:
             from .complimentary_authorizations import validate_approval_scope
             validate_approval_scope(conn,body,user,quote)
@@ -272,7 +272,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             if complimentary_order:
                 from . import complimentary
                 from .complimentary_authorizations import check
-                authorization=check(conn,body,order_id=order_id,actor_id=user['id'])
+                authorization=check(conn,body,order_id=order_id,actor_id=user['id'],quote=quote)
                 quote=complimentary.prepare(quote,body.kind,body.reason,user['id'],authorization)
             if body.service=='delivery' and quote.get('delivery_period')=='morning':
                 # The same decision/evidence authority applies in both shifts.
