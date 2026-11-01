@@ -46,3 +46,11 @@ Independent review plus67scope/morning-dispatch/dual-brand checks,42readiness ch
 ## Release discipline
 
 Source checks are not deployment certification. Required current-HEAD CI/security/image/rollback gates and the normal protected merge must pass before deployment. Verify the final source revision, live deployment, readiness/data-preservation checks and served assets afterwards. Screenshots depict explicitly synthetic acceptance data. File uploads retain their existing protected attachment/retry mechanism; secret and binary-upload bodies are not persisted as JSON drafts.
+
+## Driver camera and native-app status
+
+The owner asked whether the driver camera/WhatsApp actually open. Read-only live GET `/ops` returned HTTP200 with `Permissions-Policy: camera=()`, independently matching the unconditional middleware policy. Existing camera tests overrode JavaScript getUserMedia and could not detect that browser-enforced denial. The policy now permits camera only on successful HTML GET/HEAD responses for exact `/ops` or `/ops.html`; microphone, customer/tracking/API/error pages, frame denial and the CSP retain their protections.
+
+All6 camera browser cases passed, including2 genuine getUserMedia cases at390/1440 with browser fake hardware, real headers, live video/shutter,2saved stage photos and manager download. There is no JavaScript media/API/header override in those2 cases. With the same browser permission grant, the customer page still rejects capture. Independent reviewer repeated2genuine browser cases and48HTTP security tests; the implementing worker also passed91security/contact/replay checks. Camera acceptance is added to the enforced host-security browser gate.
+
+Native Android branch actual HEAD `a7faf5ecd2787e1a28e3be3514cc2383f8e53885` is0.2.6-pilot/versionCode9 and has the camera/file chooser and WhatsApp intent repair (PR149). CI and JVM media-policy tests pass. The prior0.2.6delivery ZIP contains an unsigned APK and explicitly requires the owner signing PC; its evidence says owner signature pending and physical device acceptance not performed. No signing, installation, real-phone camera opening or real WhatsApp opening is claimed here.

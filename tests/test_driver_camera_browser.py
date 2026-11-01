@@ -92,3 +92,79 @@ def test_live_camera_and_recovery_save_real_stage_photos(live_app, chromium_brow
     finally:
         for context in contexts:
             context.close()
+
+
+@pytest.mark.parametrize('width',[390,1440])
+def test_real_browser_media_policy_allows_driver_capture_without_js_override(live_app,width):
+    """Chromium fake hardware exercises native getUserMedia and real headers.
+
+    This is browser emulation, not acceptance of a physical phone or camera app.
+    No media API, business API or response policy is overridden in this test.
+    """
+    from playwright.sync_api import sync_playwright,expect
+    users,branch,order=_role_fixture()
+    with sync_playwright() as runtime:
+        launch={'headless':True,'args':['--no-sandbox','--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']}
+        if os.getenv('TEST_CHROMIUM_EXECUTABLE'):launch['executable_path']=os.environ['TEST_CHROMIUM_EXECUTABLE']
+        browser=runtime.chromium.launch(**launch)
+        contexts=[]
+        try:
+            manager_context,manager,_=_context(browser,live_app);contexts.append(manager_context)
+            driver_context,driver,errors=_context(browser,live_app);contexts.append(driver_context)
+            driver.set_viewport_size({'width':width,'height':1000})
+            driver_context.grant_permissions(['camera'],origin=live_app)
+            _staff_ui_login(manager,users['manager']);_staff_ui_login(driver,users['driver'])
+            response=driver_context.request.get(live_app+'/ops')
+            assert response.status==200
+            assert response.headers['permissions-policy']=='camera=(self), microphone=(), geolocation=(self)'
+            assert response.headers['x-frame-options']=='DENY'
+            assert "frame-ancestors 'none'" in response.headers['content-security-policy']
+            assert driver.evaluate("document.featurePolicy.allowsFeature('camera')") is True
+            assert driver.evaluate("document.featurePolicy.allowsFeature('microphone')") is False
+            assert driver.evaluate("navigator.mediaDevices.getUserMedia.toString().includes('[native code]')")
+            manager_shift=_authenticated_post(manager_context,live_app,'/api/shifts',
+                {'kind':'manager','branch_ids':[branch]})['shift']['id']
+            driver_shift=_authenticated_post(driver_context,live_app,'/api/shifts',
+                {'kind':'driver','branch_ids':[branch],'manager_shift_id':manager_shift,
+                 'vehicle_inspection':_inspection_payload()})['shift']['id']
+            task=_authenticated_post(manager_context,live_app,f'/api/orders/{order}/assign',
+                {'driver_shift_id':driver_shift})['task']['id']
+            _authenticated_post(driver_context,live_app,f'/api/tasks/{task}/transition',{'status':'accepted'})
+            with db.tx() as conn:conn.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(order,))
+            driver.locator('#navigation [data-page=tasks]').click()
+            for stage,action in [('picked_up','[data-action=task-transition][data-status=picked_up]'),
+                                 ('delivered','[data-action=delivered]')]:
+                driver.locator(action).click()
+                expect(driver.locator('#task-camera-live')).to_be_visible()
+                expect(driver.locator('#task-photo-shutter')).to_be_enabled(timeout=10000)
+                expect(driver.locator('#task-native-camera')).to_be_hidden()
+                media=driver.locator('#task-camera-live').evaluate("video=>({width:video.videoWidth,height:video.videoHeight,video:video.srcObject.getVideoTracks().map(t=>t.readyState),audio:video.srcObject.getAudioTracks().length})")
+                assert media['width']>0 and media['height']>0
+                assert media['video']==['live'] and media['audio']==0
+                driver.locator('#task-photo-shutter').click()
+                expect(driver.locator('#task-photo-preview')).to_be_visible()
+                expect(driver.locator('#task-photo-preview')).to_have_js_property('complete',True)
+                assert driver.locator('#task-photo-preview').evaluate('img=>img.naturalWidth')>0
+                _submit_modal(driver)
+                if stage=='picked_up':
+                    _authenticated_post(driver_context,live_app,f'/api/orders/{order}/collect',
+                        {'method':'cash','amount_halalas':1000,'tendered_halalas':1000})
+                    driver.locator('#navigation [data-page=tasks]').click()
+            with db.tx() as conn:
+                photos=conn.execute('SELECT * FROM delivery_photos WHERE order_id=%s',(order,)).fetchall()
+                assert len(photos)==2 and {p['stage'] for p in photos}=={'picked_up','delivered'}
+                assert all(p['uploader_id']==users['driver']['id'] and p['task_id']==task and p['used_at'] for p in photos)
+            for photo in photos:
+                saved=manager_context.request.get(live_app+'/api/delivery-photos/'+photo['id'])
+                assert saved.status==200 and saved.headers['content-type'].startswith('image/')
+                assert saved.body()
+            # The same origin/browser grant must not widen the customer page.
+            customer=driver.goto(live_app+'/',wait_until='domcontentloaded')
+            assert customer.headers['permissions-policy']=='camera=(), microphone=(), geolocation=(self)'
+            assert driver.evaluate("document.featurePolicy.allowsFeature('camera')") is False
+            denied=driver.evaluate("""async()=>{try{const s=await navigator.mediaDevices.getUserMedia({video:true,audio:false});s.getTracks().forEach(t=>t.stop());return 'UNEXPECTED_STREAM';}catch(e){return e.name;}}""")
+            assert denied=='NotAllowedError'
+            assert errors==[]
+        finally:
+            for context in contexts:context.close()
+            browser.close()
