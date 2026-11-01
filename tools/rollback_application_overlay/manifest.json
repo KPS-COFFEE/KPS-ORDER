@@ -15,7 +15,9 @@
     "Explicit preparation-route export and preservation registry with scoped restore relationship verification",
     "Per-route transaction-local compatibility checks protecting mixed-version operational writes",
     "Database amendment invariant rejects old-worker basket revisions while preparation is assigned to another branch, including route-aware transactions; return to source preparation preserves the existing amendment path",
-    "Private manager notification subscriptions and outbox receipts remain exportable and preserved during fallback; prior application does not send manager notices"
+    "Private manager notification subscriptions and outbox receipts remain exportable and preserved during fallback; prior application does not send manager notices",
+    "Shared morning/evening intervention authority, invoice-issuance locks, action-bound attachment exceptions and immutable linked amendment correction notes; prior dispatch and UI remain distinct",
+    "Approved routed amendments retain their existing preparation destination through a bound replacement route; generic new-route creation remains disabled in the prior application"
   ],
   "fallbacks": [
     "b528 prior operations UI and original order search/listing remain distinct from the candidate",
@@ -25,7 +27,7 @@
   ],
   "files": {
     "app/auth.py": "8cd20017516f49cd4c9230e39b8f3c3f156cf50e0cff4d99fa72d9f918a0b07a",
-    "app/branch_printing.py": "822313d48163406b561a2a149843b12c5bf69f9e535a251cbc91b180f6f29452",
+    "app/branch_printing.py": "bd7305f03b20c501532f1d7ce2e12e2ca0f0ee1b3e616cc82a75f28f4ade198a",
     "app/central_operations.py": "f812c632c7bc82667b89a065135ddc4a87498f37a143a72f79fcc47cd1737969",
     "app/collected_order_authority.py": "94b873b3f13ca247cf3255294913fe9a011c8e10a36b4c060a01010991887579",
     "app/db.py": "ba0c5606ece7fcdc86ed7b6bc6103a478f876120aca6fdd0ccd55d6e29886726",
@@ -33,22 +35,27 @@
     "app/dispatch_map.py": "33d033492c0e690a3fd23f46a2625dafe056a15a7d3fe854dea575ce58d98a3e",
     "app/driver_auto_return.py": "bda17455edf76783f9e22b91c2c4934c33e5470f85b570edd0b02a98ab720032",
     "app/driver_work_hours.py": "1bd3116c194dd0fa15f8fa1db9de18e0c6532a50ad495dc068a6f24c57ba4980",
-    "app/employee_permissions.py": "c432ee41d13129743d2914a3b63ab98098706ceab68ffd0c8d250115be05ccde",
+    "app/employee_permissions.py": "b8fb067c08be6dfabd194e7b5f4d7e3203ec6fed7916712d93abadab5ce5b0c5",
     "app/exports.py": "1acb9b5e1a8609b6975cb147be54839dcae6aa60d0c32529561b94c256ec733d",
     "app/main.py": "a7c0095075afec3a436af2a8aa955b834253b140d389f0e4235964a85c5335e1",
     "app/operations.py": "72bb49f3f28574caf7a93e39d99224aa55c691e5d82dc0eb5d0d35479f6baeba",
-    "app/order_amendments.py": "05ee99822e778f50b3d610082d0160a21a1f8a57f0ba727bbc9537c114d9dec0",
+    "app/order_amendments.py": "5e77918032645dd17a809f7e2e8bee9a98c4b6268e0074f8427272d07944b3c1",
     "app/order_financial_cases.py": "f382f44285f52fb5bde76bb60a628ea1893772423f157e5027b774d6f7c086a2",
-    "app/order_interventions.py": "123e8f0a0012f3e356841698c6229af9ad0d24965769444bae0bc6496149887d",
-    "app/orders.py": "02fb5f3aa597a47dadf000730344018d1dfaab60e80aebc4b33e5abb83d9a799",
-    "app/preparation_routing.py": "e9b7fd974b727b932d3722bfb4773e480240c5ca5c4a1448524e1299e5b4e745",
+    "app/order_interventions.py": "091599f274f0fd93a6438504871e629b4f6562293add51ca26cea10cf7338c26",
+    "app/orders.py": "95bb90cbc8d6040ae455e5c5ccaf384b967e6f0e976edbdc6a14af15627c1af3",
+    "app/preparation_routing.py": "7aacd817370cc023e75a246b553328b4b421998115b0aee01bbe10be3d59cdc2",
     "migrations/130_order_preparation_routing.sql": "7d2a5262bd6f432e97205ba473ba07e0da3264884b52b42303fb99d874dbbc0d",
     "migrations/132_manager_notifications.sql": "dcdf9708f0ba7b3e360ff73f873b3130340b87e6ea8c7fa294d0ece59beda2cf",
     "public/assets/central-operations.js": "f6ac0bd9d463494c0ebaa9e4e8cdab508530c0af21ef0cb66841156108301454",
     "public/assets/preparation-routing.css": "6edf6c3293eb965a44aefb9371cf5df834574df13734aa009711999af82e2fd9",
     "public/assets/preparation-routing.js": "a377a799a1fcca94f45bafedea2d92aa224a5a65a10f0d608d9d4ccfa4d132fa",
     "public/ops.html": "696d3931b202468583a4621876781a7661547266c583d07d974f1caeb202f27e",
-    "public/ops.js": "def0ab09bd3d7c9269bfed215e7a4bc71c55561dcc6257af2a2b1774084fdc71"
+    "public/ops.js": "def0ab09bd3d7c9269bfed215e7a4bc71c55561dcc6257af2a2b1774084fdc71",
+    "app/fiscal_issuance.py": "0b94f7f9db201fe83c869335e0ee14c33ff2e288ba594584fc4588c2c35f2b7b",
+    "migrations/133_fiscal_amendment_corrections.sql": "ef912f22c26e5dec70bdb7d06fa902a6261018eadc1293ace749cb22b9be4559",
+    "app/morning_manager_context.py": "f72303ce025577d7df9dd09e142c594649be7f4bbba2d83cdf2a69591cf76911",
+    "app/order_issue_ownership.py": "f4b7be528c379ae7cd53c9538df57d8d68ef6dea55aa52e2c1ec3e17269b6899",
+    "migrations/134_routed_approved_amendments.sql": "de596fed07f23b700c5f8d774e6e96f107c66e19b8d1db98cba0c4fcf845d7d7"
   },
   "rollback_feature_policy": {
     "operational_after_feature_use": false,

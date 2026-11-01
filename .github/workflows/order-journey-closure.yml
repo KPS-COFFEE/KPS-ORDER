@@ -1,0 +1,71 @@
+name: Order journey permissions and financial closure
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+permissions:
+  contents: read
+concurrency:
+  group: order-journey-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+jobs:
+  journey-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_kps_journey
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U kps_test -d test_kps_journey" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-synthetic-only@127.0.0.1:5432/test_kps_journey
+      APP_ENV: testing
+      OTP_PROVIDER: disabled
+      EMAIL_PROVIDER: disabled
+      TEST_BROWSER: '1'
+      KPS_SUPERVISION_SCREENSHOTS: evidence/screenshots
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock -r requirements-security-tests.lock
+      - run: python -m playwright install --with-deps chromium
+      - name: Browser operation contracts
+        run: node --test tests/test_intervention_workflow_ui.cjs tests/test_intervention_reachability.cjs tests/test_driver_collection_ui.cjs tests/test_collection_exception_ui.cjs
+      - name: Current journey and morning preservation
+        run: >-
+          python -m pytest -q tests/test_order_journey_closure.py tests/test_order_journey_concurrency.py
+          tests/test_order_journey_visual_preservation.py tests/test_order_issue_ownership.py
+          tests/test_fiscal_amendment_corrections.py tests/test_routed_amendment_corrections.py tests/test_order_interventions.py
+          tests/test_intervention_customer_messages.py tests/test_order_amendments.py
+          tests/test_order_financial_cases.py tests/test_order_financial_case_morning.py
+          tests/test_morning_manager_context_postgres.py tests/test_morning_manager_parity_postgres.py
+          tests/test_morning_auto_dispatch_postgres.py tests/test_morning_manager_fallback_postgres.py tests/test_split_payment.py
+          tests/test_split_payment_browser.py tests/test_amendment_editor_browser.py
+          --junitxml=evidence/journey.xml
+      - name: Require executed acceptance
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as E
+          cases=list(E.parse('evidence/journey.xml').getroot().iter('testcase'))
+          assert cases and not any(c.find(t) is not None for c in cases for t in ('failure','error','skipped'))
+          print('Passing executed journey cases:',len(cases))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: order-journey-${{ github.event.pull_request.head.sha }}
+          path: evidence/

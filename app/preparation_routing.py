@@ -96,11 +96,69 @@ def guard_source_preparation(conn, order, status):
         raise db.error(409, 'PREPARATION_TARGET_QUEUE', 'التجهيز مسند لفرع آخر؛ استخدم قائمة تحضير الفرع المكلف.')
 
 
-def guard_amendment(conn, order):
+def guard_amendment(conn, order, *, allow_routed=False):
     """A revised basket cannot silently invalidate a preparation assignment."""
     route = current_route(conn, order)
     if route and route['target_branch_id'] != order['branch_id']:
+        if allow_routed:
+            pickup_branch_id(conn, order)
+            return
         raise db.error(409, 'PREPARATION_ROUTE_AMENDMENT', 'أعد التحضير لفرع الطلب قبل تعديل السلة؛ التحويل بعد الطباعة له معالجة مستقلة.')
+
+
+def amendment_route(conn, order, actor, amendment_id, proposal):
+    """Retain the exact preparation destination while refreshing its revision.
+
+    A routed basket is revalidated at its physical branch, without repricing or
+    changing the original seller. The matching immutable revision must already
+    exist; DB guards independently require this new route during order update.
+    """
+    route = current_route(conn, order)
+    if not route or route['target_branch_id'] == order['branch_id']:
+        return order.get('preparation_route_id')
+    pickup_branch_id(conn, order)
+    revision = conn.execute('SELECT * FROM order_revisions WHERE order_id=%s AND amendment_id=%s AND revision=%s',
+        (order['id'],amendment_id,order.get('amendment_revision',0)+1)).fetchone()
+    if (not revision or revision['after_snapshot'] != proposal['snapshot']
+            or revision['after_customer'] != proposal['customer']):
+        raise db.error(409,'PREPARATION_ROUTE_AMENDMENT','يلزم اعتماد نفس تعديل الطلب قبل تحديث فرع التحضير.')
+    from .collected_order_authority import current_actor
+    reviewer = conn.execute('SELECT * FROM users WHERE id=%s', (revision['approved_by'],)).fetchone()
+    reviewer = current_actor(conn,reviewer,order['brand_id'],lock=True) if reviewer else None
+    target = route['target_branch_id']
+    if not reviewer or not _scope(reviewer,order['brand_id'],target):
+        raise db.error(403,'PREPARATION_PICKUP_SCOPE','معتمد التعديل لا يغطي فرع التحضير الحالي.')
+    branches=conn.execute('SELECT * FROM branches WHERE brand_id=%s AND id=ANY(%s) ORDER BY id FOR SHARE',
+        (order['brand_id'],sorted({order['branch_id'],target}))).fetchall()
+    by_id={b['id']:b for b in branches}
+    brand=conn.execute('SELECT * FROM brands WHERE id=%s AND active FOR SHARE',(order['brand_id'],)).fetchone()
+    if not brand or set(by_id)!={order['branch_id'],target}:
+        raise db.error(404,'PREPARATION_BRANCH_NOT_FOUND','فرع التحضير غير متاح.')
+    revised={**order,'snapshot':proposal['snapshot'],'customer':proposal['customer'],
+        **{key:proposal['snapshot'][key] for key in ('subtotal_halalas','delivery_fee_halalas','total_halalas')}}
+    options=_candidates(conn,revised,reviewer,by_id[order['branch_id']],by_id[target],brand['settings'],lock=True)
+    selected=next((b for b in options if b['id']==target),None)
+    if not selected or not selected['available']:
+        raise db.error(409,selected['code'] if selected else 'PREPARATION_BRANCH_NOT_FOUND',
+            selected['reason'] if selected else 'فرع التحضير غير متاح.')
+    identifier=db.new_id('prep_route_')
+    evidence={'amendment_id':amendment_id,'previous_route_id':route['id'],
+        'after_snapshot':proposal['snapshot'],'after_customer':proposal['customer'],
+        'order_snapshot_digest':db.digest(proposal['snapshot']),
+        'subtotal_halalas':revised['subtotal_halalas'],'delivery_fee_halalas':revised['delivery_fee_halalas'],
+        'total_halalas':revised['total_halalas'],'preserves_preparation_destination':True}
+    reason='تحديث نسخة الطلب المعتمدة لفرع التحضير الحالي'
+    conn.execute('INSERT INTO order_preparation_routes(id,order_id,brand_id,source_branch_id,previous_branch_id,target_branch_id,'
+        'order_version,amendment_revision,requested_by,reason,evidence) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+        (identifier,order['id'],order['brand_id'],order['branch_id'],target,target,
+         order['version']+1,revision['revision'],reviewer['id'],reason,db.json(evidence)))
+    _mark_runtime(conn,identifier)
+    details={'route_id':identifier,'previous_route_id':route['id'],'amendment_id':amendment_id,
+        'preparation_branch_id':target,'source_branch_id':order['branch_id'],
+        'revision':revision['revision'],'action_required':'review_approved_revision', 'financial_change':False}
+    db.event(conn,order['id'],actor['id'],'preparation.amendment_routed',details)
+    db.audit(conn,actor['id'],'order.preparation_amendment_routed','order',order['id'],details)
+    return identifier
 
 
 def _staff(user, *, write=False):
@@ -370,7 +428,7 @@ def _prep_order(conn, oid, user, *, lock=False):
 
 
 def _preparation_view(conn, order):
-    result = {key: order.get(key) for key in ('id', 'brand_id', 'order_no', 'version', 'created_at', 'preparation_status', 'delivery_status')}
+    result = {key: order.get(key) for key in ('id', 'brand_id', 'order_no', 'version', 'created_at', 'preparation_status', 'delivery_status', 'amendment_revision')}
     snapshot = order.get('snapshot') or {}
     def options(item):
         return [{str(code): {'name': group.get('name', ''),
@@ -435,6 +493,17 @@ def prepare(oid: str, body: PreparationUpdate, user=Depends(auth.current_user),
             if order['snapshot'].get('delivery_workflow') == 'manager_dispatch':
                 raise db.error(409, 'PREPARATION_MANAGER_DISPATCH', 'هذا الطلب يعمل بتجهيز مدير التوصيل واستلام السائق.')
             from .order_amendments import guard
+            revision=order.get('amendment_revision',0)
+            if revision and not conn.execute("SELECT 1 FROM order_revision_receipts WHERE order_id=%s AND revision=%s AND kind='branch'",(oid,revision)).fetchone():
+                # This existing preparation action confirms the basket currently
+                # displayed in the target-only queue. The locked version above
+                # prevents an older card from acknowledging a later revision.
+                conn.execute("INSERT INTO order_revision_receipts(order_id,revision,actor_id,kind) VALUES(%s,%s,%s,'branch') ON CONFLICT DO NOTHING",(oid,revision,user['id']))
+                receipt_details={'kind':'branch','revision':revision,'version':body.version,
+                    'route_id':route['id'],'branch_id':route['target_branch_id'],
+                    'source':'target_preparation_confirmation','note':'Confirmed displayed approved basket before preparation action'}
+                db.event(conn,oid,user['id'],'amendment.received',receipt_details)
+                db.audit(conn,user['id'],'amendment.received','order',oid,receipt_details)
             guard(conn, order)
             if body.status in ('preparing', 'ready'):
                 from .branch_payments import require_verified

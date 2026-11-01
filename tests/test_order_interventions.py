@@ -6,11 +6,11 @@ from app.order_interventions import controlled,high_authority,RequestBody,eviden
 from test_operations import ops
 
 
-def test_control_is_prospective_evening_delivery_only():
+def test_control_is_prospective_delivery_in_both_shifts():
     base={'service':'delivery','snapshot':{'journey_controls_version':1}}
     assert controlled(base)
     assert not controlled({'service':'delivery','snapshot':{}})
-    assert not controlled({**base,'snapshot':{'journey_controls_version':1,'delivery_period':'morning'}})
+    assert controlled({**base,'snapshot':{'journey_controls_version':1,'delivery_period':'morning'}})
     assert not controlled({**base,'service':'pickup'})
 
 
@@ -149,12 +149,12 @@ def test_operational_reason_cannot_be_relabelled_as_customer_cancellation(ops):
     with db.tx() as c:assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='ready'
 
 
-def test_explicit_activation_covers_existing_evening_actions_without_rewriting_snapshots(monkeypatch):
+def test_explicit_activation_covers_both_shift_actions_without_rewriting_snapshots(monkeypatch):
     monkeypatch.setenv('DELIVERY_INTERVENTIONS_ENFORCED','true')
     legacy={'service':'delivery','snapshot':{'delivery_period':'evening'}}
     assert controlled(legacy)
     assert legacy['snapshot']=={'delivery_period':'evening'}
-    assert not controlled({'service':'delivery','snapshot':{'delivery_period':'morning'}})
+    assert controlled({'service':'delivery','snapshot':{'delivery_period':'morning'}})
 
 
 def test_delegated_shift_authority_is_only_the_exact_order_task():
@@ -209,7 +209,7 @@ def test_driver_operational_problem_needs_no_customer_proof_and_has_single_owner
     post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':sid})
     path=f'/api/order-interventions/orders/{oid}'
     body={'kind':'problem','reason_code':'damaged','contact_result':'not_contacted','version':2}
-    post('driver',path,{**body,'reason_code':'customer_cancel'},status=422)
+    post('driver',path,{**body,'kind':'cancel','reason_code':'customer_cancel'},status=403)
     iid=post('driver',path,body,key='driver-problem-first')['id']
     post('driver',path,body,key='driver-problem-second',status=409)
     with db.tx() as c:
@@ -442,7 +442,7 @@ def test_cancellation_guard_reloads_permission_after_an_earlier_successful_prefl
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize('service,period',[('delivery',None),('delivery','morning'),('pickup',None),('car',None)])
+@pytest.mark.parametrize('service,period',[('delivery',None),('pickup',None),('car',None)])
 def test_explicit_admin_delegate_can_operationally_cancel_all_legacy_services_without_financial_power(ops,service,period):
     actor,post,_,_=ops;cancellation_delegate()
     oid=controlled_order(service=service,journey_controls=False,snapshot_overrides={'delivery_period':period} if period else None)

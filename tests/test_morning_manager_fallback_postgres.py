@@ -135,6 +135,7 @@ def test_manual_customer_order_has_morning_scope_guest_identity_and_safe_replay(
     with db.tx() as c:
         saved = c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
         assert saved['branch_id'] == B2 and saved['snapshot']['delivery_period'] == 'morning'
+        assert saved['snapshot']['journey_controls_version'] == 1
         assert saved['snapshot']['manager_shift_id'] == 'ctx-duty'
         assert saved['snapshot']['order_source'] == 'delivery_center'
         assert saved['customer_id'].startswith('customer_contact_')

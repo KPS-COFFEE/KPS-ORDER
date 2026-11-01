@@ -42,8 +42,9 @@ test('actual driver widget submits only a structured problem and leaves pickup a
  const ctx={window:{},document:{createElement:t=>new Element(t),body:{append(){}}},FormData:class{constructor(f){this.f=f;}get(k){return this.f.elements[k]?.value??null;}}};
  vm.createContext(ctx);vm.runInContext(fs.readFileSync('public/assets/order-interventions.js','utf8'),ctx);
  await ctx.window.KPSInterventions.open({oid:'o/1',user:{role:'driver'},api:async()=>state,mutation:async(...x)=>writes.push(x),initialReason:'no_answer'});
- const form=elements.find(e=>e.tag==='form');assert.equal(form.elements.reason_code.value,'no_answer');assert.equal(form.elements.contact_result,undefined);assert.doesNotMatch(form.html,/<textarea|name="physical_resolution"|name="contact_method"|name="evidence_attachment_id"/);
- assert.doesNotMatch(form.html,/value="customer_cancel"|value="duplicate"|value="customer_change"/);
+ const form=elements.find(e=>e.tag==='form');assert.equal(form.elements.reason_code.value,'no_answer');assert.equal(form.elements.contact_result,undefined);assert.doesNotMatch(form.html,/name="physical_resolution"|name="contact_method"|name="evidence_attachment_id"|name="amount_halalas"/);
+ assert.match(form.html,/<input[^>]*name="note"[^>]*maxlength="1500"/);
+ assert.match(form.html,/value="customer_cancel"/);assert.match(form.html,/value="customer_change"/);
  await form.onsubmit({preventDefault(){},target:form});assert.equal(writes[0][0],'/api/order-interventions/orders/o%2F1');assert.equal(writes[0][1].kind,'problem');assert.equal(writes[0][1].reason_code,'no_answer');assert.equal(writes[0][1].contact_result,'no_answer');assert.equal(writes[0][1].status,undefined);assert.equal(writes[0][1].version,4);
  form.elements.reason_code.value='damaged';await form.onsubmit({preventDefault(){},target:form});assert.equal(writes[1][1].contact_result,'not_contacted');
 });

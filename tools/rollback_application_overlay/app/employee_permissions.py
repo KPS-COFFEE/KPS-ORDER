@@ -176,7 +176,7 @@ ROUTES = {
     'order_financial_cases': {'nonreceipt':'payments_collect','free_item_return':'support_manage','recovery_context':'accounting_review','recover':'accounting_review','refund_context':'accounting_review','cancel':{'admin':('orders_cancel_after_print','orders_cancel_collected'),'delivery_manager':'orders_cancel','branch_manager':'orders_cancel'},'journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':'accounting_review'},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
     'task_recovery': {'listing':'tasks_resolve_delivery', 'detail':'tasks_resolve_delivery', 'review_revision':'tasks_resolve_delivery'},
     'driver_float': {'listing':('drivers_view','accounting_review'), 'propose':'custody_transfer', 'decide':'accounting_review'},
-    'order_amendments': {'inbox':'orders_view', 'detail':'orders_view', 'preview':'orders_amend', 'request_amendment':'orders_amend', 'decide':'orders_amend',
+    'order_amendments': {'inbox':'orders_view', 'detail':'orders_view', 'preview':{'admin':'orders_cancel_after_print','delivery_manager':'orders_amend','branch_manager':'orders_amend'}, 'request_amendment':{'admin':'orders_cancel_after_print','delivery_manager':'orders_amend','branch_manager':'orders_amend'}, 'decide':{'admin':'orders_cancel_after_print','delivery_manager':'orders_amend','branch_manager':'orders_amend'},
                          'acknowledge':{'branch_manager':'orders_prepare','driver':'tasks_update','delivery_manager':'orders_amend'}},
     'driver_incentives': {'achievement': ('shifts_view','accounting_reports'), 'shift_review': ('shifts_view','accounting_reports'), 'decide': 'shifts_approve'},
     'operations': {

@@ -144,6 +144,71 @@ def issue_sale(conn, order_id, actor, *, required=False):
     return doc
 
 
+def remaining_invoice(conn, source):
+    """Net claim/VAT after immutable linked notes; no payment is inferred."""
+    rows = conn.execute("SELECT kind,document FROM fiscal_documents WHERE original_number=%s ORDER BY created_at,number", (source['number'],)).fetchall()
+    gross, tax = source['total_halalas'], source['tax_halalas']
+    for row in rows:
+        sign = 1 if row['kind'] == 'debit_note' else -1
+        gross += sign * row['document']['total_halalas']
+        tax += sign * row['document']['tax_halalas']
+    if gross < 0 or tax < 0 or tax > gross:
+        raise db.error(409, 'FISCAL_NOTE_BALANCE', 'راجع مبالغ إشعارات الفاتورة قبل المعالجة.')
+    return {**source, 'total_halalas':gross, 'tax_halalas':tax, 'net_halalas':gross-tax}
+
+
+def correction_for_amendment(conn, order, actor, amendment_id, quote, reason):
+    """Issue the approved price delta while retaining the original sale verbatim.
+
+    The caller owns the order lock and records the matching revision in the same
+    transaction. This creates a claim correction, never a receipt or cash refund.
+    """
+    source = original(conn, order['id'])
+    if not source:
+        return None
+    snapshot = quote.get('snapshot', quote)
+    existing = conn.execute("SELECT document FROM fiscal_documents WHERE order_id=%s AND document->>'amendment_id'=%s", (order['id'], amendment_id)).fetchone()
+    if existing:
+        if existing['document'].get('after_snapshot') != snapshot:
+            raise db.error(409, 'FISCAL_AMENDMENT_CONFLICT', 'مستند التصحيح يخص التغيير المعتمد فقط؛ يلزم اعتماد جديد.')
+        return existing['document']
+    if not status(conn, order['brand_id'])['issuance_enabled']:
+        raise db.error(409, 'FISCAL_CREDIT_DISABLED', 'أعد إتاحة إصدار مستند التصحيح قبل اعتماد تعديل الفاتورة.')
+    before, after = order['total_halalas'], snapshot['total_halalas']
+    current = remaining_invoice(conn, source)
+    # Previous refunds/price credits require settlement first. Never increase a
+    # claim by silently reversing an independently approved financial treatment.
+    if current['total_halalas'] != before:
+        raise db.error(409, 'FISCAL_AMENDMENT_SETTLEMENT', 'أكمل تسوية الإشعارات السابقة قبل تعديل الفاتورة.')
+    delta = after - before
+    tax_delta = fiscal.inclusive_tax(after) - current['tax_halalas']
+    kind = 'debit_note' if delta >= 0 else 'credit_note'
+    amount, tax = abs(delta), abs(tax_delta)
+    if (delta > 0 and tax_delta < 0) or (delta < 0 and tax_delta > 0) or tax > amount:
+        raise db.error(409, 'FISCAL_TOTAL_MISMATCH', 'مبالغ ضريبة التصحيح غير متطابقة.')
+    n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
+    prefix = 'ENB-' if order['brand_id']=='enbishan' else 'KPS-'
+    number = prefix + ('DN-' if kind=='debit_note' else 'CN-') + str(n)
+    doc = {**source, 'kind':kind, 'number':number, 'original_number':source['number'],
+        'uuid':str(uuid4()), 'original_uuid':source['uuid'], 'refund_id':None,
+        'issued_at':datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00','Z'),
+        'reason':reason, 'credit_reason':'approved_order_amendment', 'amendment_id':amendment_id,
+        'source_revision':order.get('amendment_revision',0)+1,
+        'before_total_halalas':before, 'after_total_halalas':after,
+        'after_items':snapshot['items'], 'after_snapshot':snapshot,
+        'total_halalas':amount, 'tax_halalas':tax, 'net_halalas':amount-tax,
+        'subtotal_halalas':amount, 'discount_halalas':0, 'delivery_fee_halalas':0,
+        'items':[{'name':reason, 'quantity':1, 'line_total_halalas':amount, 'units':[]}],
+        'no_money_posted':True, 'payment_status':'unpaid'}
+    doc['qr_text'] = fiscal.encode_qr(doc)
+    conn.execute("INSERT INTO fiscal_documents(number,order_id,kind,original_number,policy_id,document) VALUES(%s,%s,%s,%s,%s,%s)",
+        (number,order['id'],kind,source['number'],source['policy_id'],db.json(doc)))
+    db.audit(conn,actor['id'],'fiscal.amendment_correction_issued','order',order['id'],
+        {'number':number, 'amendment_id':amendment_id, 'before_total_halalas':before,
+         'after_total_halalas':after, 'no_money_posted':True})
+    return doc
+
+
 def credit_before_refund(conn, order, actor, refund_id, amount, reason, *, amendment_id=None):
     # Caller holds the order row lock. Deferred FK requires the matching refund
     # to be persisted in this same transaction; rollback removes both effects.
@@ -151,10 +216,17 @@ def credit_before_refund(conn, order, actor, refund_id, amount, reason, *, amend
     if not source: return None  # Historical/unactivated operational sale.
     conn.execute('SELECT id FROM brands WHERE id=%s FOR SHARE', (order['brand_id'],))
     if amendment_id:
-        raise db.error(409,'FISCAL_ISSUED_ADJUSTMENT','الطلب المصدر لا يعدل؛ استخدم مرتجعًا مرتبطًا بالفاتورة.')
+        correction = conn.execute("SELECT document FROM fiscal_documents WHERE order_id=%s AND kind='credit_note' AND document->>'amendment_id'=%s", (order['id'],amendment_id)).fetchone()
+        if not correction:
+            raise db.error(409,'FISCAL_ISSUED_ADJUSTMENT','يلزم إشعار التصحيح المعتمد قبل رد فرق التعديل.')
+        refunded = conn.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s AND amendment_id=%s', (order['id'],amendment_id)).fetchone()['n']
+        if refunded + amount > correction['document']['total_halalas']:
+            raise db.error(409,'FISCAL_CREDIT_EXCEEDS_ORIGINAL','رد فرق التعديل يتجاوز الإشعار المعتمد.')
+        return correction['document']
     if not status(conn,order['brand_id'])['issuance_enabled']:
         raise db.error(409,'FISCAL_CREDIT_DISABLED','تعذر إصدار الإشعار الدائن؛ لم يسجل الاسترداد.')
-    prior = conn.execute("SELECT coalesce(sum((document->>'total_halalas')::bigint),0)::bigint n FROM fiscal_documents WHERE original_number=%s", (source['number'],)).fetchone()['n']
+    source = remaining_invoice(conn, source)
+    prior = 0
     n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
     try: doc = fiscal.credit(source,amount,prior,('ENB-CN-' if order['brand_id']=='enbishan' else 'KPS-CN-')+str(n),datetime.now(timezone.utc),refund_id,reason)
     except ValueError as exc:
@@ -211,7 +283,8 @@ def print_invoice(order_id: str, user=Depends(auth.require_roles('owner','admin'
 def credit_on_cancellation(conn, order, actor, reason):
     source = original(conn,order['id'])
     if not source: return
-    prior = conn.execute("SELECT coalesce(sum((document->>'total_halalas')::bigint),0)::bigint n FROM fiscal_documents WHERE original_number=%s",(source['number'],)).fetchone()['n']
+    source = remaining_invoice(conn, source)
+    prior = 0
     amount = source['total_halalas']-prior
     if amount <= 0: return
     n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
@@ -234,7 +307,8 @@ def credit_for_price_correction(conn,order,actor,treatment_id,amount,reason,*,ev
             fiscal_status='no_issued_invoice',no_money_posted=True)
     if not status(conn,order['brand_id'])['issuance_enabled']:
         raise db.error(409,'FISCAL_CREDIT_DISABLED','أعد إتاحة إصدار الإشعار الدائن وفق السياسة المعتمدة قبل اعتماد تصحيح السعر.')
-    prior=conn.execute("SELECT coalesce(sum((document->>'total_halalas')::bigint),0)::bigint n FROM fiscal_documents WHERE original_number=%s",(source['number'],)).fetchone()['n']
+    source = remaining_invoice(conn, source)
+    prior = 0
     n=conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
     try:doc=fiscal.credit(source,amount,prior,('ENB-CN-' if order['brand_id']=='enbishan' else 'KPS-CN-')+str(n),datetime.now(timezone.utc),None,reason)
     except ValueError as exc:raise db.error(409,'FISCAL_CREDIT_EXCEEDS_ORIGINAL','الإشعار يتجاوز المتبقي من الأصل؛ راجع الإشعارات السابقة.') from exc

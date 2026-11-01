@@ -36,6 +36,9 @@ for _module in ('operations', 'orders', 'reporting', 'chat', 'order_support',
 ENDPOINTS['operations'].discard('task_transition')
 ENDPOINTS['orders'].update({'authorize_complimentary','revoke_complimentary_authorization','list_complimentary_authorizations','customer_lookup', 'customer_search', 'change_delivery_location'})
 ENDPOINTS['order_requests'] = {'decide'}
+# Same scoped morning order checks run before every intervention endpoint;
+# this adds decisions/evidence to the existing shift without altering dispatch.
+ENDPOINTS['order_interventions'] = {'read','create','pending_cancellations','return_request','resubmit_request','decide'}
 ENDPOINTS['driver_support'] = {'list_requests', 'request_support', 'accept_support', 'resolve_request'}
 ENDPOINTS['order_financial_cases'] = {'cancel','nonreceipt','free_item_return','journey','inbox'}
 ENDPOINTS['financial_clarifications'] = {'listing','decide'}
