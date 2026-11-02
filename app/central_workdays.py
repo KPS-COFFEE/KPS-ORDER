@@ -62,7 +62,7 @@ def guard_component(c, sid):
         require_action()
 
 
-def authorized(c, user, sid, *, manager=False, capability=None, lock=True):
+def authorized(c, user, sid, *, manager=False, capability=None, lock=True, historical_closure=False):
     day = association(c, sid)
     if not day:
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة.')
@@ -74,12 +74,16 @@ def authorized(c, user, sid, *, manager=False, capability=None, lock=True):
     result = []
     for shift in legs:
         principal = multibrand.project(c, user, shift['brand_id'])
+        historical=ops.historical_closure_principal(c,user,shift,manager=manager) if historical_closure else None
+        if historical:
+            principal=historical
         if not principal:
             raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة ضمن صلاحياتك الحالية.')
         if (principal.get('home_brand_id') and principal['role']=='owner'
                 and not set(shift['branch_ids']) <= set(principal.get('branch_ids', []))):
             raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة ضمن صلاحياتك الحالية.')
-        ops.shift_access(c, principal, shift, manager=manager, capability=capability(shift) if callable(capability) else capability)
+        ops.shift_access(c, principal, shift, manager=manager, capability=capability(shift) if callable(capability) else capability,
+                         historical_closure=historical_closure)
         result.append((principal, shift))
     return day, result
 
@@ -274,7 +278,7 @@ def result(c, day, legs):
 def detail(sid: str, user=Depends(auth.current_user)):
     require_enabled(user, 'shifts_view', existing_sid=sid)
     with db.tx() as c:
-        day, legs = authorized(c, user, sid, capability='shifts_view')
+        day, legs = authorized(c, user, sid, capability='shifts_view',historical_closure=True)
         output = result(c, day, legs)
         output['manager_user_id'] = None
         if day['kind']=='driver':

@@ -33,7 +33,8 @@ def accounting(user):
 
 def authorize(c,user,sid,*,manager=False):
     workdays.require_enabled(user,'accounting_review' if accounting(user) else 'shifts_view',existing_sid=sid)
-    day,legs=workdays.authorized(c,user,sid,manager=manager,capability='accounting_review' if accounting(user) else None)
+    day,legs=workdays.authorized(c,user,sid,manager=manager,capability='accounting_review' if accounting(user) else None,
+                               historical_closure=True)
     if day['kind']!='driver':raise db.error(409,'SHARED_DRIVER_REQUIRED','اختر وردية سائق.')
     return day,workdays.ordered(legs,day['anchor_shift_id'])
 

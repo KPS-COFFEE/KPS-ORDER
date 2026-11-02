@@ -71,7 +71,31 @@ def shift_roles(user, capability, *allowed):
 def close_capability(shift):
     return 'shifts_delegate_close' if shift and shift['kind']=='driver' else 'shifts_close'
 
-def shift_access(c, user, shift, manager=False, capability=None):
+def historical_closure_principal(c, user, shift, *, manager=False):
+    """Exact ended ledger responsibility; never a grant for new operations."""
+    if not shift or user.get('_morning_manager_context'):
+        return None
+    current=c.execute('SELECT active,role FROM users WHERE id=%s',(user['id'],)).fetchone()
+    original=c.execute('SELECT * FROM shifts WHERE id=%s',(shift['id'],)).fetchone()
+    if (not current or not current['active'] or current['role']!=user['role']
+            or not original or original['status'] not in ('submitted','closed')
+            or not original.get('staffing_ended_at')):
+        return None
+    own=(not manager and original['user_id']==user['id']
+         and ((original['kind']=='driver' and user['role']=='driver')
+              or (original['kind']=='manager' and user['role']=='delivery_manager')))
+    linked=False
+    if original['kind']=='driver' and user['role']=='delivery_manager':
+        linked=bool(c.execute("SELECT 1 FROM shifts WHERE id=%s AND user_id=%s AND kind='manager' AND brand_id=%s",
+                    (original.get('manager_shift_id'),user['id'],original['brand_id'])).fetchone())
+    if not (own or linked):
+        return None
+    return dict(user,brand_id=original['brand_id'],branch_ids=original['branch_ids'])
+
+
+def shift_access(c, user, shift, manager=False, capability=None, historical_closure=False):
+    if historical_closure and historical_closure_principal(c,user,shift,manager=manager):
+        return
     from .morning_manager_context import require_shift
     require_shift(user, shift)
     context = user.get('_morning_manager_context')
@@ -606,7 +630,19 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
         elif user['role']=='delivery_manager': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s OR s.manager_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY opened_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
         elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
         else: rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s ORDER BY opened_at DESC LIMIT 100',(user['id'],)).fetchall()
-        rows=[r for r in rows if r.get('brand_id',user['brand_id'])==user['brand_id'] and (unrestricted_owner(user) or set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
+        historical_ids=set()
+        if rows and not (order_id or task_id or context) and user['role'] in ('driver','delivery_manager'):
+            # One batch for discovery only. Assignment candidate lists continue
+            # to require current grants; immutable ended ledgers retain their
+            # original executor and linked manager after future scope changes.
+            historical_ids={r['id'] for r in c.execute("SELECT s.id FROM shifts s "
+                "JOIN users actor ON actor.id=%s AND actor.active AND actor.role=%s "
+                "LEFT JOIN shifts parent ON parent.id=s.manager_shift_id AND parent.kind='manager' AND parent.brand_id=s.brand_id "
+                "WHERE s.id=ANY(%s) AND s.status IN ('submitted','closed') AND to_jsonb(s)->>'staffing_ended_at' IS NOT NULL "
+                "AND ((s.user_id=actor.id AND ((s.kind='driver' AND actor.role='driver') OR (s.kind='manager' AND actor.role='delivery_manager'))) "
+                "OR (s.kind='driver' AND actor.role='delivery_manager' AND parent.user_id=actor.id))",
+                (user['id'],user['role'],[r['id'] for r in rows])).fetchall()}
+        rows=[r for r in rows if r.get('brand_id',user['brand_id'])==user['brand_id'] and (unrestricted_owner(user) or r['id'] in historical_ids or set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
         if user.get('_morning_manager_context'):
             from .morning_manager_context import shift_allowed
             rows = [r for r in rows if shift_allowed(user, r)]
@@ -746,7 +782,7 @@ def save_external_enbishan(sid:str, body:ExternalEnbishan, request:Request, user
 @router.get('/shifts/{sid}')
 def shift_detail(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
-        s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s,capability='shifts_view')
+        s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s,capability='shifts_view',historical_closure=True)
         from .central_workdays import annotate
         annotate(c,[s])
         task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()

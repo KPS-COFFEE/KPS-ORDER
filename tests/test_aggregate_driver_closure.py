@@ -28,6 +28,67 @@ def submit_physical(central):
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize('kind',['driver','manager'])
+def test_owner_future_grants_can_change_after_physical_end_without_losing_accounting(central,kind,monkeypatch):
+    from inspect import signature
+    from app import auth, reporting
+    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
+    _,actor,post,_,_=central
+    if kind=='driver':
+        _,duty,path,declared=submit_physical(central)
+        receipt_action='physical-receipt'
+        receipt_body={'reference':'Physical cash receipt before future scope change'}
+    else:
+        duty=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+        path='/api/central-operations/workdays/'+duty['shift']['id']
+        declared=post('manager',path+'/manager-physical-submit',{
+            'cash_halalas':700,'recipient_user_id':'dual-owner',
+            'reference':'Manager physical cash before future scope change','confirmed':True})
+        receipt_action='manager-physical-receipt'
+        receipt_body={}
+    staff_path='/api/central-operations/staff/dual-'+kind
+    change={'branch_ids':['kps-branch-1'],'reason':'Owner changes future assignment after physical duty ended'}
+    blocked=post('owner',staff_path,change,method='patch',status=409)
+    assert blocked['detail']['code']=='STAFF_OPEN_SHIFT'
+    receipt=post('manager' if kind=='driver' else 'owner',path+'/'+receipt_action,{
+        'declaration_id':declared['declaration_id'],'received_halalas':700,'confirmed':True,**receipt_body})
+    sids=[s['id'] for s in duty['shifts']]
+    with db.tx() as c:
+        before=c.execute('SELECT * FROM shifts WHERE id=ANY(%s) ORDER BY id',(sids,)).fetchall()
+        assert all(s['status']=='submitted' and s['staffing_ended_at'] for s in before)
+        target=c.execute('SELECT * FROM users WHERE id=%s',('dual-'+kind,)).fetchone()
+        # Callers without an explicitly authorized owner keep the old protection.
+        with pytest.raises(HTTPException) as error:
+            auth.ensure_safe_staff_scope_change(c,target,[],True)
+        assert error.value.detail['code']=='STAFF_OPEN_SHIFT'
+    # The rollback gate overlays current tests onto the immutable prior app.
+    # Its conservative denial is safe; only the new capability may separate
+    # future grants from a physically ended financial ledger.
+    separate_future_grants='owner_scope_change' in signature(auth.ensure_safe_staff_scope_change).parameters
+    changed=post('owner',staff_path,change,method='patch',status=200 if separate_future_grants else 409)
+    if separate_future_grants:
+        assert changed['user']['branch_ids']==['kps-branch-1'] and changed['user']['active']
+    else:
+        assert changed['detail']['code']=='STAFF_OPEN_SHIFT'
+        with db.tx() as c:
+            assert c.execute('SELECT branch_ids FROM users WHERE id=%s',('dual-'+kind,)).fetchone()['branch_ids']==target['branch_ids']
+            membership=c.execute("SELECT branch_ids,active FROM staff_brand_memberships WHERE user_id=%s AND brand_id='enbishan'",('dual-'+kind,)).fetchone()
+            assert membership['active'] and membership['branch_ids']==['enbishan-test-1','enbishan-test-2']
+    disabled=post('owner',staff_path,{'active':False,'reason':'Financial pending duties still protect account lifecycle'},method='patch',status=409)
+    assert disabled['detail']['code']=='STAFF_OPEN_SHIFT'
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM shifts WHERE id=ANY(%s) ORDER BY id',(sids,)).fetchall()==before
+    closure=actor('accountant').get(path+'/physical-closure' if kind=='driver' else path+'/manager-physical-closure')
+    assert closure.status_code==200,closure.text
+    assert closure.json()['declaration']['id']==declared['declaration_id']
+    if kind=='driver':
+        done=post('accountant',path+'/physical-allocation',{
+            'declaration_id':declared['declaration_id'],'receipt_id':receipt['receipt_id'],
+            'legs':rows(duty['shifts']),'reason':'Historical documents remain independently accountable','confirmed':True})
+        assert done['state']=='allocated' and len(done['report_ids'])==2
+
+
+@pytest.mark.postgres
 def test_aggregate_original_receipt_allocation_preserved_and_accountant_only(central,monkeypatch):
     from app import reporting
     monkeypatch.setattr(reporting,'generate_files',lambda *_:None)

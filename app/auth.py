@@ -163,7 +163,7 @@ def session_context(request):
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
             '/api/central-operations','/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
             '/api/branch-proximity','/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
-            '/api/owner-employee-activity','/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
+            '/api/owner-employee-activity','/api/owner-driver-interventions','/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
             or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/customer-report','/docs/metrics'))):
         return 'work'
     return context
@@ -1398,7 +1398,7 @@ def staff_sms_account_approved(row):
         return False
 
 
-def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
+def ensure_safe_staff_scope_change(conn,row,new_scope,new_active,*,owner_scope_change=False):
     """Never strand a running task or the driver's custody by removing its executor."""
     if row['role']=='owner' and not new_active:
         conn.execute("SELECT id FROM users WHERE brand_id=%s AND role='owner' AND active ORDER BY id FOR UPDATE",(row['brand_id'],)).fetchall()
@@ -1417,7 +1417,10 @@ def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
     if removed and conn.execute("SELECT 1 FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')",(row['id'],list(removed))).fetchone():
         raise db.error(409,'STAFF_OPEN_TASKS','أعد إسناد المهام مع قبول التسليم قبل سحب فرع السائق.')
     if removed and row['role'] in {'driver','delivery_manager','delivery_staff'}:
-        if conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND branch_ids ?| %s",(row['id'],list(removed))).fetchone():
+        # Future grants are independent of an owner-approved duty whose physical
+        # custody already ended. Keep its immutable branch scope for accounting.
+        historical = " AND NOT (status='submitted' AND to_jsonb(shifts)->>'staffing_ended_at' IS NOT NULL)" if owner_scope_change else ''
+        if conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND branch_ids ?| %s"+historical,(row['id'],list(removed))).fetchone():
             raise db.error(409,'STAFF_OPEN_SHIFT','سلّم المناوبة والعهدة قبل سحب نطاق الشفت المفتوح.')
 
 
@@ -1779,7 +1782,7 @@ def update_staff_in_tx(conn, identifier, body, user):
                                  and row['identity_kind']=='staff_password' and row['invitation_status']=='active')
         if not sms_approved and not existing_password_owner and not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
             raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','ينشط الموظف بعد تحقق بريده؛ لا توثيق بالنيابة عنه.')
-    ensure_safe_staff_scope_change(conn,row,scope,active)
+    ensure_safe_staff_scope_change(conn,row,scope,active,owner_scope_change=user['role']=='owner')
     name=body.display_name.strip() if body.display_name is not None else row['display_name']
     if not name or '\x00' in name:
         raise db.error(422,'STAFF_PROFILE_REQUIRED','أدخل الاسم الكامل.')

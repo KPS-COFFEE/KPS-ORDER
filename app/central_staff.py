@@ -92,7 +92,7 @@ def scope_body(c, user, target, branch_ids, allowed):
     old=grants(c,target,allowed)
     for brand,ids in scopes.items():
         projected=dict(target,brand_id=brand,branch_ids=old.get(brand,[]))
-        auth.ensure_safe_staff_scope_change(c,projected,ids,target['active'])
+        auth.ensure_safe_staff_scope_change(c,projected,ids,target['active'],owner_scope_change=user['role']=='owner')
     return scopes
 
 
