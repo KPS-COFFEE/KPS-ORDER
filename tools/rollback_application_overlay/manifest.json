@@ -31,13 +31,13 @@
     "app/branch_printing.py": "bd7305f03b20c501532f1d7ce2e12e2ca0f0ee1b3e616cc82a75f28f4ade198a",
     "app/central_operations.py": "f812c632c7bc82667b89a065135ddc4a87498f37a143a72f79fcc47cd1737969",
     "app/collected_order_authority.py": "94b873b3f13ca247cf3255294913fe9a011c8e10a36b4c060a01010991887579",
-    "app/db.py": "ba0c5606ece7fcdc86ed7b6bc6103a478f876120aca6fdd0ccd55d6e29886726",
+    "app/db.py": "7bb3fcfaed39eaf7e35e9deed95ad30d2b9b8441e3398cb6309a5f876430f3b1",
     "app/dispatch_impact.py": "642fe65518441cb3452526bb380fb25da2fe12c517d1cc6c3819dfb9f2e47d56",
     "app/dispatch_map.py": "33d033492c0e690a3fd23f46a2625dafe056a15a7d3fe854dea575ce58d98a3e",
     "app/driver_auto_return.py": "bda17455edf76783f9e22b91c2c4934c33e5470f85b570edd0b02a98ab720032",
     "app/driver_work_hours.py": "1bd3116c194dd0fa15f8fa1db9de18e0c6532a50ad495dc068a6f24c57ba4980",
     "app/employee_permissions.py": "b8fb067c08be6dfabd194e7b5f4d7e3203ec6fed7916712d93abadab5ce5b0c5",
-    "app/exports.py": "1acb9b5e1a8609b6975cb147be54839dcae6aa60d0c32529561b94c256ec733d",
+    "app/exports.py": "ffc2efbfc2fbf18cbb12d3e75af1285c733e278923ae2ce6241fffebac0525e9",
     "app/main.py": "a7c0095075afec3a436af2a8aa955b834253b140d389f0e4235964a85c5335e1",
     "app/operations.py": "d6278e3eb3f74dc38e88e331078305e9ff881e32b75247dd3da24163fc2b4a9d",
     "app/order_amendments.py": "aa9086ca8945b4c9b1bfcc1f3df2ecbe16f899ec39d1472fdf2cfb302ac1c5fb",
@@ -59,7 +59,8 @@
     "migrations/134_routed_approved_amendments.sql": "de596fed07f23b700c5f8d774e6e96f107c66e19b8d1db98cba0c4fcf845d7d7",
     "app/driver_city_scope.py": "8c9478afe56aaec8da8c2da263626c1131ee122555063d835e2f45672ad45c37",
     "app/order_requests.py": "7d71afe94fc53d1467a1f5fab56fb3ae0028c90bf65d1782b6ca98259e562dc3",
-    "app/administrative_guidance.py": "fca3434c67ce10b955a0f790fcafcc3f5b730ce14ec3a3ccfbbb1ce777d61548"
+    "app/administrative_guidance.py": "fca3434c67ce10b955a0f790fcafcc3f5b730ce14ec3a3ccfbbb1ce777d61548",
+    "migrations/135_driver_duty_city.sql": "cd872fecf6cc1fa1e33534546e021543f76443d2cb4a023dca9aa135a3b6ee44"
   },
   "rollback_feature_policy": {
     "operational_after_feature_use": false,

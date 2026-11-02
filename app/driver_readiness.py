@@ -71,6 +71,10 @@ def describe(c, row):
     if not s.get('available', True): return 'manually_paused', 'manager_resume_availability', []
     if row['active_tasks']: return 'busy', 'complete_assigned_tasks', []
     from .operations import observe_driver_shift
+    from . import catalog
+    branches = c.execute('SELECT id,city FROM branches WHERE id=ANY(%s)', (s['branch_ids'],)).fetchall()
+    if len({catalog.normalize_city(b.get('city') or '') for b in branches}) > 1:
+        return 'duty_city_required', 'select_driver_duty_city', []
     eligible=[]
     for bid in row['branch_ids']:
         candidate={'brand_id':s['brand_id'],'branch_id':bid}

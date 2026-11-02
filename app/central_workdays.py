@@ -148,6 +148,12 @@ def _open(c, user, body):
     available = {bid for scope in scopes for bid in scope['branch_ids']}
     if selected - available:
         raise db.error(403, 'CENTRAL_BRANCH_SCOPE', 'فرع غير مخول للموظف.')
+    from .driver_shift_city import assigned
+    duty_city=assigned(c,target['id'],body.duty_city) if body.kind=='driver' else None
+    if body.kind == 'driver' and duty_city:
+        from .driver_shift_city import select as select_city
+        rows=c.execute('SELECT * FROM branches WHERE id=ANY(%s)', (sorted(selected or available),)).fetchall()
+        selected={b['id'] for b in select_city(rows, duty_city)}
     # A manual opening float belongs to one ledger once. Existing retained funds
     # and distinct accountant-approved floats retain their original brand.
     scopes.sort(key=lambda b: (b['id'] != target['brand_id'], b['id']))
