@@ -14,11 +14,11 @@ def test_driver_fuel_report_filters_unknown_values_and_readable_mobile(width):
         page.add_style_tag(content=(ROOT/'public/ops.css').read_text()+'\n'+(ROOT/'public/assets/driver-fuel-report.css').read_text())
         page.add_script_tag(content=(ROOT/'public/assets/driver-fuel-report.js').read_text())
         page.evaluate('''async () => {
-         window.calls=[];
+         window.calls=[];window.exports=[];window.fetch=async(url,options)=>{exports.push({url,options});return new Response('%PDF-1.4 %%EOF',{headers:{'Content-Type':'application/pdf'}});};
          const opt={today:'2026-10-12',drivers:[{id:'d1',display_name:'سائق تجريبي'}],vehicles:[{id:'v1',plate:'TEST 1'}],cities:['حفر الباطن']};
          const row={operating_day:'2026-10-12',driver_name:'سائق تجريبي',plate:'TEST 1',cities:['حفر الباطن'],start_odometer:1000,end_odometer:null,actual_distance:null,liters:0,fuel_record_missing:true,fuel_amount_halalas:null,record_status:'open'};
          const data={rows:[row],total:1,summary:{distance_km:0,distance_missing_records:1,liters:0,fuel_record_missing:1,fuel_amount_known_halalas:0,fuel_amount_halalas:null},note:'القيمة من مبالغ التعبئة المسجلة فقط'};
-         await KPSDriverFuelReport.open({api:async url=>{calls.push(url);return url.endsWith('/options')?opt:data},tr:(ar,en)=>ar,esc:x=>String(x??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),heading:title=>document.querySelector('#page-heading').textContent=title,lang:'ar'});
+         await KPSDriverFuelReport.open({api:async url=>{calls.push(url);return url.endsWith('/options')?opt:data},tr:(ar,en)=>ar,esc:x=>String(x??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),heading:title=>document.querySelector('#page-heading').textContent=title,lang:'ar',brand:'enbishan'});
         }''')
         expect(page.get_by_text('غير مسجل',exact=True)).to_be_visible()
         expect(page.get_by_text('الإجمالي غير مكتمل — توجد بيانات غير مسجلة')).to_be_visible()
@@ -30,4 +30,15 @@ def test_driver_fuel_report_filters_unknown_values_and_readable_mobile(width):
         assert 'driver_id=d1' in calls[-1] and 'city=' in calls[-1]
         assert page.locator('html').evaluate('e=>e.scrollWidth<=e.clientWidth+1')
         assert all('/api/fleet/driver-report' in url for url in calls)
+        # Unsubmitted edits must not alter the export of the displayed results.
+        page.locator('select[name=driver_id]').select_option('')
+        with page.expect_download() as download:
+            page.get_by_role('button',name='تصدير PDF',exact=True).click()
+        assert download.value.suggested_filename == 'driver-fuel-2026-10-12-2026-10-12.pdf'
+        exported = page.evaluate('window.exports')
+        assert len(exported) == 1
+        assert 'driver_id=d1' in exported[0]['url'] and 'city=' in exported[0]['url']
+        assert 'offset=' not in exported[0]['url'] and 'limit=' not in exported[0]['url']
+        assert exported[0]['options']['headers']['X-Operations-Brand'] == 'enbishan'
+        assert exported[0]['options']['headers']['X-KPS-Context'] == 'work'
         browser.close()

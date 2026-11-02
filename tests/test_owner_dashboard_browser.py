@@ -153,14 +153,21 @@ def test_owner_widget_filters_pagination_refresh_faults_and_mobile_layout(width,
         page.add_script_tag(content=source)
         page.evaluate('''async user=>{
             window.syntheticUser=user; window.syntheticScope='owner/kps';
-            window.openedOrders=[]; window.accessDenied=[];
+            window.openedOrders=[]; window.accessDenied=[]; window.workspacePages=[]; window.allowedPages=['productSales','accounting','driverFuel','interventionInbox','employeeActivity'];
             window.widget=KPSOwnerDashboard.create({getUser:()=>syntheticUser,getScope:()=>syntheticScope,
                 getLang:()=> 'ar',isActive:()=>true,onOrder:(id,brand)=>openedOrders.push({id,brand}),
+                canNavigate:page=>allowedPages.includes(page),onNavigate:page=>workspacePages.push(page),
                 onAccessDenied:e=>accessDenied.push(e.status),
                 api:async (url,options)=>{const response=await fetch(url,options);const body=await response.json();
                     if(!response.ok){const error=new Error(body.detail.message);error.status=response.status;throw error;}return body;}});
             await widget.mount(document.querySelector('#owner-dashboard'));
         }''', owner())
+        expect(page.locator('[data-owner-page]')).to_have_count(5)
+        page.locator('[data-owner-page=driverFuel]').click()
+        assert page.evaluate('workspacePages') == ['driverFuel']
+        page.evaluate("allowedPages=allowedPages.filter(page=>page!=='accounting')")
+        page.locator('[data-owner-page=accounting]').click()
+        assert page.evaluate('workspacePages') == ['driverFuel'], 'Stale shortcuts must recheck current permission'
         expect(page.locator('#owner-brand')).to_have_value('all')
         expect(page.locator('#owner-dashboard')).to_have_attribute('dir', 'rtl')
         count = page.locator('.owner-metric').filter(has=page.get_by_role('heading', name='إجمالي الطلبات', exact=True)).locator('.owner-number')

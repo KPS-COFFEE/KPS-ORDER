@@ -45,6 +45,7 @@ def test_accounting_default_queue_collect_count_and_refresh(width, lang):
         assert page.locator('.ac-workflow ol li').count() == 4
         assert page.locator('[data-ac-bag-count]').count() == 1
         assert page.locator('.ac-bag-row').count() == 2
+        page.locator('.ac-workspace-help > summary').click()
         page.locator('[data-ac-bag-search]').fill('BAG-001')
         expect(page.locator('.ac-bag-row')).to_have_count(1)
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')

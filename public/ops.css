@@ -706,3 +706,50 @@ html[data-work-access-pending] dialog:not(#work-access-recovery) { visibility: h
 @media(max-width:650px){.table-wrap>table{min-width:780px}.printer-directory .table-wrap>table,.order-table>table{min-width:0}.table-wrap th,.table-wrap td{min-width:120px;word-break:normal;overflow-wrap:break-word}.table-wrap td:last-child{min-width:200px}.table-wrap button{white-space:normal;word-break:normal;overflow-wrap:break-word;min-width:150px;max-width:100%;line-height:1.6}.evidence-review .support-photo{max-width:100%;height:auto}.product-admin-grid{grid-template-columns:minmax(0,1fr)}}
 #staff-catalog-items .product-admin-card{min-width:0;overflow-wrap:anywhere}#staff-catalog-items button{max-width:100%;white-space:normal;min-height:44px}
 .evidence-review img{display:block;width:100%;max-width:360px;height:auto;border-radius:10px}.evidence-review form{display:grid;gap:12px}.evidence-review form button{max-width:100%;white-space:normal;min-height:44px}
+
+
+/* Supervision navigation groups preserve grants and the morning workspace. */
+#navigation .review-nav-group{margin:0 0 12px;min-width:0}
+#navigation .review-nav-title{font-size:11px;letter-spacing:.02em;color:#64748b;margin:8px 10px 6px;font-weight:700}
+#navigation .review-nav-links{display:grid;gap:3px}
+.delivery-room #navigation:has(.review-nav-group){align-items:stretch;white-space:normal;gap:12px}
+.delivery-room #navigation .review-nav-group{flex:1 0 220px;margin:0;border-inline-end:1px solid #e2e8f0;padding-inline-end:8px}
+.delivery-room #navigation .review-nav-links{display:flex;flex-wrap:wrap}
+#driver-checks .driver-check-utility{padding:10px 14px;font-size:13px}
+#driver-checks .driver-check-utility summary{cursor:pointer;color:#64748b}
+#driver-checks .driver-check-utility[open] button{margin-top:12px}
+@media(max-width:650px){.delivery-room #navigation .review-nav-group{flex-basis:100%;border-inline-end:0;border-bottom:1px solid #e2e8f0;padding-bottom:8px}}
+/* Supervisor shortcuts stay on screen; the full grouped menu opens on demand. */
+@media(min-width:651px){
+ .delivery-room .side:has(.review-nav-group) .dispatch-nav-toggle{display:inline-flex;align-items:center;min-height:34px;margin:4px 0;padding:5px 12px;font-size:12px;width:auto}
+ .delivery-room #navigation:has(.review-nav-group){display:none}
+ .delivery-room .side.nav-open #navigation:has(.review-nav-group){display:flex}
+ .delivery-room .dispatch-workspace:has(>.role-workspace-cards){gap:8px}
+ .delivery-room .dispatch-workspace>.role-workspace-cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+ .delivery-room .dispatch-workspace>.role-workspace-cards .role-workspace-card{min-height:48px;padding:9px 14px!important;gap:10px}
+ .delivery-room .dispatch-workspace>.role-workspace-cards .role-workspace-copy small{display:none}
+ .delivery-room .dispatch-workspace>.role-workspace-cards .role-workspace-copy strong{font-size:12px}
+ .delivery-room .dispatch-workspace>.role-workspace-cards .role-workspace-mark{height:28px;width:28px;font-size:10px}
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) .page-heading p{display:none}
+}
+@media(min-width:1000px){
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) .dispatch-stage{min-height:28px;padding:3px 8px;font-size:11px}
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) .dispatch-counts{gap:3px}
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) .dispatch-pane-heading{padding-block:10px}
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) .dispatch-workspace{gap:6px}
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) #dispatch-filters{padding-block:7px}
+}
+@media(min-width:1000px){
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) #main{padding-top:10px}
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) .page-heading{margin-bottom:4px}
+}
+@media(min-width:1000px){
+ body.delivery-room #content .dispatch-workspace>.role-workspace-cards .role-workspace-card{padding-block:4px!important;min-height:44px}
+}
+@media(min-width:1000px){
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) #dispatch-drivers .dispatch-driver{padding-block:4px}
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) .dispatch-side .conversation-list{padding-block:6px}
+}
+@media(min-width:1000px){
+ .delivery-room:has(.dispatch-workspace>.role-workspace-cards) #dispatch-drivers{max-height:165px}
+}

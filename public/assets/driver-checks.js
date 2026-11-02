@@ -20,7 +20,7 @@ window.KPSDriverChecks={init(ctx){
   if(identity!==key){host.replaceChildren();identity=key;}
   if(!user){host.replaceChildren();return;}
   if(canManage()){
-   if(!host.querySelector('[data-check-open]'))host.innerHTML=`<section class="panel"><button type="button" data-check-open>${esc(tr('طلبات العداد والبنزين — إجراء مؤقت','Odometer & fuel requests — temporary'))}</button><p class="muted">${esc(tr('لسواقين تحددهم، لمدة 20 دقيقة. اعتماد البنزين لهذا الشفت والسيارة فقط.','Selected drivers, for 20 minutes. Fuel approval applies only to this shift and vehicle.'))}</p></section>`;
+   if(!host.querySelector('[data-check-open]'))host.innerHTML=`<details class="panel driver-check-utility"><summary>${esc(tr('أدوات متابعة السيارة عند الحاجة','Vehicle follow-up tools'))}</summary><button type="button" data-check-open>${esc(tr('طلبات العداد والبنزين — إجراء مؤقت','Odometer & fuel requests — temporary'))}</button><p class="muted">${esc(tr('لسواقين تحددهم، لمدة 20 دقيقة. اعتماد البنزين لهذا الشفت والسيارة فقط.','Selected drivers, for 20 minutes. Fuel approval applies only to this shift and vehicle.'))}</p></details>`;
    return;
   }
   if(user.role!=='driver'){host.replaceChildren();return;}
