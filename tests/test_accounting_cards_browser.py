@@ -25,12 +25,12 @@ def test_accounting_cards_and_filters_fit_and_work(width, lang):
         page.evaluate('''async lang => {
           const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
           window.accountingQueries=[];
-          const ctx={lang,user:{id:'accountant',role:'owner'},tr:(ar,en)=>lang==='en'?en:ar,esc,money:v=>(v/100).toFixed(2),cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:()=>{},closeModal:()=>{},mutation:async()=>({}),
+          const ctx={view:{tab:'reports'},lang,user:{id:'accountant',role:'owner'},tr:(ar,en)=>lang==='en'?en:ar,esc,money:v=>(v/100).toFixed(2),cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:()=>{},closeModal:()=>{},mutation:async()=>({}),
           api:async url=>url.includes('/options')?{today:'2026-10-21',can_report:true,can_review:true,branches:[{id:'branch',branch_no:1,name:'حفر ١',city:'حفر الباطن'},{id:'branch2',branch_no:2,name:'حفر ٢',city:'حفر الباطن'},{id:'outside',branch_no:3,name:'الدمام',city:'الدمام'}],people:[{id:'driver',role:'driver',display_name:'سائق اختبار'}],products:[{id:'coffee',name:'قهوة'},{id:'unsold',name:'صنف بلا مبيعات'}],categories:{},states:{},responsibilities:{}}:url.includes('driver-settlements')?{settlements:[]}:url.includes('manager-closures')?{closures:[]}:(window.accountingQueries.push(url),{rows:[{label:'صنف بلا مبيعات',quantity:0}],columns:[{key:'label',label:'الصنف'},{key:'quantity',label:'الكمية'}],totals:{quantity:0},definitions:'TEST ONLY'})};
           await window.KPSAccounting.open(ctx);
         }''', lang)
         cards = page.locator('.ac-section-card')
-        assert cards.count() == 6
+        assert cards.count() == 5
         boxes = cards.evaluate_all('(els)=>els.map(e=>({w:e.getBoundingClientRect().width,h:e.getBoundingClientRect().height}))')
         assert max(b['w'] for b in boxes)-min(b['w'] for b in boxes) < 2
         assert page.locator('[data-ac=reports]').get_attribute('aria-pressed') == 'true'

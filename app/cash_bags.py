@@ -37,6 +37,25 @@ def create(c,user,day,legs,declaration,branch_id,reference,delivered):
     return bag
 
 
+def allocation_count(c,declaration_id):
+    """A manager's receipt never substitutes for accounting's actual bag count.
+
+    Older declarations without bag metadata retain their existing receipt path.
+    This check runs under the same workday lane lock as allocation/count writes.
+    """
+    bag=c.execute('SELECT b.id,b.declared_card_halalas,n.id count_id,n.received_cash_halalas,n.card_halalas FROM driver_cash_bags b LEFT JOIN driver_cash_bag_counts n ON n.bag_id=b.id WHERE b.declaration_id=%s',(declaration_id,)).fetchone()
+    if bag and not bag['count_id']:
+        raise db.error(409,'CASH_BAG_ACCOUNTING_RECEIPT_REQUIRED','اسحب كيس السائق واستلمه وعده فعليًا في جرد الأكياس قبل الإسناد والإقفال المالي؛ استلام مدير التوصيل وحده لا يكفي.')
+    if bag:
+        receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declaration_id,)).fetchone()
+        if receipt and (bag['received_cash_halalas']!=receipt['received_halalas'] or bag['card_halalas']!=bag['declared_card_halalas']):
+            from .cash_bag_custody import projection
+            review=projection(c,bag['id'],{'id':bag['count_id'],'received_cash_halalas':bag['received_cash_halalas'],'card_halalas':bag['card_halalas'],'declared_card_halalas':bag['declared_card_halalas']},receipt)
+            if not review['financial_treatment']:
+                raise db.error(409,'CASH_BAG_CUSTODY_REVIEW_REQUIRED','فرق بين استلام المدير وجرد المحاسبة؛ ارفع معالجة عهدة مستقلة واعتمدها قبل الإسناد دون تغيير الأصل أو تحميل السائق تلقائيًا.')
+    return bag
+
+
 def bag_view(c,day_id):
     row=c.execute('SELECT b.*,s.submission,s.staffing_ended_at,s.delivery_operational_date shift_date,u.display_name driver_name,br.name branch_name,n.id count_id,n.received_cash_halalas,n.card_halalas,n.created_at counted_at,n.reference count_reference,n.note count_note,a.display_name counted_by_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN shifts s ON s.id=d.anchor_shift_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id LEFT JOIN driver_cash_bag_counts n ON n.bag_id=b.id LEFT JOIN users a ON a.id=n.counted_by WHERE b.workday_id=%s AND NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id) ORDER BY b.deposited_at DESC LIMIT 1',(day_id,)).fetchone()
     if not row:return None
@@ -76,6 +95,14 @@ def inbox(user=Depends(auth.current_user)):
             row['ready_to_count']=b['destination']=='branch' or bool(receipt)
             row['state']='counted' if row['count_id'] else 'awaiting_accounting_receipt' if row['ready_to_count'] else 'awaiting_manager_receipt'
             row['cash_difference_halalas']=row['received_cash_halalas']-b['declared_cash_halalas'] if row['count_id'] else None
+            full_receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE declaration_id=%s',(b['declaration_id'],)).fetchone()
+            row['accounting_custody_difference_halalas']=row['received_cash_halalas']-full_receipt['received_halalas'] if row['count_id'] and full_receipt else None
+            row['accounting_custody_card_difference_halalas']=row['card_halalas']-row['declared_card_halalas'] if row['count_id'] else None
+            row['accounting_custody_review_required']=False
+            if row['accounting_custody_difference_halalas'] or row['accounting_custody_card_difference_halalas']:
+                from .cash_bag_custody import projection
+                row['custody_review']=projection(c,b['id'],{'id':row['count_id'],'received_cash_halalas':row['received_cash_halalas'],'card_halalas':row['card_halalas'],'declared_card_halalas':row['declared_card_halalas']},full_receipt)
+                row['accounting_custody_review_required']=not row['custody_review']['period_approval_allowed']
             result.append(row)
         return ops.safe({'bags':result})
 
@@ -133,3 +160,7 @@ def vault_close(sid:str,body:VaultClose,request:Request,user=Depends(auth.curren
             db.audit(c,user['id'],'manager.vault_closed','central_workday',day['id'],{'vault_closure_id':entry['id'],'bag_ids':[b['id'] for b in bags],'owner_receipt_required':False,'cash_received_by_accounting':False})
             return {'vault_closure_id':entry['id']}
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'manager.vault_close:'+day['id'],body.model_dump(),perform)
+
+
+from .cash_bag_custody import router as custody_router
+router.include_router(custody_router)

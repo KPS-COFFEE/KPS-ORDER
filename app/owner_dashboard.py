@@ -1,4 +1,4 @@
-"""Owner-only, read-only overview over the canonical accounting projection.
+"""Owner overview and a separately scoped read-only product sales report.
 
 Financial cards and paginated details share one population and one ledger.
 Cross-brand access is rebuilt from current grants; an owner of one brand is
@@ -345,4 +345,99 @@ def overview(
                not {branch['id'] for branch in scope['branches']} <= fresh[scope['brand']['id']]
                for scope in scopes):
             raise db.error(403, 'DASHBOARD_SCOPE_CHANGED', 'تغير نطاق الحساب أثناء تحميل اللوحة؛ حدّث الصفحة.')
+    return result
+
+
+
+def product_scopes(conn, user):
+    """Rebuild read authority from the live identity; never inherit owner powers."""
+    original = conn.execute('SELECT * FROM users WHERE id=%s', (user['id'],)).fetchone()
+    if not original or not original['active']:
+        raise db.error(403, 'PRODUCT_REPORT_FORBIDDEN', 'تقرير المنتجات غير متاح للحساب.')
+    principal = multibrand.project(conn, original, user['brand_id'])
+    if not principal:
+        raise db.error(403, 'BRAND_SCOPE', 'البراند خارج نطاق الحساب.')
+    if user.get('_morning_manager_context'):
+        from .morning_manager_context import resolve
+        principal = resolve(conn, principal, shift_id=user['_morning_manager_context']['shift_id'])
+    if principal['role'] == 'owner':
+        return authorized_scopes(conn, principal)
+    allowed = (principal['role'] == 'admin' and auth.has_permission(principal, 'accounting_reports')
+               or principal['role'] == 'delivery_manager' and
+               (auth.has_permission(principal, 'reports_view') or auth.has_permission(principal, 'accounting_reports')))
+    if not allowed:
+        raise db.error(403, 'PRODUCT_REPORT_FORBIDDEN', 'يلزم تصريح عرض تقارير المنتجات.')
+    brand = conn.execute('SELECT id,name FROM brands WHERE id=%s AND active', (principal['brand_id'],)).fetchone()
+    branches = conn.execute('SELECT id,name,branch_no,city FROM branches WHERE brand_id=%s AND id=ANY(%s) ORDER BY branch_no,id',
+                            (principal['brand_id'], principal.get('branch_ids', []))).fetchall()
+    if not brand or not branches:
+        raise db.error(403, 'BRANCH_SCOPE', 'لا توجد فروع مخولة لعرض التقرير.')
+    return [{'brand': brand, 'principal': principal,
+             'branches': [dict(branch, city=catalog.normalize_city(branch['city']), brand_id=brand['id'],
+                               brand_name=brand['name']) for branch in branches]}]
+
+
+@router.get('/product-sales')
+def product_sales(
+    response: Response,
+    brand_id: str = Query(default='', max_length=200),
+    period: Period = 'today',
+    start: str = Query(default='', max_length=10),
+    end: str = Query(default='', max_length=10),
+    city: str = Query(default='', max_length=120),
+    branch_id: str = Query(default='', max_length=200),
+    driver_id: str = Query(default='', max_length=200),
+    user=Depends(auth.current_user),
+):
+    first, last = selected_period(period, start, end)
+    city = catalog.normalize_city(city)
+    response.headers['Cache-Control'] = 'no-store'
+    with db.tx() as conn:
+        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+        scopes = product_scopes(conn, user)
+        brands = [scope['brand'] for scope in scopes]
+        selected_brand = brand_id or (user['brand_id'] if user['role'] != 'owner' else
+                                     'all' if central_operations.enabled() else user['brand_id'])
+        if selected_brand != 'all' and selected_brand not in {brand['id'] for brand in brands}:
+            raise db.error(403, 'BRAND_SCOPE', 'البراند خارج نطاق الحساب.')
+        selected = [scope for scope in scopes if selected_brand == 'all' or scope['brand']['id'] == selected_brand]
+        all_branches = [branch for scope in selected for branch in scope['branches']]
+        cities = sorted({branch['city'] for branch in all_branches if branch['city']})
+        if city and city not in cities:
+            raise db.error(403, 'CITY_SCOPE', 'المدينة خارج نطاق الفروع المتاحة.')
+        branches = [branch for branch in all_branches if not city or branch['city'] == city]
+        if branch_id and branch_id not in {branch['id'] for branch in branches}:
+            raise db.error(403, 'BRANCH_SCOPE', 'الفرع خارج نطاق الحساب.')
+        selected_branches = [branch for branch in branches if not branch_id or branch['id'] == branch_id]
+        drivers = driver_options(conn, selected_branches)
+        if driver_id and driver_id not in {driver['id'] for driver in drivers}:
+            raise db.error(403, 'PERSON_SCOPE', 'السائق خارج نطاق الفروع المختارة.')
+        rows, unallocated = [], 0
+        for scope in selected:
+            bids = [branch['id'] for branch in selected_branches if branch['brand_id'] == scope['brand']['id']]
+            if not bids:
+                continue
+            report = accounting.build(conn, scope['principal'], first.isoformat(), last.isoformat(),
+                                      branch_ids=','.join(bids), driver_id=driver_id, group='items', item_projection=True)
+            unallocated += report['unallocated_refund_count']
+            rows.extend(merge_product_rows(report['rows'], scope['brand'], report['unallocated_refund_count']))
+        result = safe({'schema_version': 1,
+            'brand': {'id': selected_brand, 'name': 'كل البراندات المخولة' if selected_brand == 'all' else
+                      next(brand['name'] for brand in brands if brand['id'] == selected_brand)},
+            'period': {'preset': period, 'start': first, 'end': last, 'timezone': 'Asia/Riyadh',
+                       'basis': 'manager_shift', 'fallback_start': '04:00', 'definition': DEFINITION},
+            'filters': {'brand_id': selected_brand, 'city': city, 'branch_id': branch_id, 'driver_id': driver_id},
+            'options': {'brands': brands, 'cities': [{'id': name, 'name': name} for name in cities],
+                        'branches': branches, 'drivers': drivers},
+            'product_sales': sorted(rows, key=lambda row: (-row['quantity'], row['label'], row['product_id'])),
+            'product_sales_unallocated_refunds': unallocated,
+            'generated_at': datetime.now(service_hours.RIYADH)})
+    with db.tx() as conn:
+        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+        fresh = {scope['brand']['id']: {branch['id'] for branch in scope['branches']}
+                 for scope in product_scopes(conn, user)}
+        if any(scope['brand']['id'] not in fresh or
+               not {branch['id'] for branch in scope['branches']} <= fresh[scope['brand']['id']]
+               for scope in scopes):
+            raise db.error(403, 'PRODUCT_REPORT_SCOPE_CHANGED', 'تغير نطاق الحساب أثناء تحميل التقرير؛ حدّث الصفحة.')
     return result

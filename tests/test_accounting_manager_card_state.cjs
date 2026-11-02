@@ -22,5 +22,10 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
  assert.match(mixed,/RELEASED: Driver duty ended;[^<]+Responsible: accounting/);
  assert.match(mixed,/OPEN: End the driver shift and send its closure — Responsible: delivery manager/);
 
+ assert.match(context.managerCardNext({financial_ledger_closed:false}),/collect and count the bag/);
+ assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:0,balance_completed:1}),/actually received cash/);
+ assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:1,balance_completed:1,review_needed_count:1}),/independent approval/);
+ assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:1,balance_completed:1,ready:true}),/issue the report/);
+ assert.match(context.managerCardNext({approved_day:{id:'saved'}}),/outstanding amounts and bank matching/);
  console.log('PASS: accounting card reload preserves opened cards, scroll, scope and pending-driver reasons; archive pagination stays selected');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -696,7 +696,7 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
         before=conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(report_id,)).fetchone()
         assert not conn.execute('SELECT 1 FROM manager_financial_matches WHERE report_id=%s',(report_id,)).fetchone()
     page.locator('#navigation [data-page=accounting]').click()
-    page.locator('[data-ac=matching]').click()
+    page.locator('[data-ac=settlements]').click()
     action=page.locator(f'[data-driver-balance="{report_id}"]')
     # Follow the same manager-card drill-down as the accountant. Driver actions
     # intentionally remain inside their shift until its card is opened.

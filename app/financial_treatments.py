@@ -197,7 +197,8 @@ def reviewed_values(c,report,latest=None,user=None):
         financial_completion_scope='closure_cash_and_recorded_card',
         overall_financially_complete=bool(result['financially_complete'] and bank['state'] in {'matched','no_card_operations'}))
     result['accounting_review_complete']=result['period_approval_allowed']
-    return result
+    from .cash_bag_custody import apply_report
+    return apply_report(c,report,result,user=user)
 
 
 
@@ -429,8 +430,8 @@ class RecoveryApproval(BaseModel):
     note:str=Field(min_length=5,max_length=2000,pattern=r'^[^\x00]+$')
 
 
-def recovery_history(c,rid,tid):
-    rows=c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.entity_type='report' AND a.entity_id=%s AND a.action IN (%s,%s,%s) AND a.details->>'treatment_id'=%s ORDER BY a.created_at,a.id",(rid,RECOVERY_PROPOSED,RECOVERY_APPROVED,RECOVERY_REJECTED,tid)).fetchall()
+def recovery_history(c,rid,tid,entity_type='report'):
+    rows=c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.entity_type=%s AND a.entity_id=%s AND a.action IN (%s,%s,%s) AND a.details->>'treatment_id'=%s ORDER BY a.created_at,a.id",(entity_type,rid,RECOVERY_PROPOSED,RECOVERY_APPROVED,RECOVERY_REJECTED,tid)).fetchall()
     decisions={r['details']['recovery_id']:r for r in rows if r['action']!=RECOVERY_PROPOSED}
     result=[]
     for row in rows:

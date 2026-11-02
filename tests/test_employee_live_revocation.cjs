@@ -13,8 +13,9 @@ const monitor=source.slice(start,end);
 
 function setup({role='driver',api}={}) {
   const attrs=new Map(),events=new Map(),intervals=[];
-  const calls=[],ownerDashboardCalls=[];
+  const calls=[],ownerDashboardCalls=[],productSalesCalls=[];
   const ownerDashboardController={pause(){ownerDashboardCalls.push('pause');},reset(){ownerDashboardCalls.push('reset');}};
+  const productSalesController={pause(){productSalesCalls.push('pause');},reset(){productSalesCalls.push('reset');}};
   const previous={id:'employee-a',role,effective_permissions:['orders_view']};
   const state={user:previous,csrf:'initial',staff:['private'],orders:['private'],shifts:['private'],conversations:['private'],requestKeys:new Map([['pending','private']]),chatHistory:new Map()};
   // The monitor now renders a non-private recovery dialog and makes work inert.
@@ -35,7 +36,7 @@ function setup({role='driver',api}={}) {
   const dialog={closed:false,close(){this.closed=true}};
   const root={hasAttribute:name=>attrs.has(name),setAttribute:(name,value)=>attrs.set(name,value),removeAttribute:name=>attrs.delete(name)};
   const document={hidden:false,documentElement:root,createElement:tag=>new Node(tag),body:new Node('body'),querySelectorAll:()=>[dialog],addEventListener:(name,cb)=>events.set(name,cb)};
-  const context={state,document,ownerDashboardController,trialMode:false,AbortController,
+  const context={state,document,ownerDashboardController,productSalesController,trialMode:false,AbortController,
     window:{addEventListener:(name,cb)=>events.set(name,cb)},
     $:(selector,parent)=>selector==='button'?parent.children[0].children.find(node=>node.tag==='button'):nodes.get(selector),
     api:async(...args)=>{calls.push(args);return api?api(...args):{user:{...previous},csrf_token:'fresh'}},
@@ -44,7 +45,7 @@ function setup({role='driver',api}={}) {
     closeModal:()=>calls.push(['closeModal']),renderBrandSwitch(){},navigation(){},loadPage:async()=>true,hideUnavailableActions(){},
     setStatus:(message,error)=>calls.push(['status',message,error]),tr:(_ar,en)=>en};
   vm.createContext(context);vm.runInContext(monitor,context);
-  return {context,state,attrs,dialog,modal,calls,events,intervals,ownerDashboardCalls};
+  return {context,state,attrs,dialog,modal,calls,events,intervals,ownerDashboardCalls,productSalesCalls};
 }
 
 for(const role of ['driver','owner']) {
@@ -92,6 +93,7 @@ test('a background page is masked before returning and cannot display old work d
   t.events.get('visibilitychange')();
   assert.equal(t.calls.length,0);
   assert.deepEqual(t.ownerDashboardCalls,['pause'],'Backgrounding must stop owner reads before a session check');
+  assert.deepEqual(t.productSalesCalls,t.ownerDashboardCalls,'Product report must follow the same verified access lifecycle');
   assert.equal(t.attrs.has('data-work-access-pending'),true);
   t.context.document.hidden=false;
   t.events.get('visibilitychange')();
@@ -205,11 +207,12 @@ test('the actual login transition scrubs already-open dialogs even when a backgr
   };
   const state={user:{id:'revoked'},requestKeys:new Map([['pending','private']]),chatHistory:new Map([['chat','private']]),csrf:'private'};
   const attrs=new Map([['data-work-access-pending','']]);
-  const ownerDashboardCalls=[];const ownerDashboardController={reset(){ownerDashboardCalls.push('reset');}};
-  const context={state,ownerDashboardController,$:node,employeeScopeRefreshRequired:false,setEmployeeAccessPending:pending=>{assert.equal(pending,false);attrs.delete('data-work-access-pending');node('#app-shell').inert=false;},trackingController:null,driverLocation:{reset(){}},setStatus(){},tr:(_ar,en)=>en,
+  const ownerDashboardCalls=[],productSalesCalls=[];const ownerDashboardController={reset(){ownerDashboardCalls.push('reset');}};const productSalesController={reset(){productSalesCalls.push('reset');}};
+  const context={state,ownerDashboardController,productSalesController,$:node,employeeScopeRefreshRequired:false,setEmployeeAccessPending:pending=>{assert.equal(pending,false);attrs.delete('data-work-access-pending');node('#app-shell').inert=false;},trackingController:null,driverLocation:{reset(){}},setStatus(){},tr:(_ar,en)=>en,
     document:{querySelectorAll:()=>dialogs,documentElement:{removeAttribute:name=>attrs.delete(name)},body:{classList:{remove(){}}}}};
   vm.createContext(context);vm.runInContext(loginSource,context);context.showLogin();
   assert.deepEqual(ownerDashboardCalls,['reset'],'The actual logout transition must erase owner dashboard state');
+  assert.deepEqual(productSalesCalls,['reset'],'Actual logout must erase the product report state');
   assert.equal(dialogs[0].closed,true);
   assert.equal(node('#modal-body').children.length,0);
   assert.equal(node('#content').innerHTML,'');
@@ -229,6 +232,7 @@ test('ordinary focus checks do not blank the visible interface while checking',a
   assert.equal(t.attrs.has('data-work-access-pending'),false);
   assert.equal(t.calls.length,1);
   assert.deepEqual(t.ownerDashboardCalls,[],'Ordinary focus must not interrupt a confirmed owner view');
+  assert.deepEqual(t.productSalesCalls,t.ownerDashboardCalls,'Product report must follow the same verified access lifecycle');
   // Repeated focus shares the in-flight request rather than firing duplicates.
   t.events.get('focus')();
   assert.equal(t.calls.length,1);

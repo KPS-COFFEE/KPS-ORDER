@@ -8,7 +8,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
     const docs={hidden:false,querySelectorAll:()=>[]},kind={value:'outstanding'},form={querySelector:q=>q==='[name=kind]'?kind:q==='[data-outstanding-fields]'?area:docs};
     let d={expected_revision:7,source:{cash_variance_halalas:-550,card_variance_halalas:0},treatments:[],followup_users:[{id:'followup',name:'Assigned accountant'}],can_propose:true,can_approve:true};
     const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const context={tr:(ar,en)=>lang==='en'?en:ar,esc,text:(ar,en)=>esc(lang==='en'?en:ar),money:v=>(v/100).toFixed(2),user:{id:'reviewer',role:'accountant'},host:{isConnected:true},document:{querySelector:q=>q==='[data-treatment-form]'?form:q==='[data-treatment-propose]'?propose:null,querySelectorAll:()=>reviewButtons},modal:(title,body,fn)=>{html=body;submit=fn;propose=body.includes('data-treatment-propose')?{addEventListener:(name,fn)=>propose.click=fn}:null;},closeModal:()=>{},api:async()=>d,mutation:async(path,body)=>{mutations.push({path,body:JSON.parse(JSON.stringify(body))});},loadManagerCards:async()=>{},field:(name,label,type,value,extra)=>`<label>${esc(label)}<input name="${name}" type="${type}" ${extra}></label>`,select:(name,label,content,extra)=>`<label>${esc(label)}<select name="${name}" ${extra||''}>${content}</select></label>`,opt:rows=>rows.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')};
+    const context={tr:(ar,en)=>lang==='en'?en:ar,esc,text:(ar,en)=>esc(lang==='en'?en:ar),money:v=>(v/100).toFixed(2),user:{id:'reviewer',role:'accountant'},host:{isConnected:true},document:{querySelector:q=>q==='[data-treatment-form]'?form:q==='[data-treatment-propose]'?propose:null,querySelectorAll:()=>reviewButtons},modal:(title,body,fn)=>{html=body;submit=fn;propose=body.includes('data-treatment-propose')?{addEventListener:(name,fn)=>propose.click=fn}:null;},closeModal:()=>{},api:async()=>d,mutation:async(path,body)=>{mutations.push({path,body:JSON.parse(JSON.stringify(body))});},loadManagerCards:async()=>{},load:async()=>{},field:(name,label,type,value,extra)=>`<label>${esc(label)}<input name="${name}" type="${type}" ${extra}></label>`,select:(name,label,content,extra)=>`<label>${esc(label)}<select name="${name}" ${extra||''}>${content}</select></label>`,opt:rows=>rows.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')};
     vm.createContext(context);vm.runInContext(source.slice(start,end),context);
     const r={id:'report /1',driver_name:'Actual <driver>',day:'2026-10-26'};
     await context.openTreatments(r);
@@ -48,6 +48,26 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
     const replacementForm=new Map([['kind','documented_channel_correction'],['evidence_reference','Actual corrected POS source'],['reversal_evidence_reference','Independent reversal evidence'],['note','Correct original classification while preserving paid money'],['liable_party_type','customer'],['liable_party_name','Documented customer'],['followup_user_id','followup'],['due_on','2026-10-27']]);replacementForm.getAll=()=>['canonical-correction'];await submit(replacementForm);
     assert.equal(mutations[5].body.supersedes_treatment_id,'old-approved');assert.equal(mutations[5].body.reversal_evidence_reference,'Independent reversal evidence');assert.equal(mutations[5].body.followup_user_id,'followup');
     const before=html;context.reviewTreatment(r,d,{...t,requested_by:context.user.id},'approve');assert.equal(html,before,'Self-review must not open');
+    d={expected_revision:1,expected_count_id:'immutable-count',expected_receipt_id:'immutable-manager-receipt',source:{cash_variance_halalas:-50,card_variance_halalas:0},treatments:[],followup_users:[{id:'followup',name:'Assigned accountant'}],can_propose:true,can_approve:true};
+    const bag={id:'bag',custody_bag_id:'bag /1',driver_name:'Driver',day:'2026-11-02'};kind.value='outstanding';
+    context.proposeTreatment(bag,d);
+    assert(html.includes(lang==='en'?'bag custody difference':'فرق عهدة الكيس'));
+    await submit(new Map([['kind','outstanding'],['evidence_reference','Counted bag evidence'],['note','Independent custody investigation'],['liable_party_type','merchant'],['liable_party_name','Documented party'],['followup_user_id','followup'],['due_on','2026-11-03']]));
+    assert.equal(mutations[6].path,'/api/cash-bags/bag%20%2F1/custody-review');assert.equal(mutations[6].body.expected_count_id,'immutable-count');assert.equal(mutations[6].body.expected_receipt_id,'immutable-manager-receipt');
+    assert.equal(mutations[6].body.cash_variance_halalas,-50);
+    context.reviewTreatment(bag,d,t,'approve');
+    await submit(new Map([['note','Custody evidence reviewed'],['evidence_reference','Independent custody count'],['confirmed','on']]));
+    assert.equal(mutations[7].path,'/api/cash-bags/bag%20%2F1/custody-review/treatment/approve');assert.equal(mutations[7].body.expected_count_id,'immutable-count');assert.equal(mutations[7].body.expected_receipt_id,'immutable-manager-receipt');
+    let recoveryContext,readPath;context.window={KPSFinancialTreatmentRecovery:{open:async options=>{recoveryContext=options;}}};context.api=async path=>{readPath=path;return d;};
+    await context.openTreatmentRecovery(bag,d,'treatment');
+    await recoveryContext.api('/api/accounting/driver-settlements/bag/treatments/treatment/recovery-sources?direction=receivable_recovery');
+    assert.equal(readPath,'/api/cash-bags/bag%20%2F1/custody-review/treatment/recovery-sources?direction=receivable_recovery');
+    await recoveryContext.mutation('/api/accounting/driver-settlements/bag/treatments/treatment/recoveries',{cash_amount_halalas:50,note:'Canonical cash movement'});
+    assert.equal(mutations.at(-1).path,'/api/cash-bags/bag%20%2F1/custody-review/treatment/recoveries');assert.equal(mutations.at(-1).body.expected_count_id,'immutable-count');assert.equal(mutations.at(-1).body.expected_receipt_id,'immutable-manager-receipt');assert(!('expected_revision' in mutations.at(-1).body));
+    await recoveryContext.api('/api/accounting/bank-reconciliation/bank-lines');assert.equal(readPath,'/api/accounting/bank-reconciliation/bank-lines');
+    await context.openTreatmentRecovery(r,d,'treatment');await recoveryContext.mutation('/api/accounting/driver-settlements/report%20%2F1/treatments/treatment/recoveries',{cash_amount_halalas:20});assert(!('expected_count_id' in mutations.at(-1).body),'Report recoveries retain their original contract');
+
+
   }
   console.log('PASS: AR/EN actual treatment UI proposal, channel correction, independent approval/rejection, evidence and owner-only receivable policy');
 })().catch(e=>{console.error(e);process.exitCode=1;});

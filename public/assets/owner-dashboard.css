@@ -165,3 +165,18 @@
 .owner-order-link>bdi{direction:ltr;overflow-wrap:anywhere;white-space:normal}
 .owner-order-hint{font-size:10px;color:var(--muted);font-weight:400}
 @media(max-width:600px){.owner-alert-grid{gap:9px}.owner-alert-grid>details>summary{font-size:12px;padding:13px 10px}.owner-alert-grid .owner-alert-body{padding:12px}.owner-order-hint{display:block;width:100%}}
+
+/* Product report: one readable filter strip and matching-result totals. */
+.owner-products-panel .owner-table-tools{padding-bottom:12px;grid-template-columns:minmax(200px,1fr)}
+.owner-product-controls{display:grid;grid-template-columns:minmax(160px,1fr) minmax(160px,1fr) auto;gap:14px;align-items:end;padding:0 28px 18px}
+.owner-product-controls label{display:grid;gap:7px;font-size:11px;font-weight:700;color:var(--muted)}
+.owner-product-controls select{width:100%;font-size:12px;min-height:42px;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:9px}
+.owner-product-controls p{font-size:11px;color:var(--muted);margin:0;padding-bottom:12px}
+.owner-product-totals{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border-block:1px solid var(--line);margin-bottom:12px}
+.owner-product-totals>div{display:grid;gap:8px;background:#fafbf8;padding:17px 24px}
+.owner-product-totals span{font-size:10px;color:var(--muted)}
+.owner-product-totals strong{font-size:22px;font-variant-numeric:tabular-nums}
+.owner-product-totals .owner-number{font-size:22px}
+.owner-products-panel #owner-products>p{padding:14px 28px;margin:0;color:var(--muted);font-size:11px;line-height:1.9}
+.product-sales-workspace #owner-results[hidden],.product-sales-workspace #owner-details[hidden]{display:none!important}
+@media(max-width:600px){.owner-product-controls{padding-inline:18px;grid-template-columns:1fr 1fr;gap:10px}.owner-product-controls p{grid-column:1/-1;padding:0}.owner-product-totals{grid-template-columns:1fr 1fr}.owner-product-totals>div{padding:14px 18px}.owner-product-totals strong,.owner-product-totals .owner-number{font-size:21px}.owner-products-panel #owner-products>p{padding-inline:18px}}

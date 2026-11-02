@@ -112,7 +112,7 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
-    'accounting_reports': {'methods':['GET'],'paths':['/api/accounting/options','/api/accounting/reports','/api/accounting/months','/api/accounting/months/{identifier}','/api/accounting/driver-settlements/{report_id}/print','/api/staff/catalog'],'scope':'explicit_owner_grant_read_only_current_brand_and_assigned_branches_no_review_receipt_refund_or_month_closure'},
+    'accounting_reports': {'methods':['GET'],'paths':['/api/owner-dashboard/product-sales','/api/accounting/options','/api/accounting/reports','/api/accounting/months','/api/accounting/months/{identifier}','/api/accounting/driver-settlements/{report_id}/print','/api/staff/catalog'],'scope':'explicit_owner_grant_read_only_current_brand_and_assigned_branches_no_review_receipt_refund_or_month_closure'},
     'orders_view': {'methods': ['GET'], 'paths': ['/api/orders', '/api/orders/{oid}', '/api/order-financial-cases/orders/{oid}/journey', '/api/fiscal/orders/{order_id}/documents', '/api/orders/{oid}/delivery-photos', '/api/delivery-photos/{aid}'], 'scope': 'explicit_admin_supervision_current_brand_and_assigned_branches_read_only_no_issuance_collection_refund_or_cancellation'},
     'chat_view': {'methods': ['GET', 'POST'], 'paths': ['/api/conversations', '/api/conversations/{cid}/messages', '/api/chat-attachments/{aid}', '/api/conversations/{cid}/read'], 'scope': 'explicit_admin_supervision_current_brand_and_assigned_branches_read_and_own_read_marker_only_no_reply_transfer_claim_or_resolve'},
     'orders_cancel_collected': {'methods': ['POST'], 'paths': ['/api/order-interventions/orders/{oid}/{rid}/decision', '/api/order-financial-cases/orders/{oid}/cancel', '/api/orders/{oid}/preparation', '/api/tasks/{tid}/transition'], 'scope': 'explicit_owner_grant_rechecked_from_live_identity_before_any_ever_collected_cancellation_existing_resource_and_approval_guards_no_refund_or_ledger_override'},
@@ -186,6 +186,7 @@ def catalog():
 
 # Resolved endpoint -> required capability. Existing endpoint policies still run.
 ROUTES = {
+    'owner_dashboard': {'product_sales': {'admin': 'accounting_reports', 'delivery_manager': ('reports_view', 'accounting_reports')}},
     'order_financial_cases': {'nonreceipt':'payments_collect','free_item_return':'support_manage','recovery_context':'accounting_review','recover':'accounting_review','refund_context':'accounting_review','cancel':{'admin':('orders_cancel_after_print','orders_cancel_collected'),'delivery_manager':'orders_cancel','branch_manager':'orders_cancel'},'journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':('orders_view','accounting_review')},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
     'preparation_routing': {'context': ('orders_view', 'delivery_assign'), 'choose': 'orders_route_preparation', 'queue': 'orders_view', 'task': 'orders_view', 'prepare': 'orders_prepare'},
     'task_recovery': {'listing':'tasks_resolve_delivery', 'detail':'tasks_resolve_delivery', 'review_revision':'tasks_resolve_delivery'},

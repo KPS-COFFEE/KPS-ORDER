@@ -376,3 +376,57 @@ def test_actual_ops_lands_owners_on_dashboard_and_rejects_other_roles(brand):
         assert not errors, errors
         context.close()
         browser.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('role,permission', [('delivery_manager', 'reports_view'), ('admin', 'accounting_reports')])
+def test_product_workspace_has_scoped_filters_totals_and_no_owner_controls(width, role, permission):
+    with sync_playwright() as p:
+        browser = browser_launch(p)
+        page = browser.new_page(viewport={'width': width, 'height': 950})
+        calls = []
+        def intercept(route):
+            path = urlsplit(route.request.url).path
+            if path == '/product-qa':
+                return route.fulfill(content_type='text/html; charset=utf-8', body='<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><main id="report"></main></html>')
+            if path == '/api/owner-dashboard/product-sales':
+                calls.append(route.request.url)
+                result = payload(route.request.url)
+                result['options']['brands'] = BRANDS[:1]
+                result['product_sales'].append({'product_id': 'unsold', 'label': 'صنف دون مبيعات', 'brand_name': 'كبز',
+                                               'quantity': 0, 'returned_quantity': 0, 'net_quantity': 0, 'gross': 0})
+                for key in ('summary', 'rows', 'status_breakdown', 'brand_breakdown'):
+                    result.pop(key, None)
+                return route.fulfill(json=result)
+            return route.abort()
+        page.route('**/*', intercept)
+        page.goto('https://qa.invalid/product-qa')
+        page.add_style_tag(content=(ROOT/'public/ops.css').read_text()+(ROOT/'public/assets/owner-dashboard.css').read_text())
+        page.add_script_tag(content=(ROOT/'public/assets/owner-dashboard.js').read_text())
+        page.evaluate('''async user=>{
+            window.widget=KPSOwnerDashboard.create({productOnly:true,getUser:()=>user,getScope:()=> 'report',
+                getLang:()=> 'ar',isActive:()=>true,
+                api:async (url,options)=>{const response=await fetch(url,options);return response.json();}});
+            await widget.mount(document.querySelector('#report'));
+        }''', {'id': 'qa-report', 'role': role, 'brand_id': 'kps', 'effective_permissions': [permission]})
+        expect(page.locator('#owner-results')).to_be_hidden()
+        expect(page.locator('#owner-details')).to_be_hidden()
+        expect(page.locator('#owner-product-totals')).to_contain_text('8')
+        expect(page.locator('#owner-products tbody tr')).to_have_count(2)
+        page.locator('#owner-product-state').select_option('all')
+        expect(page.locator('#owner-products tbody tr')).to_have_count(3)
+        page.locator('#owner-product-state').select_option('returned')
+        expect(page.locator('#owner-products tbody tr')).to_have_count(1)
+        expect(page.locator('#owner-products tbody tr')).to_contain_text('الخلية')
+        page.locator('#owner-product-state').select_option('unsold')
+        expect(page.locator('#owner-products tbody tr')).to_contain_text('صنف دون مبيعات')
+        page.locator('#owner-product-state').select_option('all')
+        page.locator('#owner-product-sort').select_option('value')
+        expect(page.locator('#owner-products tbody tr').first).to_contain_text('الخلية')
+        page.locator('#owner-product-search').fill('قهوة')
+        expect(page.locator('#owner-products tbody tr')).to_have_count(1)
+        expect(page.locator('#owner-product-totals')).to_contain_text('5')
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth+1')
+        assert calls and all(urlsplit(url).path == '/api/owner-dashboard/product-sales' for url in calls)
+        assert parse_qs(urlsplit(calls[0]).query)['brand_id'] == ['kps']
+        browser.close()

@@ -31,7 +31,7 @@ def access(user=Depends(auth.current_user)):
     return user
 
 def case_access(user=Depends(auth.current_user)):
-    if not (auth.has_permission(user,READ) or auth.has_permission(user,FOLLOW) or user['role']=='delivery_manager'):
+    if not (auth.has_permission(user,READ) or auth.has_permission(user,REVIEW) or auth.has_permission(user,FOLLOW) or user['role']=='delivery_manager'):
         fail('ACCOUNTING_FORBIDDEN','صلاحية متابعة الملاحظات غير متاحة.',403)
     return user
 
@@ -127,6 +127,11 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
           AND a.action='accounting.order_financial_treatment.approved' AND a.details->>'kind'='price_correction'
           AND a.created_at>=%s AND a.created_at<%s))"""
     args=[u['brand_id'],bids,ds,de,lo,hi,lo,hi,lo,hi,ds,de,lo,hi,ds,de,lo,hi]
+    if item_projection and u.get('_morning_manager_context'):
+        from .morning_manager_context import order_filter
+        clause, scoped_args = order_filter(u)
+        q += ' AND (' + clause + ')'
+        args.extend(scoped_args)
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
     if product_id:q+=" AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.snapshot->'items') x WHERE x->>'product_id'=%s)";args.append(product_id)
     if reference_search:
@@ -858,6 +863,8 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
 
 def save_driver_settlement(c, user, report_id, body, receipt=False):
     row = driver_settlement_scope(c, user, report_id)
+    from .cash_bag_custody import require_report_receipt
+    require_report_receipt(c,row)
     if not receipt:
         from .financial_integrity import require_verified
         require_verified(row['snapshot'])

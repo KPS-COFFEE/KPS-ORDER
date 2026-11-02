@@ -108,6 +108,22 @@ def view(c,user,day,legs):
       'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),'staffing_finished':all(physical_finished(c,s['id']) for _,s in legs),'staffing_block_reason':'retained_float_attribution' if receipt and not all(physical_finished(c,s['id']) for _,s in legs) else None}
     from .cash_bags import bag_view
     output['cash_bag']=bag_view(c,day['id'])
+    if output['cash_bag']:
+        bag=output['cash_bag']
+        bag['accounting_receipt_required']=True
+        bag['accounting_receipt_recorded']=bool(bag['count_id'])
+        bag['accounting_custody_card_difference_halalas']=bag['card_halalas']-bag['declared_card_halalas'] if bag['count_id'] else None
+        bag['accounting_custody_difference_halalas']=bag['received_cash_halalas']-receipt['received_halalas'] if bag['count_id'] and receipt else None
+        if not bag['count_id']:
+            output['can_allocate']=False
+            if receipt and not allocation:output['state']='awaiting_accounting_receipt'
+        elif bag['accounting_custody_difference_halalas'] or bag['accounting_custody_card_difference_halalas']:
+            from .cash_bag_custody import projection
+            bag['custody_review']=projection(c,bag['id'],{'id':bag['count_id'],'received_cash_halalas':bag['received_cash_halalas'],'card_halalas':bag['card_halalas'],'declared_card_halalas':bag['declared_card_halalas']},receipt)
+            bag['accounting_custody_review_required']=not bag['custody_review']['period_approval_allowed']
+            if not bag['custody_review']['financial_treatment']:
+                output['can_allocate']=False
+                if not allocation:output['state']='cash_bag_custody_review_pending'
     output['handover_branches']=c.execute('SELECT id,name,city FROM branches WHERE id=ANY(%s) ORDER BY branch_no', (list({bid for _,shift in legs for bid in shift['branch_ids']}),)).fetchall()
     if output['cash_bag'] and not receipt:
         output['state']='awaiting_accounting_receipt' if output['cash_bag']['destination']=='branch' else 'awaiting_manager_receipt'
@@ -121,6 +137,8 @@ def view(c,user,day,legs):
     if required and not approval and not returned:
         output.update(state='awaiting_manager_approval',staffing_finished=False,staffing_block_reason='awaiting_manager_approval')
     if user['role']=='driver':
+        if output['cash_bag']:
+            for key in ['accounting_custody_difference_halalas','accounting_custody_card_difference_halalas','custody_review','accounting_custody_review_required']:output['cash_bag'].pop(key,None)
         for key in ['expected_cash_halalas','expected_card_halalas','cash_difference_halalas','card_difference_halalas','receipt_difference_halalas','receipt_review_required','receipt_treatment','receipt_accounting_review','legs']:output.pop(key,None)
         if declaration:output['declaration']={k:v for k,v in declaration.items() if k not in {'expected_snapshot'}}
         output['allocation']=None
@@ -367,6 +385,8 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
             approval=manager_approval(c,legs,declaration)
             approval_required=manager_approval_required(c,legs) or bool(bag and bag['destination']=='branch')
             if approval_required and not approval and not legacy_released(legs):raise db.error(409,'SHARED_MANAGER_APPROVAL_PENDING','يلزم اعتماد مدير التوصيل للتقفيلة النهائية قبل الإقفال.')
+            from .cash_bags import allocation_count
+            allocation_count(c,declaration['id'])
             supplied,expected=validate_allocation(declaration,receipt,body.legs,treatment)
             validate_operational(c,user,legs)
             identifier=ops.uid();reports=[]
