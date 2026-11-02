@@ -1,7 +1,7 @@
 """Read-only driver fuel report over the canonical vehicle segment ledger."""
 from datetime import date
 from decimal import Decimal
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from . import auth, catalog, db, fleet, multibrand, service_hours, employee_permissions
 
 router = APIRouter(prefix='/api/fleet/driver-report', tags=['driver-fuel-report'])
@@ -63,11 +63,8 @@ def options(user=Depends(access)):
     return result
 
 
-@router.get('')
-def report(start: date | None = None, end: date | None = None,
-           driver_id: str | None = None, vehicle_id: str | None = None,
-           city: str = Query('', max_length=120), limit: int = Query(50, ge=1, le=200),
-           offset: int = Query(0, ge=0, le=1000000), user=Depends(access)):
+def report_data(user, start=None, end=None, driver_id=None, vehicle_id=None, city=''):
+    """Read the full filtered population once, shared by JSON paging and PDF."""
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
         scope = branches(c, user)
@@ -105,9 +102,41 @@ def report(start: date | None = None, end: date | None = None,
                   'fuel_record_missing': missing_fuel, 'fuel_amount_missing_count': missing_amounts,
                   'fuel_amount_known_halalas': known_amount,
                   'fuel_amount_halalas': known_amount if not missing_fuel and not missing_amounts else None}
-        result = {'rows': rows[offset:offset+limit], 'total': len(rows), 'summary': totals,
-                'period': {'start': lo, 'end': hi}, 'offset': offset, 'limit': limit,
+        result = {'rows': rows, 'total': len(rows), 'summary': totals,
+                'period': {'start': lo, 'end': hi},
+                'filters': {'driver': next((r['driver_name'] for r in rows), '') if driver_id else '',
+                            'vehicle': next((r['plate'] for r in rows), '') if vehicle_id else '',
+                            'driver_selected': bool(driver_id), 'vehicle_selected': bool(vehicle_id),
+                            'city': city, 'brand': user['brand_id']},
                 'note': 'كل صف فترة استلام سيارة داخل شفت السائق؛ تبديل السيارة لا يكرر التعبئة. المسافات واللترات من سجل التشغيل وتصحيحاته، وقيمة الوقود من مبالغ التعبئة المسجلة فقط. غياب التعبئة لا يثبت عدم التعبئة ولا يحمل السائق عجزا.'}
 
+    return result, scope
+
+
+@router.get('')
+def report(start: date | None = None, end: date | None = None,
+           driver_id: str | None = None, vehicle_id: str | None = None,
+           city: str = Query('', max_length=120), limit: int = Query(50, ge=1, le=200),
+           offset: int = Query(0, ge=0, le=1000000), user=Depends(access)):
+    data, scope = report_data(user, start, end, driver_id, vehicle_id, city)
+    data.update(rows=data['rows'][offset:offset+limit], offset=offset, limit=limit)
     recheck(user, scope)
-    return result
+    return data
+
+
+@router.get('/export/pdf')
+def export_pdf(start: date | None = None, end: date | None = None,
+               driver_id: str | None = None, vehicle_id: str | None = None,
+               city: str = Query('', max_length=120),
+               lang: str = Query('ar', pattern='^(ar|en)$'), user=Depends(access)):
+    from .driver_fuel_pdf import render
+    data, scope = report_data(user, start, end, driver_id, vehicle_id, city)
+    recheck(user, scope)
+    payload = render(data, lang)
+    # Rendering may be expensive; permissions revoked meanwhile must still deny
+    # the complete export before any bytes are released to the caller.
+    recheck(user, scope)
+    period = data['period']
+    return Response(payload, media_type='application/pdf', headers={
+        'Content-Disposition': f'attachment; filename="driver-fuel-{period["start"]}-{period["end"]}.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})

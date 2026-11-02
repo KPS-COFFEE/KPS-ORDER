@@ -130,3 +130,77 @@ def test_supervisor_grant_retracted_during_fuel_read_fails_closed(ops,monkeypatc
     monkeypatch.setattr(driver_fuel_report,'fuel_values',revoke)
     response=client.get('/api/fleet/driver-report?start=2026-10-12&end=2026-10-12')
     assert response.status_code==403,response.text
+
+
+def test_filtered_pdf_exports_entire_population_not_screen_page(ops, monkeypatch):
+    from app import driver_fuel_pdf
+    actor, *_ = ops
+    client = actor('owner')
+    with db.tx() as c:
+        for index in range(51):
+            seed(c, f'fuel-pdf-{index}', f'PDF {index}', 12)
+        seed(c, 'fuel-pdf-other-day', 'PDF OTHER DAY', 13)
+        seed(c, 'fuel-pdf-hidden', 'PDF HIDDEN', 12, bids=['ops-other'])
+    delegate(actor)
+    captured = []
+    def render(data, lang):
+        captured.append((data, lang))
+        return b'%PDF-1.4\n%%EOF'
+    monkeypatch.setattr(driver_fuel_pdf, 'render', render)
+    query = '?start=2026-10-12&end=2026-10-12'
+    page = client.get('/api/fleet/driver-report'+query+'&limit=1').json()
+    assert len(page['rows']) == 1 and page['total'] == 51
+    response = client.get('/api/fleet/driver-report/export/pdf'+query+'&lang=en&limit=1&offset=50')
+    assert response.status_code == 200, response.text
+    assert response.headers['content-type'] == 'application/pdf'
+    assert response.headers['cache-control'] == 'private, no-store'
+    assert '2026-10-12-2026-10-12.pdf' in response.headers['content-disposition']
+    data, lang = captured.pop()
+    assert lang == 'en' and len(data['rows']) == data['total'] == 51
+    assert data['summary'] == page['summary']
+    assert data['filters']['brand'] == 'ops-brand'
+    filtered = client.get('/api/fleet/driver-report/export/pdf'+query+'&vehicle_id='+page['rows'][0]['vehicle_id'])
+    assert filtered.status_code == 200
+    assert captured[-1][0]['total'] == 1
+    assert captured[-1][0]['filters']['vehicle_selected']
+    assert client.get('/api/fleet/driver-report/export/pdf'+query+'&city=outside-scope').status_code == 422
+    assert client.get('/api/fleet/driver-report/export/pdf'+query+'&lang=bad').status_code == 422
+    actor('driver')
+    assert client.get('/api/fleet/driver-report/export/pdf'+query).status_code == 403
+
+
+def test_pdf_denies_revocation_while_rendering(ops, monkeypatch):
+    from app import driver_fuel_pdf
+    actor, *_ = ops
+    client = actor('owner')
+    with db.tx() as c:
+        seed(c, 'fuel-pdf-revocation', 'PDF REVOKED', 12)
+    delegate(actor)
+    def render(data, lang):
+        with db.tx() as c:
+            c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-fawzi'")
+        return b'%PDF-1.4\n%%EOF'
+    monkeypatch.setattr(driver_fuel_pdf, 'render', render)
+    response = client.get('/api/fleet/driver-report/export/pdf?start=2026-10-12&end=2026-10-12')
+    assert response.status_code == 403
+    assert response.json()['detail']['code'] == 'FUEL_REPORT_SCOPE_CHANGED'
+
+
+def test_pdf_route_renders_real_ledger_and_empty_filter(ops):
+    import io
+    from pypdf import PdfReader
+    actor, *_ = ops
+    client = actor('owner')
+    with db.tx() as c:
+        seed(c, 'fuel-real-pdf', 'REAL PDF CAR', 12)
+    base = '/api/fleet/driver-report/export/pdf?start=2026-10-12&end=2026-10-12&lang=en'
+    response = client.get(base)
+    assert response.status_code == 200, response.text
+    pdf = PdfReader(io.BytesIO(response.content))
+    text = '\n'.join(p.extract_text() for p in pdf.pages)
+    assert 'REAL PDF CAR' in text and '210' in text
+    empty = client.get(base+'&driver_id=ops-driver2')
+    assert empty.status_code == 200
+    text = '\n'.join(p.extract_text() for p in PdfReader(io.BytesIO(empty.content)).pages)
+    assert 'No records for selected filters' in ' '.join(text.split())
+    assert 'Selected; no records' in text and 'REAL PDF CAR' not in text

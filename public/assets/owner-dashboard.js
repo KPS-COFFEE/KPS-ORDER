@@ -11,7 +11,20 @@
   const presets = ['today','yesterday','last7','month','custom'];
   const sorts = ['created_desc','created_asc','value_desc','value_asc'];
 
-  function create({api,getUser,getScope,getLang,isActive,onOrder,onAccessDenied,productOnly = false}) {
+  function workspaceCards({canNavigate = () => false, tr = (ar,en) => ar, esc = escape, owner = false} = {}) {
+    const destinations = [
+      ['productSales','مبيعات المنتجات','Product sales','المباع والمرتجع وصافي الكميات','Sold, returned and net quantities','01'],
+      ['accounting','المحاسبة والإقفال','Accounting & closure','الشفتات والأكياس والفروقات والاعتماد','Shifts, bags, differences and approval','02'],
+      ['driverFuel','البنزين والمسافات','Fuel & distance','حسب السائق والسيارة مع تصدير PDF','By driver and vehicle, with PDF export','03'],
+      ['interventionInbox','الحالات المطلوب اتخاذ إجراء فيها','Cases requiring action','مراجعة الطلبات المحالة ومتابعة القرار','Review referred orders and follow decisions','04'],
+      ...(owner ? [['employeeActivity','دخول الموظفين وأعمالهم','Employee activity','الدخول والجلسات وسجل الإجراءات','Sign-ins, sessions and action history','05']] : [])
+    ].filter(([page]) => canNavigate(page));
+    if (!destinations.length) return '';
+    const attr = owner ? 'data-owner-page' : 'data-page';
+    return `<nav class="role-workspace-cards" aria-label="${esc(tr('الوصول المباشر لأعمالك','Direct access to your work'))}">${destinations.map(([page,ar,en,detailAr,detailEn,mark]) => `<button type="button" class="role-workspace-card" ${attr}="${esc(page)}"><span class="role-workspace-mark" aria-hidden="true">${mark}</span><span class="role-workspace-copy"><strong>${esc(tr(ar,en))}</strong><small>${esc(tr(detailAr,detailEn))}</small></span><span class="role-workspace-arrow" aria-hidden="true">‹</span></button>`).join('')}</nav>`;
+  }
+
+  function create({api,getUser,getScope,getLang,isActive,onOrder,onAccessDenied,canNavigate = () => false,onNavigate,productOnly = false}) {
     let host = null, scope = null, data = null, dataKey = '', sequence = 0;
     let controller = null, searchTimer = null, requestPromise = null, lastFetch = 0;
     let filters = null, options = {brands:[],cities:[],branches:[],drivers:[]};
@@ -75,6 +88,7 @@
           <div><span class="owner-eyebrow">${escape(productOnly ? tr('تقرير واضح حسب نطاق حسابك','PRODUCT SALES IN YOUR SCOPE') : tr('رؤية موحّدة لأعمالك','YOUR BUSINESS AT A GLANCE'))}</span><h2 id="owner-period-title">${escape(presetName(filters.period))}</h2><div id="owner-brand-context" class="owner-brand-context"></div></div>
           <div class="owner-freshness"><span class="owner-access-badge">${escape(productOnly ? tr('تقرير للاطلاع','Read-only report') : tr('خاص بالملاك','Owners only'))}</span><button type="button" class="quiet owner-products-shortcut" data-owner-action="products">${escape(tr('مبيعات المنتجات','Product sales'))}</button><span id="owner-updated">${escape(tr('بانتظار البيانات','Waiting for data'))}</span><button type="button" class="quiet owner-refresh" data-owner-action="refresh"><span aria-hidden="true">↻</span> ${escape(tr('تحديث','Refresh'))}</button></div>
         </section>
+        ${!productOnly && onNavigate ? `<section class="owner-workspaces"><div class="owner-workspace-heading"><h3>${escape(tr('التقارير والإجراءات','Reports & actions'))}</h3><p>${escape(tr('اختر العمل المطلوب من بطاقته','Open the card for the task you need'))}</p></div>${workspaceCards({canNavigate,tr,owner:true})}</section>` : ''}
         <form id="owner-filters" class="owner-filters" aria-label="${escape(tr('تصفية جميع مؤشرات اللوحة','Filter all dashboard values'))}">
           <label for="owner-brand"><span>${escape(tr('البراند','Brand'))}</span><select id="owner-brand" name="brand_id"></select></label>
           <label for="owner-period"><span>${escape(tr('الفترة','Period'))}</span><select id="owner-period" name="period">${presets.map(preset => `<option value="${preset}"${preset === filters.period ? ' selected' : ''}>${escape(presetName(preset))}</option>`).join('')}</select></label>
@@ -87,6 +101,7 @@
         <div id="owner-period-basis" class="owner-period-basis"></div>
         <div id="owner-notice" class="owner-notice" role="status" aria-live="polite" hidden></div>
         <div id="owner-results" aria-busy="false"${productOnly ? ' hidden' : ''}>
+          <div class="owner-workspace-heading"><h3>${escape(tr('ملخص الفترة المختارة','Selected period overview'))}</h3><p>${escape(tr('الأرقام تتبع الفلاتر المعروضة أعلاه','Values follow the filters shown above'))}</p></div>
           <section id="owner-metrics" class="owner-metrics" aria-label="${escape(tr('المؤشرات الرئيسية','Key metrics'))}"></section>
           <section id="owner-finance-context" class="owner-finance-context" aria-label="${escape(tr('تفاصيل التحصيل والضيافة','Collections and complimentary orders'))}"></section>
           <div class="owner-analysis"><section id="owner-status-chart" class="owner-panel" aria-label="${escape(tr('توزيع حالات الطلبات','Order status distribution'))}"></section><section id="owner-brand-breakdown" class="owner-panel" aria-label="${escape(tr('الأرقام حسب البراند','Values by brand'))}"></section></div>
@@ -306,6 +321,16 @@
     function handleClick(event) {
       const button = event.target.closest('button');
       if (!button || !host.contains(button) || button.disabled) return;
+      if (button.hasAttribute('data-owner-page')) {
+        const page = button.dataset.ownerPage;
+        if (active() && getScope() === scope && canNavigate(page) && onNavigate) {
+          button.disabled = true;
+          Promise.resolve().then(() => onNavigate(page)).catch(failure => {
+            if (active()) showNotice(failure.message || tr('تعذر فتح الشاشة.','Could not open the workspace.'),'error');
+          }).finally(() => { button.disabled = false; });
+        }
+        return;
+      }
       if (button.hasAttribute('data-owner-order')) {
         const row = data?.rows?.find(item => String(item.id) === button.dataset.ownerOrder && String(item.brand_id) === button.dataset.ownerBrand);
         // Background refresh keeps the same cohort visible; its links stay usable.
@@ -406,5 +431,5 @@
     return {mount,refresh,pause,reset};
   }
 
-  window.KPSOwnerDashboard = Object.freeze({create});
+  window.KPSOwnerDashboard = Object.freeze({create,workspaceCards});
 })();

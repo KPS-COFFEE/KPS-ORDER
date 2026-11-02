@@ -180,3 +180,29 @@
 .owner-products-panel #owner-products>p{padding:14px 28px;margin:0;color:var(--muted);font-size:11px;line-height:1.9}
 .product-sales-workspace #owner-results[hidden],.product-sales-workspace #owner-details[hidden]{display:none!important}
 @media(max-width:600px){.owner-product-controls{padding-inline:18px;grid-template-columns:1fr 1fr;gap:10px}.owner-product-controls p{grid-column:1/-1;padding:0}.owner-product-totals{grid-template-columns:1fr 1fr}.owner-product-totals>div{padding:14px 18px}.owner-product-totals strong,.owner-product-totals .owner-number{font-size:21px}.owner-products-panel #owner-products>p{padding-inline:18px}}
+
+
+/* Role workspaces: direct, permission-filtered entry points, without operational entry forms. */
+.role-workspace-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;min-width:0}
+.role-workspace-card{display:flex;align-items:center;gap:12px;min-height:96px;padding:18px!important;text-align:start;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);box-shadow:0 2px 5px #172a1c04;transition:border-color .15s,box-shadow .15s}
+.role-workspace-card:hover{border-color:var(--accent);box-shadow:0 3px 12px #172a1c0d;background:var(--surface);filter:none}
+.role-workspace-card:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.role-workspace-mark{display:grid;place-items:center;width:34px;height:38px;flex-shrink:0;border-radius:9px;background:var(--accent-light);color:var(--accent);font-size:12px;font-weight:800;direction:ltr}
+.role-workspace-copy{display:grid;gap:6px;min-width:0;flex:1}
+.role-workspace-copy strong{font-size:13px;line-height:1.6;font-weight:750}
+.role-workspace-copy small{font-size:10px;font-weight:400;color:var(--muted);line-height:1.8}
+.role-workspace-arrow{font-size:23px;color:var(--accent);flex-shrink:0}
+[dir=ltr] .role-workspace-arrow{transform:rotate(180deg)}
+.owner-intro{background:linear-gradient(115deg,var(--surface),var(--accent-light));box-shadow:0 3px 14px #172a1c05}
+.owner-metric{box-shadow:0 2px 8px #172a1c04}
+@media(max-width:960px){.role-workspace-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.role-workspace-cards{gap:9px;grid-template-columns:repeat(2,minmax(0,1fr))}.role-workspace-card{padding:13px!important;min-height:111px;gap:8px;align-items:start}.role-workspace-mark{width:26px;height:28px;font-size:10px}.role-workspace-copy{gap:5px}.role-workspace-copy strong{font-size:12px}.role-workspace-copy small{font-size:10px;line-height:1.7}.role-workspace-arrow{display:none}.owner-freshness .owner-products-shortcut{grid-column:1/-1;width:100%;margin-top:8px;grid-row:3}.owner-dashboard .owner-product-totals strong{font-size:23px}}
+@media(prefers-reduced-motion:reduce){.role-workspace-card{transition:none}}
+.owner-workspaces{display:grid;gap:12px;min-width:0}
+.owner-workspace-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.owner-workspace-heading h3{font-size:14px;margin:0;line-height:1.7;font-weight:750}
+.owner-workspace-heading p{font-size:11px;margin:0;color:var(--muted);line-height:1.8}
+.owner-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+.owner-metric-featured,.owner-metric:not(.owner-metric-featured){grid-column:span 1;min-height:150px;padding:20px}
+.owner-metric-featured .owner-metric-value .owner-number{font-size:32px}
+@media(max-width:600px){.owner-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.owner-metric-featured,.owner-metric:not(.owner-metric-featured){padding:16px 13px;min-height:140px}.owner-metric-featured .owner-metric-value .owner-number,.owner-metric-value .owner-number{font-size:27px}.owner-metric h3{font-size:11px}.owner-metric .owner-currency{font-size:9px}.owner-metric-secondary{gap:3px}.owner-workspace-heading{gap:3px}.owner-workspace-heading p{font-size:10px}.owner-metric-featured:first-child::after{width:70px;height:70px;border-width:15px;top:-35px}}

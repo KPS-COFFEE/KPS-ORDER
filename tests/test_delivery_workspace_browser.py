@@ -21,12 +21,15 @@ def static_customer():
 pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Chromium run')
 
 
+@pytest.mark.parametrize('supervisor',[False,True],ids=['delivery-manager','general-manager'])
 @pytest.mark.parametrize('lang,width',[('ar',1366),('en',1366),('ar',390)])
-def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,width):
+def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,width,supervisor):
     from playwright.sync_api import sync_playwright, expect
     user={'id':'manager','brand_id':'kps','role':'delivery_manager','display_name':'مدير التوصيل',
           'branch_ids':['branch'],'effective_permissions':['dashboard_view','orders_view','delivery_assign',
           'shifts_view','drivers_view','drivers_availability','chat_view','chat_reply','chat_manage','shifts_open']}
+    if supervisor:
+        user['effective_permissions'] += ['reports_view','reports_supervise']
     shift={'id':'manager-shift','user_id':'manager','kind':'manager','status':'open','branch_ids':['branch'],
            'opened_at':'2026-10-20T05:00:00+03:00','delivery_window_snapshot':{'period':'morning'}}
     def order(oid,period,prep,delivery='pending'):
@@ -39,7 +42,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
                     'delivery_workflow':'branch_fulfillment' if period=='morning' else 'manager_dispatch','items':[]}}
     orders=[order('morning','morning','new'),order('new-evening','evening','new'),order('late','evening','accepted')]
     conversation={'id':'chat1','order_reference':'late','customer_name':'عميل تجريبي','route':'delivery','status':'open','unread_count':1}
-    writes=[];order_queries=[];map_config_requests=[]
+    writes=[];order_queries=[];map_config_requests=[];owner_data_reads=[]
     with sync_playwright() as p:
         browser=p.chromium.launch(headless=True,executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE') or None)
         context=browser.new_context(viewport={'width':width,'height':1000})
@@ -55,6 +58,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.route('**/*',isolated_assets)
         def route_api(route):
             req=route.request;path=urlparse(req.url).path
+            if path=='/api/owner-dashboard':owner_data_reads.append(req.url)
             if req.method!='GET': writes.append((path,req.post_data_json))
             payload={}
             if path=='/api/session':payload={'user':user,'csrf_token':'synthetic-token'}
@@ -79,6 +83,15 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.route('**/api/**',route_api)
         page.goto(static_customer+'/ops.html')
         expect(page.locator('#dispatch-orders')).to_be_visible()
+        if supervisor:
+            expect(page.locator('.role-workspace-cards')).to_be_visible()
+            assert set(page.locator('.role-workspace-cards [data-page]').evaluate_all('(nodes)=>nodes.map(node=>node.dataset.page)')) == {'productSales','driverFuel','interventionInbox'}
+            expect(page.locator('#navigation .review-nav-group')).to_have_count(3)
+        else:
+            expect(page.locator('.role-workspace-cards')).to_have_count(0)
+            expect(page.locator('#navigation .review-nav-group')).to_have_count(0)
+        expect(page.locator('[data-page=ownerDashboard]')).to_have_count(0)
+        assert not owner_data_reads, 'The general manager overview must not request owner-only financial data'
         expect(page.locator('#dispatch-orders article')).to_have_count(3)
         expect(page.locator('[data-source-scope=current] [data-order-source=manager]')).to_contain_text('طلبات مدير التوصيل' if lang=='ar' else 'Delivery manager orders')
         expect(page.locator('[data-source-scope=current] [data-order-source=website] b')).to_have_text(page.evaluate('(lang)=>new Intl.NumberFormat(lang).format(2)',lang))
@@ -133,8 +146,19 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
                       chatTop:chat.top,chatBottom:chat.bottom};
             }""")
             assert geometry['rowTop'] < min(650,geometry['height']*.72),geometry
-            assert 0 <= geometry['navTop'] < geometry['navBottom'] <= geometry['rowTop'],geometry
-            assert geometry['navHeight'] <= 110,geometry
+            if supervisor:
+                assert geometry['navHeight'] == 0,geometry
+                menu=page.locator('.dispatch-nav-toggle')
+                expect(menu).to_be_visible()
+                menu.click()
+                expect(page.locator('#navigation')).to_be_visible()
+                expect(menu).to_have_attribute('aria-expanded','true')
+                menu.click()
+                expect(page.locator('#navigation')).not_to_be_visible()
+                expect(menu).to_have_attribute('aria-expanded','false')
+            else:
+                assert 0 <= geometry['navTop'] < geometry['navBottom'] <= geometry['rowTop'],geometry
+                assert geometry['navHeight'] <= 110,geometry
             assert geometry['sideTop'] <= geometry['rowTop'] < geometry['sideBottom'],geometry
             # Orders on the right, map in the center, drivers and inbox on the
             # left are present together in both locales, without panel tabs.
@@ -157,7 +181,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
             expect(page.locator('#navigation')).not_to_be_visible()
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         Path('test-results').mkdir(exist_ok=True)
-        page.screenshot(path=f'test-results/customer-entry-control-room-{lang}-{width}.png',full_page=True)
+        page.screenshot(path=f'test-results/customer-entry-control-room-{supervisor}-{lang}-{width}.png',full_page=True)
         assert page.locator('[data-action="manager-accept"][data-id="morning"]').count()==0
         assert page.locator('[data-action="assign"][data-id="morning"]').count()==0
         page.locator('[data-action="dispatch-inspect"][data-id="new-evening"]').first.click()
@@ -194,7 +218,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         assert not external_requests,external_requests
         assert not errors,errors
         Path('test-results').mkdir(exist_ok=True)
-        page.screenshot(path=f'test-results/customer-entry-delivery-dashboard-{lang}-{width}.png',full_page=True)
+        page.screenshot(path=f'test-results/customer-entry-delivery-dashboard-{supervisor}-{lang}-{width}.png',full_page=True)
         # Conversation is now an explicit closable window. Close it before
         # interacting with controls behind its modal backdrop.
         page.locator('#modal-close').click()
@@ -251,4 +275,5 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         assert len(writes)==before_writes
         assert not errors,errors
+        assert not owner_data_reads, 'No owner-only requests during manager actions or refreshes'
         browser.close()

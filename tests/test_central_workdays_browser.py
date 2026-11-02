@@ -176,7 +176,9 @@ def test_driver_shared_closure_has_one_cash_card_input_and_accounting_allocation
                 accountant_page.goto(central_web+'/ops')
                 accountant_page.locator('#navigation [data-page=accounting]').click()
                 # The manager receipt does not witness accountant collection.
-                # Follow the actual accounting workspace and count this bag first.
+                # This manager duty is still open, so the bag is in the
+                # secondary queue until its manager period card becomes available.
+                accountant_page.locator('.ac-workspace-help > summary').click()
                 accountant_page.locator('[data-ac-bag-count]').click()
                 counted=accountant_page.locator('#modal form')
                 expect(counted.locator('[name=cash]')).to_have_value('')

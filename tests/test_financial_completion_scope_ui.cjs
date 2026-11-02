@@ -13,14 +13,20 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
     const card={id:'manager',manager_name:'TEST MANAGER',day:'2026-10-26',drivers:rows,review_completed:2,completed:1,total:2,completion_percent:100,financial_completion_percent:50,balance_completed:2,cash_completed:2,overdue_count:0,outstanding_receivable_halalas:20000,outstanding_payable_halalas:0,ready:true};
     const context={saveManagerCardView:()=>{},window:{scrollY:0,scrollTo:()=>{}},managerCardOffset:0,managerCardFocus:'',managerCardOpenIds:new Set(),URLSearchParams,host,tab:'settlements',api:async()=>({cards:[card]}),options:{can_review:false},user:{id:'accountant'},tr,esc,text:(ar,en)=>esc(tr(ar,en)),money:v=>(v/100).toFixed(2),dateTime:()=>'',cashCorrectionTickets:()=>'',settlementStates:()=>({cash_received:tr('تم استلام الكاش — مراجعة الموازنة معتمدة','Cash received — balance review approved')}),bindSettlementActions:()=>{}};
     vm.createContext(context);vm.runInContext(rowSource+cardsSource,context);await context.loadManagerCards();
-    assert(html.includes('2 / 2 '+tr('مراجعات محاسبية معتمدة','accounting reviews approved')));
-    assert(!html.includes('1 / 2 '+tr('مراجعات محاسبية معتمدة','accounting reviews approved')));
+    // The card now separates the review ratio, its label and the progress
+    // element. Assert that region's financial meaning rather than old prose.
+    const progress=html.match(/<span class="ac-shift-progress">([\s\S]*?)<\/span>/)?.[1];
+    assert(progress,'Driver review progress must remain visible');
+    assert(progress.includes('<bdi>2 / 2</bdi>'));
+    assert(progress.includes(tr('مراجعات السائقين','Driver reviews')));
+    assert(!progress.includes('<bdi>1 / 2</bdi>'));
+    assert.match(progress,/<progress max="100" value="100"/);
     assert(html.includes(tr('مستحقات التقفيلة المسواة — كاش وشبكة مسجلة','Closure obligations settled — cash and recorded card')+': 1 / 2'));
-    assert(html.includes('100%')&&html.includes('200.00'));
+    assert(html.includes('200.00'),'The outstanding receivable must remain explicit despite 100% review progress');
     assert(html.includes(tr('المراجعة المحاسبية فقط','accounting review requirements only'))||html.includes('Accounting review requirements only'));
     assert(html.includes(tr('المطابقة البنكية غير موثقة','bank matching undocumented')));
     assert(!html.includes('Financially reconciled')&&!html.includes('مكتمل ماليًا'));
-    assert(html.includes(tr('اعتمادها مع مستحق مثبت لا يعني سداد المستحق أو مطابقة البنك','approval with a documented outstanding amount does not settle that amount or establish bank matching')));
+    assert(html.includes(tr('اعتماد المراجعة لا يثبت سداد المستحقات أو مطابقة البنك','Review approval does not establish settlement of outstanding amounts or bank matching.')));
   }
   console.log('PASS: review100% uses2/2 reviews; scoped obligations stay1/2 with200due and bank-undocumented state');
 })().catch(e=>{console.error(e);process.exitCode=1;});

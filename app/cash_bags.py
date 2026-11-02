@@ -90,7 +90,7 @@ def inbox(user=Depends(auth.current_user)):
                 raise
             row=bag_view(c,day['id'])
             if row['id']!=b['id']:continue
-            row=dict(row,anchor_shift_id=b['anchor_shift_id'])
+            row=dict(row,anchor_shift_id=b['anchor_shift_id'], shift_ids=sorted({s['id'] for _,s in legs}), manager_shift_ids=sorted({s['manager_shift_id'] for _,s in legs if s.get('manager_shift_id')}))
             receipt=c.execute('SELECT id FROM shared_driver_closure_receipts WHERE declaration_id=%s',(b['declaration_id'],)).fetchone()
             row['ready_to_count']=b['destination']=='branch' or bool(receipt)
             row['state']='counted' if row['count_id'] else 'awaiting_accounting_receipt' if row['ready_to_count'] else 'awaiting_manager_receipt'

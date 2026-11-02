@@ -18,6 +18,9 @@ def test_accountant_reports_exports_case_and_bilingual_layout(live_app,chromium_
         expect(page.locator('#navigation [data-page=catalog]')).to_be_visible()
         assert set(page.locator('#navigation button').evaluate_all('(buttons)=>buttons.map(b=>b.dataset.page)'))=={'accounting','driverStatements','catalog','employeeTickets','productSales'}
         expect(page.locator('[data-ac=settlements]')).to_have_attribute('aria-pressed','true')
+        expect(page.locator('.ac-workspace-help > summary')).to_be_visible()
+        expect(page.locator('.ac-workflow')).not_to_be_visible()
+        page.locator('.ac-workspace-help > summary').click()
         expect(page.locator('.ac-workflow')).to_be_visible()
         page.locator('[data-ac=reports]').click()
         expect(page.locator('#ac-results table')).to_be_visible()
