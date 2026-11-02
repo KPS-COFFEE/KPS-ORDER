@@ -166,6 +166,18 @@ def _staff_navigation(page):
     return navigation
 
 
+def _navigate_staff(page, destination):
+    """Use the real menu each time; changing workspace closes its mobile drawer."""
+    from playwright.sync_api import expect
+    expect(page.locator(f'#navigation [data-page="{destination}"]')).to_be_attached()
+    _staff_navigation(page).locator(f'[data-page="{destination}"]').click()
+    expect(page.locator(f'#navigation [data-page="{destination}"]')).to_have_attribute('aria-current','page')
+    toggle=page.locator('.side.compact-navigation .dispatch-nav-toggle')
+    if page.viewport_size['width'] <= 760 and toggle.count():
+        expect(toggle).to_have_attribute('aria-expanded','false')
+        expect(page.locator('#navigation')).not_to_be_visible()
+
+
 def _owner_login(context, base, owner):
     from tests.sms_policy_helpers import register_synthetic_mobile
     with db.tx() as conn:

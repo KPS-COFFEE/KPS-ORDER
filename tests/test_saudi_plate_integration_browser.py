@@ -5,7 +5,7 @@ import pytest
 
 from app import db
 from test_browser import (
-    ARTIFACTS, _context, _owner_login, _staff,
+    ARTIFACTS, _context, _owner_login, _staff, _navigate_staff,
     chromium_browser,
 )
 from test_fleet import seed
@@ -40,15 +40,7 @@ def test_existing_private_vehicle_bilingual_edit_preserves_fleet_and_history(liv
         page.goto(live_app + '/ops')
         expect(page.locator('#navigation [data-page=ownerDashboard]')).to_have_attribute('aria-current', 'page')
         expect(page.locator('#owner-dashboard')).to_be_visible()
-        fleet_navigation = page.locator('#navigation [data-page=fleet]')
-        if not fleet_navigation.is_visible():
-            menu = page.locator('.dispatch-nav-toggle')
-            expect(menu).to_be_visible()
-            expect(menu).to_have_attribute('aria-expanded', 'false')
-            menu.click()
-            expect(menu).to_have_attribute('aria-expanded', 'true')
-            expect(page.locator('#navigation')).to_be_visible()
-        fleet_navigation.click()
+        _navigate_staff(page,'fleet')
         card = page.locator(f'[data-fleet-card="{car["id"]}"]')
         expect(card.locator('[data-saudi-plate]')).to_have_count(1)
         expect(card.locator('.saudi-plate__letters[lang=en]')).to_have_text('DZJ')
@@ -57,7 +49,7 @@ def test_existing_private_vehicle_bilingual_edit_preserves_fleet_and_history(liv
         card.locator('[data-fleet-vehicle]').click()
         expect(page.locator('[data-fleet-row]')).to_have_count(1)
         expect(page.locator('[data-fleet-row] [data-saudi-plate]')).to_have_count(1)
-        page.locator('#navigation [data-page=admin]').click()
+        _navigate_staff(page,'admin')
         page.locator('[data-action=admin-tab][data-tab=users]').click()
         edit = page.locator(f'[data-action=edit-staff][data-id="{driver["id"]}"]')
         edit.locator('xpath=ancestor::details').locator('summary').click()

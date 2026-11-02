@@ -3,6 +3,7 @@
 No API interceptions: the role navigation, scoped projection, filters and fuel
 ledger execute the production handlers. Financial workflows stay read-only.
 """
+from test_browser import _navigate_staff
 import os
 from urllib.parse import parse_qs, urlsplit
 
@@ -93,7 +94,7 @@ def test_role_report_navigation_filters_and_financial_read_only(live_app, chromi
             expect(page.locator('#navigation [data-page=ownerDashboard]')).to_have_count(0)
             denied = context.request.get(live_app+'/api/owner-dashboard', headers={'X-KPS-Context': 'work'})
             assert denied.status == 403
-        page.locator('#navigation [data-page=productSales]').click()
+        _navigate_staff(page,'productSales')
         expect(page.locator('#product-sales')).to_be_visible()
         expect(page.locator('#owner-period')).to_be_enabled()
         expect(page.locator('#owner-results')).to_be_hidden()
@@ -124,7 +125,7 @@ def test_role_report_navigation_filters_and_financial_read_only(live_app, chromi
         _navigation(page)
         if role in ('owner', 'gm'):
             with page.expect_response(_response(FUEL_API+'/options')) as fuel_options:
-                page.locator('#navigation [data-page=driverFuel]').click()
+                _navigate_staff(page,'driverFuel')
             assert fuel_options.value.status == 200
             form = page.locator('#driver-fuel-filters')
             expect(form).to_be_visible()

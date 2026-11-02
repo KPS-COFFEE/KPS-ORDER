@@ -3,6 +3,7 @@
 The first POST reaches the actual server and commits. Its reply is then dropped
 by Chromium's network fault injection. No business or session reply is mocked.
 """
+from test_browser import _navigate_staff
 import os
 import pytest
 from app import db
@@ -23,7 +24,7 @@ def test_lost_committed_cash_response_preserves_form_blocks_edits_and_replays_on
     try:
         _owner_login(work,base,owner)
         page.goto(base+'/ops',wait_until='networkidle')
-        page.locator('#navigation [data-page=shifts]').click()
+        _navigate_staff(page,'shifts')
         page.locator(f'[data-action=shift-detail][data-id="{sid}"]').click()
         page.locator('#modal details').last.locator('summary').click()
         page.locator(f'[data-action=cash-event][data-id="{sid}"]').click()
@@ -56,7 +57,7 @@ def test_lost_committed_cash_response_preserves_form_blocks_edits_and_replays_on
         page.unroute('**'+path,lose_reply)
         if recovery=='reload-unrecorded':
             page.reload(wait_until='networkidle')
-            page.locator('#navigation [data-page=shifts]').click()
+            _navigate_staff(page,'shifts')
             page.locator(f'[data-action=shift-detail][data-id="{sid}"]').click()
             page.locator('#modal details').last.locator('summary').click()
             page.locator(f'[data-action=cash-event][data-id="{sid}"]').click()

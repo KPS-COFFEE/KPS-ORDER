@@ -1,4 +1,5 @@
 """Real owner navigation, audit filtering and idle session revocation."""
+from test_browser import _navigate_staff
 import os
 import pytest
 from app import db
@@ -21,7 +22,7 @@ def test_owner_report_filters_recorded_work_and_ends_idle_employee_sessions(sms_
             c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES('TEST-activity-order','kps','kps-branch-1',%s,'delivery','new','pending','cash',1000,0,1000,%s,'{}')",(owner['id'],db.json({'order_reference':'TEST-activity-order'})))
             db.audit(c,employee['id'],'order.created','order','TEST-activity-order',{'password':'must-never-appear'})
         page.goto(base+'/ops',wait_until='networkidle')
-        page.locator('#navigation [data-page=employeeActivity]').click()
+        _navigate_staff(page,'employeeActivity')
         expect(page.locator('#employee-activity')).to_be_visible()
         form=page.locator('#employee-activity-filters')
         form.locator('[name=employee_id]').select_option(employee['id'])

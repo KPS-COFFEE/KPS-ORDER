@@ -1,4 +1,5 @@
 """AR/mobile and EN/desktop owner UI against PostgreSQL, without real money."""
+from test_browser import _navigate_staff
 import os
 import pytest
 from app import db
@@ -38,7 +39,7 @@ def test_owner_test_void_confirmation_and_retained_history(live_app,chromium_bro
             page.get_by_role('button',name='English',exact=True).click()
             expect(page.locator('#content')).to_have_attribute('aria-busy','false')
         expect(page.locator('#owner-dashboard')).to_be_visible()
-        page.locator('#navigation [data-page=dashboard]').click()
+        _navigate_staff(page,'dashboard')
         expect(page.locator('#content')).to_have_attribute('aria-busy','false')
         all_orders=page.locator('[data-action=dispatch-filter][data-scope=all][data-stage=""]')
         all_orders.click()
