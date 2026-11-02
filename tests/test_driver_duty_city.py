@@ -93,7 +93,7 @@ def test_grouped_city_repair_preserves_all_ledgers_and_closure_access(central):
         rows=c.execute("SELECT brand_id,branch_ids,available FROM shifts WHERE user_id='dual-driver'").fetchall()
         assert next(r for r in rows if r['brand_id']=='kps')['branch_ids']==['nar']
         enb=next(r for r in rows if r['brand_id']=='enbishan')
-        assert enb['branch_ids']==[] and enb['available'] is False
+        assert set(enb['branch_ids'])=={'enbishan-test-1','enbishan-test-2'} and enb['available'] is False
     assert actor('driver','kps').get(f'/api/central-operations/workdays/{root}').status_code==200
     with db.tx() as c:
         assert c.execute("SELECT city FROM driver_duty_cities WHERE driver_id='dual-driver'").fetchone()['city']=='النعيرية'
@@ -113,3 +113,18 @@ def test_next_group_opening_excludes_other_city_brand_ledgers(central):
         'manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection()})
     assert len(driver['shifts'])==1
     assert driver['shift']['branch_ids']==['nar'] and driver['shift']['brand_id']=='kps'
+
+
+@pytest.mark.postgres
+def test_group_opening_requires_one_city_across_single_city_brand_legs(central):
+    _,_,post,_,_=central
+    central_city()
+    with db.tx() as c:
+        # Each individual brand is unambiguous, but the physical union is not.
+        c.execute("UPDATE users SET branch_ids='[\"nar\"]' WHERE id='dual-driver'")
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    denied=post('driver','/api/central-operations/workdays',{'kind':'driver',
+        'manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection()},status=409)
+    assert denied['detail']['code']=='DRIVER_SHIFT_CITY_REQUIRED'
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM shifts WHERE user_id='dual-driver'").fetchone()

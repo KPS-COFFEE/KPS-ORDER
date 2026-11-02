@@ -150,10 +150,17 @@ def _open(c, user, body):
         raise db.error(403, 'CENTRAL_BRANCH_SCOPE', 'فرع غير مخول للموظف.')
     from .driver_shift_city import assigned
     duty_city=assigned(c,target['id'],body.duty_city) if body.kind=='driver' else None
-    if body.kind == 'driver' and duty_city:
+    if body.kind == 'driver':
         from .driver_shift_city import select as select_city
-        rows=c.execute('SELECT * FROM branches WHERE id=ANY(%s)', (sorted(selected or available),)).fetchall()
-        selected={b['id'] for b in select_city(rows, duty_city)}
+        # Choose the physical city across the entire manager overlap before
+        # splitting it into brand ledgers. Individually single-city brand legs
+        # can still form an unusable multi-city workday when combined.
+        manager_branches={bid for row in c.execute('SELECT branch_ids FROM shifts WHERE id=ANY(%s)',
+                             (list(parent_legs.values()),)).fetchall() for bid in row['branch_ids']}
+        admitted=(selected or available) & manager_branches
+        if admitted:
+            rows=c.execute('SELECT * FROM branches WHERE id=ANY(%s)', (sorted(admitted),)).fetchall()
+            selected={b['id'] for b in select_city(rows, duty_city)}
     # A manual opening float belongs to one ledger once. Existing retained funds
     # and distinct accountant-approved floats retain their original brand.
     scopes.sort(key=lambda b: (b['id'] != target['brand_id'], b['id']))

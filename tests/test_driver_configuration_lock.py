@@ -9,7 +9,7 @@ pytestmark = pytest.mark.postgres
 def test_driver_cannot_pause_or_choose_shift_branches(ops):
     actor, post, order, shifts = ops
     with db.tx() as c:
-        c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-second',2,'ops-second-source','ops-brand','Second','Test','{}')")
+        c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-second',2,'ops-second-source','ops-brand','Second','حفر الباطن','{}')")
         c.execute("UPDATE users SET branch_ids=%s WHERE id IN ('ops-manager','ops-driver')", (db.json(['ops-branch','ops-second']),))
     manager = post('manager','/api/shifts',{'kind':'manager','branch_ids':['ops-branch','ops-second']})['shift']['id']
     post('driver','/api/shifts',{'kind':'driver','branch_ids':['ops-branch'],'manager_shift_id':manager},status=403)

@@ -55,17 +55,18 @@ def correct_group(c, user, sid, body):
         selected=[b for b in rows if catalog.normalize_city(b.get('city') or '')==chosen]
         if selected:ops.driver_shift_window(c,s['brand_id'],selected,manager,manager_user)
         changes.append((s,[b['id'] for b in selected]))
-    # A foreign ledger with no branches remains for closure only. The physical
-    # vehicle anchor itself must serve the selected city.
+    # Foreign-city ledgers retain historical scope and money, but stop admitting
+    # tasks. The physical vehicle anchor must serve the selected city.
     if not next(bids for s,bids in changes if s['id']==day['anchor_shift_id']):
         ops.fail(409, 'المدينة غير مخولة لشفت السيارة الأساسي.')
     for s,bids in changes:
         window=dict(s.get('delivery_window_snapshot') or {})
-        if 'branches' in window:window['branches']={k:v for k,v in window['branches'].items() if k in bids}
+        retained=bids or s['branch_ids']
+        if bids and 'branches' in window:window['branches']={k:v for k,v in window['branches'].items() if k in bids}
         c.execute('UPDATE shifts SET branch_ids=%s,delivery_window_snapshot=%s,available=%s WHERE id=%s',
-                  (db.json(bids),db.json(window),s['available'] if bids else False,s['id']))
+                  (db.json(retained),db.json(window),s['available'] if bids else False,s['id']))
         db.audit(c,user['id'],'shift.duty_city.corrected','shift',s['id'],
-                 {'before_branch_ids':s['branch_ids'],'branch_ids':bids,'city':body.city,
+                 {'before_branch_ids':s['branch_ids'],'branch_ids':retained,'accepting_tasks':bool(bids),'city':body.city,
                   'reason':body.reason,'financial_changes':False,'workday_id':day['id']})
     remember(c,user,day['user_id'],body.city,body.reason)
     return {'shift_id':sid,'city':body.city,'financial_changes':False}
