@@ -13,5 +13,14 @@ for(const lang of ['ar','en']){
  assert.equal(write.path,'/api/owner-driver-interventions/orders/order-1/assign');assert.equal(write.body.resume_for_task,true);assert.equal(write.body.reason,'Owner approves this single task');assert.equal(write.body.driver_shift_id,'paused-duty');
  ctx.state.user.role='delivery_manager';await assert.rejects(()=>ctx.run('order-1',null,true));
 }
+for(const legacy of [false,true]){
+ let html='';
+ const manager={id:'manager-duty',display_name:'Receiving manager',status:'open',shift_no:44};
+ const ctx={state:{user:{role:'owner'}},tr:(a,b)=>b,esc:String,loadBranches:async()=>{},api:async()=>legacy?{shifts:[{...manager,kind:'manager'},{id:'driver-duty',kind:'driver',status:'open'}]}:{available_manager_shifts:[manager,{...manager,id:'closing-manager',status:'closing'}]},selectOptions:rows=>rows.map(x=>x.id).join(),modal:(title,body)=>{html=body},branchChecks:()=>'',textarea:()=>'',notice:s=>s,formEnd:s=>s,shiftLabel:x=>x.id};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('  async function ownerDriverMove('),source.indexOf('  function dutyCityControl('))+';this.run=ownerDriverMove;',ctx);
+ await ctx.run('driver-duty');
+ assert(html.includes('manager-duty'));assert(!html.includes('closing-manager'));assert(!html.includes('driver-duty'));
+}
 console.log('PASS: AR/EN owner-only one-task exception uses audited endpoint and retains reason/target; manager denied.');
 })().catch(e=>{console.error(e);process.exit(1)});
