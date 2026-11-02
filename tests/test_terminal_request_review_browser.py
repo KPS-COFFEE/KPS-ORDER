@@ -1,5 +1,7 @@
 """Terminal pending request actions through served assets and real HTTP/PostgreSQL."""
 import os
+import re
+from pathlib import Path
 from uuid import uuid4
 import pytest
 from app import db,auth
@@ -60,7 +62,8 @@ def test_terminal_pending_request_has_real_review_action_and_preserves_original_
         assert dialog.evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
         page.screenshot(path=str(ARTIFACTS/f'terminal-request-{who}-{lang}-{width}.png'),full_page=True)
         assert any('/assets/order-amendments.js?v=20261101-terminal-customer-review1' in url for url in reads)
-        assert any('/ops.js?v=20261101-terminal-customer-review1' in url for url in reads)
+        shipped_ops = re.search(r'<script src="(/ops\.js\?v=[^"]+)"', (Path(__file__).resolve().parents[1]/'public/ops.html').read_text()).group(1)
+        assert any(shipped_ops in url for url in reads)
         assert sale_records(oid)==before
         with db.tx() as c:
             event=c.execute("SELECT actor_id,details FROM order_events WHERE order_id=%s AND event_type=%s",(oid,'customer_request.decided' if action=='rejected' else 'customer_request.referred')).fetchone()

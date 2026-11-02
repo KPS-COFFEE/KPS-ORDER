@@ -2,13 +2,14 @@
 from datetime import date
 from decimal import Decimal
 from fastapi import APIRouter, Depends, Query
-from . import auth, catalog, db, fleet, multibrand, service_hours
+from . import auth, catalog, db, fleet, multibrand, service_hours, employee_permissions
 
 router = APIRouter(prefix='/api/fleet/driver-report', tags=['driver-fuel-report'])
 
 
 def access(user=Depends(auth.current_user)):
-    if user['role'] not in {'owner', 'admin'} or not auth.has_permission(user, fleet.PERMISSION):
+    maintenance_reader = user['role'] in {'owner', 'admin'} and auth.has_permission(user, fleet.PERMISSION)
+    if not maintenance_reader and not employee_permissions.reports_supervisor(user):
         raise db.error(403, 'ROLE_FORBIDDEN', 'تقرير البنزين والمسافات غير مخول لحسابك.')
     return user
 

@@ -175,6 +175,23 @@ def test_driver_shared_closure_has_one_cash_card_input_and_accounting_allocation
             try:
                 accountant_page.goto(central_web+'/ops')
                 accountant_page.locator('#navigation [data-page=accounting]').click()
+                # The manager receipt does not witness accountant collection.
+                # Follow the actual accounting workspace and count this bag first.
+                accountant_page.locator('[data-ac-bag-count]').click()
+                counted=accountant_page.locator('#modal form')
+                expect(counted.locator('[name=cash]')).to_have_value('')
+                expect(counted.locator('[name=card]')).to_have_value('')
+                counted.locator('[name=cash]').fill('0')
+                counted.locator('[name=card]').fill('0')
+                counted.locator('[name=reference]').fill('Witnessed zero cash and card count')
+                counted.locator('[name=confirmed]').check()
+                counted.locator('button[type=submit]').click()
+                expect(accountant_page.locator('#modal')).not_to_be_visible(timeout=30000)
+                with db.tx() as c:
+                    witnessed=c.execute('SELECT n.* FROM driver_cash_bag_counts n JOIN driver_cash_bags b ON b.id=n.bag_id WHERE b.declaration_id=%s',(declaration['id'],)).fetchone()
+                    assert witnessed['received_cash_halalas']==0 and witnessed['card_halalas']==0
+                    assert witnessed['counted_by']=='dual-accountant'
+                    assert c.execute('SELECT received_halalas FROM shared_driver_closure_receipts WHERE id=%s',(physical['id'],)).fetchone()['received_halalas']==physical['received_halalas']
                 accountant_page.locator('[data-action=shared-driver-inbox]').click()
                 accountant_page.locator('[data-action=shared-driver-case][data-id="'+sid+'"]').click()
                 allocation=accountant_page.locator('#central-closure-form')
@@ -273,7 +290,7 @@ def test_vault_close_and_actual_bag_count_need_no_owner_confirmation(central,cen
     try:
         page.goto(central_web+'/ops')
         page.locator('#navigation [data-page=accounting]').click()
-        page.locator('[data-action=cash-bags]').click()
+        page.locator('#page-heading [data-action=cash-bags]').click()
         page.locator('[data-action=cash-bag-count][data-id="'+declared['cash_bag']['id']+'"]').click()
         form=page.locator('#modal form')
         form.locator('[name=cash]').fill('6.50')

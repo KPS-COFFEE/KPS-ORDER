@@ -89,3 +89,44 @@ def test_handover_report_preserves_each_vehicle_fuel_without_double_count(ops):
     assert data['summary']['fuel_amount_halalas']==3300
     assert data['summary']['liters']==31
     assert len({(r['shift_id'],r['segment_no']) for r in data['rows']})==2
+
+
+def test_general_manager_supervisor_reads_without_maintenance_and_revokes(ops):
+    actor,*_=ops;client=actor('owner')
+    with db.tx() as c:
+        seed(c,'fuel-supervisor-visible','SUPERVISOR VISIBLE',12)
+        seed(c,'fuel-supervisor-hidden','SUPERVISOR HIDDEN',12,bids=['ops-other'])
+    actor('manager')
+    url='/api/fleet/driver-report?start=2026-10-12&end=2026-10-12'
+    assert client.get(url).status_code==403
+    assert client.get('/api/fleet/driver-report/options').status_code==403
+    with db.tx() as c:
+        c.execute("UPDATE users SET extra_permissions='[\"reports_supervise\"]' WHERE id='ops-manager'")
+    actor('manager')  # Fixture snapshots the dependency; real auth reads each request.
+    response=client.get(url);assert response.status_code==200,response.text
+    assert [r['shift_id'] for r in response.json()['rows']]==['fuel-supervisor-visible']
+    assert client.get('/api/fleet/driver-report/options').status_code==200
+    # A report-only supervisor never gains maintenance mutation/listing access.
+    assert client.get('/api/fleet/vehicles').status_code==403
+    with db.tx() as c:
+        c.execute("UPDATE users SET permission_denials='[\"reports_supervise\"]' WHERE id='ops-manager'")
+    assert client.get(url).status_code==403
+    with db.tx() as c:
+        c.execute("UPDATE users SET permission_denials='[\"reports_view\"]' WHERE id='ops-manager'")
+    assert client.get(url).status_code==403
+
+
+def test_supervisor_grant_retracted_during_fuel_read_fails_closed(ops,monkeypatch):
+    from app import driver_fuel_report
+    actor,*_=ops;client=actor('owner')
+    with db.tx() as c:
+        seed(c,'fuel-supervisor-revoke','SUPERVISOR REVOKE',12)
+        c.execute("UPDATE users SET extra_permissions='[\"reports_supervise\"]' WHERE id='ops-manager'")
+    actor('manager')
+    original=driver_fuel_report.fuel_values
+    def revoke(log):
+        with db.tx() as c:c.execute("UPDATE users SET extra_permissions='[]' WHERE id='ops-manager'")
+        return original(log)
+    monkeypatch.setattr(driver_fuel_report,'fuel_values',revoke)
+    response=client.get('/api/fleet/driver-report?start=2026-10-12&end=2026-10-12')
+    assert response.status_code==403,response.text

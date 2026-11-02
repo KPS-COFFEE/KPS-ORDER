@@ -23,7 +23,7 @@ test('morning manager retains orders landing and only scoped report grant',()=>{
  const boot=harness('delivery_manager',['orders_view','reports_view'],{bootstrap:true});assert(!boot.ctx.allowed('productSales'));
 });
 test('owner and explicitly authorized GM can read fuel report, accounting alone cannot',()=>{
- for(const [role,permissions,expected] of [['owner',[],true],['admin',['vehicle_maintenance_manage'],true],['admin',['accounting_reports'],false],['driver',['vehicle_maintenance_manage'],false]])assert.equal(harness(role,permissions).ctx.allowed('driverFuel'),expected);
+ for(const [role,permissions,expected] of [['owner',[],true],['admin',['vehicle_maintenance_manage'],true],['admin',['accounting_reports'],false],['delivery_manager',['reports_view','reports_supervise'],true],['delivery_manager',['reports_view'],false],['driver',['vehicle_maintenance_manage'],false]])assert.equal(harness(role,permissions).ctx.allowed('driverFuel'),expected);
 });
 test('vehicle shift summary exposes refuel only on the driver own open shift',()=>{
  for(const [role,uid,expected] of [['owner','someone',false],['delivery_manager','someone',false],['admin','someone',false],['driver','someone',false],['driver','actor',true]]){

@@ -29,17 +29,19 @@ def _navigation(page):
 
 def _fixture(role):
     actors = {name: _staff(value) for name, value in (
-        ('owner', 'owner'), ('accountant', 'admin'), ('gm', 'admin'),
+        ('owner', 'owner'), ('accountant', 'admin'), ('gm', 'delivery_manager'),
         ('manager', 'delivery_manager'), ('driver', 'driver'), ('customer', 'customer'))}
     permissions = {
         'accountant': ['accounting_reports', 'accounting_review'],
-        'gm': ['accounting_reports', 'vehicle_maintenance_manage'],
+        'gm': ['reports_view'],
         'manager': ['reports_view', 'orders_view', 'shifts_view'],
     }
     with db.tx() as conn:
         for name, grants in permissions.items():
             conn.execute('UPDATE users SET permissions=%s WHERE id=%s',
                          (db.json(grants), actors[name]['id']))
+        conn.execute("UPDATE users SET extra_permissions=%s WHERE id=%s",
+                     (db.json(['reports_supervise']), actors['gm']['id']))
         shift = duty(conn, 'role-browser', brand='kps', branch='kps-branch-1',
                      manager=actors['manager']['id'], driver=actors['driver']['id'])
         sale(conn, 'role-browser', shift, 1650, DAY+'T18:00:00', DAY+'T18:10:00',
@@ -72,6 +74,11 @@ def test_role_report_navigation_filters_and_financial_read_only(live_app, chromi
     report_failures = []
     try:
         _owner_login(context, live_app, actor)
+        if role == 'gm':
+            session = context.request.get(live_app+'/api/session', headers={'X-KPS-Context': 'work'}).json()['user']
+            assert session['role'] == 'delivery_manager'
+            assert {'reports_supervise', 'reports_view'} <= set(session['effective_permissions'])
+            assert {'accounting_reports', 'vehicle_maintenance_manage'}.isdisjoint(session['effective_permissions'])
         page.set_viewport_size({'width': width, 'height': 950})
         page.on('request', lambda request: mutations.append(request.url)
                 if request.method not in ('GET', 'HEAD', 'OPTIONS') and
