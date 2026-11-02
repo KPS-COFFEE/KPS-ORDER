@@ -163,6 +163,16 @@ def test_owner_widget_filters_pagination_refresh_faults_and_mobile_layout(width,
             await widget.mount(document.querySelector('#owner-dashboard'));
         }''', owner())
         expect(page.locator('[data-owner-page]')).to_have_count(5)
+        # Figures must be encountered before filters and work navigation.
+        metric=page.locator('#owner-metrics .owner-metric').first.bounding_box()
+        filters=page.locator('#owner-filters').bounding_box()
+        workspaces=page.locator('.owner-workspaces').bounding_box()
+        assert metric and filters and workspaces
+        assert metric['y'] < filters['y'] < workspaces['y']
+        if width == 390:
+            assert metric['y'] < 300, 'Owner sees actual metrics immediately on mobile'
+        page.locator('[data-owner-action=filters]').click()
+        expect(page.locator('#owner-brand')).to_be_focused()
         page.locator('[data-owner-page=driverFuel]').click()
         assert page.evaluate('workspacePages') == ['driverFuel']
         page.evaluate("allowedPages=allowedPages.filter(page=>page!=='accounting')")

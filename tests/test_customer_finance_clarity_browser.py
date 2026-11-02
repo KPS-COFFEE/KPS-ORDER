@@ -1,4 +1,5 @@
 """Real HTTP browser acceptance; no production data, messages, or mocked responses."""
+from test_browser import _navigate_staff
 import os
 from datetime import datetime,time,timedelta
 from zoneinfo import ZoneInfo
@@ -39,7 +40,7 @@ def test_multi_driver_rows_filters_and_read_only_branch_catalog(live_app,chromiu
     context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,accountant)
     try:
         page.set_viewport_size({'width':width,'height':950});page.goto(live_app+'/ops')
-        page.locator('#navigation [data-page=accounting]').click();page.locator('[data-ac=reports]').click()
+        _navigate_staff(page,'accounting');page.locator('[data-ac=reports]').click()
         expect(page.locator('#ac-description')).not_to_have_text('')
         page.locator('[name=start]').fill(day);page.locator('[name=end]').fill(day)
         page.locator('[name=branch_ids]').select_option('kps-branch-1')
@@ -65,7 +66,7 @@ def test_multi_driver_rows_filters_and_read_only_branch_catalog(live_app,chromiu
         expect(page.locator('#ac-description')).to_contain_text('كشف شهر مقفل محفوظ')
         page.locator('[name=group]').select_option('driver_statement')
         expect(page.locator('#ac-description')).to_contain_text('كشف شهر مقفل محفوظ')
-        page.locator('#navigation [data-page=catalog]').click()
+        _navigate_staff(page,'catalog')
         expect(page.locator('#staff-catalog-items .product-admin-card').first).to_be_visible()
         page.screenshot(path=f'test-artifacts/clarity-branch-catalog-{width}.png',full_page=True)
         assert page.locator('[data-stock]').count()==0

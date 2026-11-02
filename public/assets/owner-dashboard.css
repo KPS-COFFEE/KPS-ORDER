@@ -206,3 +206,24 @@
 .owner-metric-featured,.owner-metric:not(.owner-metric-featured){grid-column:span 1;min-height:150px;padding:20px}
 .owner-metric-featured .owner-metric-value .owner-number{font-size:32px}
 @media(max-width:600px){.owner-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.owner-metric-featured,.owner-metric:not(.owner-metric-featured){padding:16px 13px;min-height:140px}.owner-metric-featured .owner-metric-value .owner-number,.owner-metric-value .owner-number{font-size:27px}.owner-metric h3{font-size:11px}.owner-metric .owner-currency{font-size:9px}.owner-metric-secondary{gap:3px}.owner-workspace-heading{gap:3px}.owner-workspace-heading p{font-size:10px}.owner-metric-featured:first-child::after{width:70px;height:70px;border-width:15px;top:-35px}}
+
+/* Show the current figures before navigation and optional exploration tools. */
+.owner-filter-shortcut{font-size:11px;padding:7px 12px}
+@media(max-width:600px){
+  .owner-dashboard{gap:12px}
+  .owner-intro{padding:14px 16px;gap:10px}
+  .owner-intro h2{font-size:18px;line-height:1.5;margin:0 0 7px}
+  .owner-intro .owner-eyebrow,.owner-intro .owner-access-badge{display:none}
+  .owner-intro .owner-brand-badge{min-height:22px;padding:2px 7px;font-size:10px}
+  .owner-freshness{display:flex;flex-wrap:wrap;gap:5px 8px}
+  .owner-freshness #owner-updated{width:100%;font-size:10px}
+  .owner-freshness .owner-refresh,.owner-freshness .owner-filter-shortcut,.owner-freshness .owner-products-shortcut{width:auto;min-height:36px;padding:5px 11px;margin:0;font-size:11px}
+  .owner-metrics{gap:8px}
+  .owner-metric-featured,.owner-metric:not(.owner-metric-featured){padding:13px 12px;min-height:132px}
+  .owner-metric h3{font-size:12px;margin-bottom:8px}
+  .owner-metric-value{margin-bottom:7px}
+  .owner-metric-value .owner-number,.owner-metric-featured .owner-metric-value .owner-number{font-size:26px}
+  .owner-metric-secondary{margin-bottom:5px;font-size:11px}
+  .owner-metric-note{font-size:11px;line-height:1.6}
+  .owner-workspaces .role-workspace-card{min-height:74px;padding:10px!important}
+}
