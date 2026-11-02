@@ -22,6 +22,15 @@ def test_temporary_requests_fawzi_and_driver(live_app,chromium_browser,language)
         page.goto(live_app+'/ops');dp.goto(live_app+'/ops')
         if language=='en':
             page.get_by_role('button',name='English',exact=True).click();dp.get_by_role('button',name='English',exact=True).click()
+        expect(page.locator('[data-check-open]')).to_have_count(1)
+        # Current supervisory screens keep this utility collapsed until needed.
+        # The prior application keeps its button visible; both use real controls.
+        if not page.locator('[data-check-open]').is_visible():
+            utility=page.locator('.driver-check-utility')
+            expect(utility).to_be_visible()
+            utility.locator(':scope > summary').click()
+            expect(utility).to_have_attribute('open','')
+        expect(page.locator('[data-check-open]')).to_be_visible()
         page.locator('[data-check-open]').click(timeout=15000)
         page.locator('#check-send [name=driver_ids]').check()
         page.locator('#check-send button[type=submit]').click()

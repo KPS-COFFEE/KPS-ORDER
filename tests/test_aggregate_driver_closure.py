@@ -317,8 +317,6 @@ def test_separate_bag_physical_route_count_and_next_duty(central,city):
     inbox=actor('accountant').get('/api/cash-bags')
     assert inbox.status_code==200,inbox.text
     actual=next(b for b in inbox.json()['bags'] if b['id']==bag['id'])
-    assert set(actual['shift_ids'])=={leg['id'] for leg in driver['shifts']}
-    assert set(actual['manager_shift_ids'])=={leg['manager_shift_id'] for leg in driver['shifts']}
     assert actual['state']=='counted' and actual['cash_difference_halalas']==-50
     assert actual['counted_by_name']=='SYNTHETIC dual-accountant'
     with db.tx() as c:

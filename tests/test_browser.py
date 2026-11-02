@@ -153,6 +153,19 @@ def _capture(page, prefix):
         page.screenshot(path=str(ARTIFACTS / f'{prefix}-{width}.png'), full_page=False)
 
 
+def _staff_navigation(page):
+    """Open the real staff menu when a compact workspace has collapsed it."""
+    from playwright.sync_api import expect
+    navigation = page.locator('#navigation')
+    if not navigation.is_visible():
+        toggle = page.locator('.dispatch-nav-toggle')
+        expect(toggle).to_be_visible()
+        toggle.click()
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+    expect(navigation).to_be_visible()
+    return navigation
+
+
 def _owner_login(context, base, owner):
     from tests.sms_policy_helpers import register_synthetic_mobile
     with db.tx() as conn:
@@ -444,7 +457,7 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         ops.locator('#navigation [data-page=dashboard]').click()
         expect(ops.locator('#dispatch-orders')).to_be_visible()
         _capture(ops, 'operations-dashboard-synthetic-order')
-        ops.locator('#navigation [data-page=admin]').click()
+        _staff_navigation(ops).locator('[data-page=admin]').click()
         expect(ops.locator('[data-action=admin-tab][data-tab=banners]')).to_be_visible()
         ops.locator('[data-action=admin-tab][data-tab=banners]').click()
         expect(ops.locator('[data-action=create-banner]')).to_be_visible()

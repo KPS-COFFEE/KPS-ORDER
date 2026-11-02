@@ -12,7 +12,7 @@ from PIL import Image, ImageChops
 from app import db
 from test_admin import owner
 from test_v5_browser import v5_live_app
-from test_browser import (ARTIFACTS, WIDTHS, _context, _owner_login, _staff,
+from test_browser import (ARTIFACTS, WIDTHS, _context, _owner_login, _staff, _staff_navigation,
                           chromium_browser, live_app, synthetic_mail)
 
 
@@ -144,7 +144,7 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
             expect(p.locator('#content')).to_have_attribute('aria-busy','false')
             pages=p.locator('#navigation [data-page]').evaluate_all('(els)=>els.map(el=>el.dataset.page)')
             for screen in pages:
-                p.locator(f'#navigation [data-page={screen}]').click()
+                _staff_navigation(p).locator(f'[data-page={screen}]').click()
                 expect(p.locator('#content')).to_have_attribute('aria-busy','false')
                 _capture_theme(p,role+'-'+screen)
                 if screen == 'tracking':
@@ -156,10 +156,10 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
                     back.click()
                     expect(p.locator('.tracking-screen')).to_have_count(0)
                     expect(p.locator('#content')).to_have_attribute('aria-busy','false')
-                    expect(p.locator('#navigation')).to_be_visible()
+                    expect(_staff_navigation(p)).to_be_visible()
                     expect(p.locator('#navigation [data-page=dashboard]')).to_be_visible()
             if role=='owner':
-                p.locator('#navigation [data-page=admin]').click()
+                _staff_navigation(p).locator('[data-page=admin]').click()
                 expect(p.locator('#content')).to_have_attribute('aria-busy','false')
                 p.locator('[data-action=admin-tab][data-tab=settings]').click()
                 expect(p.locator('#appearance-settings')).to_be_visible()
@@ -169,7 +169,7 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
                 p.reload()
                 expect(p.locator('#app-shell')).to_be_visible()
                 expect(p.locator('html')).to_have_attribute('data-kps-theme','CHARCOAL')
-                p.locator('[data-page=admin]').click()
+                _staff_navigation(p).locator('[data-page=admin]').click()
                 p.locator('[data-action=admin-tab][data-tab=settings]').click()
                 p.locator('[data-appearance=ORIGINAL_Light]').click()
                 expect(p.locator('html')).to_have_attribute('data-kps-theme','ORIGINAL_Light')
