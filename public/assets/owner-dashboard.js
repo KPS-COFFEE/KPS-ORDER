@@ -86,9 +86,14 @@
       host.innerHTML = `
         <section class="owner-intro" aria-label="${escape(tr('ملخص الملاك','Owner overview'))}">
           <div><span class="owner-eyebrow">${escape(productOnly ? tr('تقرير واضح حسب نطاق حسابك','PRODUCT SALES IN YOUR SCOPE') : tr('رؤية موحّدة لأعمالك','YOUR BUSINESS AT A GLANCE'))}</span><h2 id="owner-period-title">${escape(presetName(filters.period))}</h2><div id="owner-brand-context" class="owner-brand-context"></div></div>
-          <div class="owner-freshness"><span class="owner-access-badge">${escape(productOnly ? tr('تقرير للاطلاع','Read-only report') : tr('خاص بالملاك','Owners only'))}</span><button type="button" class="quiet owner-products-shortcut" data-owner-action="products">${escape(tr('مبيعات المنتجات','Product sales'))}</button><span id="owner-updated">${escape(tr('بانتظار البيانات','Waiting for data'))}</span><button type="button" class="quiet owner-refresh" data-owner-action="refresh"><span aria-hidden="true">↻</span> ${escape(tr('تحديث','Refresh'))}</button></div>
+          <div class="owner-freshness"><span class="owner-access-badge">${escape(productOnly ? tr('تقرير للاطلاع','Read-only report') : tr('خاص بالملاك','Owners only'))}</span><button type="button" class="quiet owner-filter-shortcut" data-owner-action="filters">${escape(tr('تصفية النتائج','Filter results'))}</button><button type="button" class="quiet owner-products-shortcut" data-owner-action="products">${escape(tr('مبيعات المنتجات','Product sales'))}</button><span id="owner-updated">${escape(tr('بانتظار البيانات','Waiting for data'))}</span><button type="button" class="quiet owner-refresh" data-owner-action="refresh"><span aria-hidden="true">↻</span> ${escape(tr('تحديث','Refresh'))}</button></div>
         </section>
-        ${!productOnly && onNavigate ? `<section class="owner-workspaces"><div class="owner-workspace-heading"><h3>${escape(tr('التقارير والإجراءات','Reports & actions'))}</h3><p>${escape(tr('اختر العمل المطلوب من بطاقته','Open the card for the task you need'))}</p></div>${workspaceCards({canNavigate,tr,owner:true})}</section>` : ''}
+        <div id="owner-notice" class="owner-notice" role="status" aria-live="polite" hidden></div>
+        <div id="owner-results" aria-busy="false"${productOnly ? ' hidden' : ''}>
+          <div class="owner-workspace-heading"><h3>${escape(tr('ملخص الفترة المختارة','Selected period overview'))}</h3><p>${escape(tr('الأرقام حسب الفترة والفلاتر المختارة','Values use the selected period and filters'))}</p></div>
+          <section id="owner-metrics" class="owner-metrics" aria-label="${escape(tr('المؤشرات الرئيسية','Key metrics'))}"></section>
+          <section id="owner-finance-context" class="owner-finance-context" aria-label="${escape(tr('تفاصيل التحصيل والضيافة','Collections and complimentary orders'))}"></section>
+        </div>
         <form id="owner-filters" class="owner-filters" aria-label="${escape(tr('تصفية جميع مؤشرات اللوحة','Filter all dashboard values'))}">
           <label for="owner-brand"><span>${escape(tr('البراند','Brand'))}</span><select id="owner-brand" name="brand_id"></select></label>
           <label for="owner-period"><span>${escape(tr('الفترة','Period'))}</span><select id="owner-period" name="period">${presets.map(preset => `<option value="${preset}"${preset === filters.period ? ' selected' : ''}>${escape(presetName(preset))}</option>`).join('')}</select></label>
@@ -99,13 +104,8 @@
           <div id="owner-custom-dates" class="owner-custom-dates"${filters.period === 'custom' ? '' : ' hidden'}><label for="owner-start"><span>${escape(tr('من يوم تشغيلي','From operational date'))}</span><input id="owner-start" name="start" type="date" value="${escape(filters.start)}"></label><label for="owner-end"><span>${escape(tr('إلى يوم تشغيلي','Through operational date'))}</span><input id="owner-end" name="end" type="date" value="${escape(filters.end)}"></label><button type="submit">${escape(tr('تطبيق الفترة','Apply period'))}</button><p class="owner-date-hint">${escape(tr('يشمل تاريخ البداية والنهاية.','Includes both start and end dates.'))}</p></div>
         </form>
         <div id="owner-period-basis" class="owner-period-basis"></div>
-        <div id="owner-notice" class="owner-notice" role="status" aria-live="polite" hidden></div>
-        <div id="owner-results" aria-busy="false"${productOnly ? ' hidden' : ''}>
-          <div class="owner-workspace-heading"><h3>${escape(tr('ملخص الفترة المختارة','Selected period overview'))}</h3><p>${escape(tr('الأرقام تتبع الفلاتر المعروضة أعلاه','Values follow the filters shown above'))}</p></div>
-          <section id="owner-metrics" class="owner-metrics" aria-label="${escape(tr('المؤشرات الرئيسية','Key metrics'))}"></section>
-          <section id="owner-finance-context" class="owner-finance-context" aria-label="${escape(tr('تفاصيل التحصيل والضيافة','Collections and complimentary orders'))}"></section>
-          <div class="owner-analysis"><section id="owner-status-chart" class="owner-panel" aria-label="${escape(tr('توزيع حالات الطلبات','Order status distribution'))}"></section><section id="owner-brand-breakdown" class="owner-panel" aria-label="${escape(tr('الأرقام حسب البراند','Values by brand'))}"></section></div>
-        </div>
+        ${!productOnly && onNavigate ? `<section class="owner-workspaces"><div class="owner-workspace-heading"><h3>${escape(tr('التقارير والإجراءات','Reports & actions'))}</h3><p>${escape(tr('اختر العمل المطلوب من بطاقته','Open the card for the task you need'))}</p></div>${workspaceCards({canNavigate,tr,owner:true})}</section>` : ''}
+          <div class="owner-analysis"${productOnly ? ' hidden' : ''}><section id="owner-status-chart" class="owner-panel" aria-label="${escape(tr('توزيع حالات الطلبات','Order status distribution'))}"></section><section id="owner-brand-breakdown" class="owner-panel" aria-label="${escape(tr('الأرقام حسب البراند','Values by brand'))}"></section></div>
         <section class="owner-panel owner-details owner-products-panel" aria-labelledby="owner-products-title">
           <div class="owner-section-heading"><div><h2 id="owner-products-title">${escape(tr('مبيعات المنتجات','Product sales'))}</h2><p>${escape(tr('نفس الفترة والفرع والمدينة والسائق المحددين أعلاه. الكمية من الطلبات المكتملة؛ دون الملغي والضيافة والهدايا.','Uses the period, branch, city and driver above. Completed commercial quantities only; excludes cancellations, complimentary orders and gifts.'))}</p></div></div>
           <div class="owner-table-tools"><label for="owner-product-search"><span>${escape(tr('ابحث عن منتج','Find a product'))}</span><input id="owner-product-search" type="search" maxlength="120" value="${escape(productSearch)}" placeholder="${escape(tr('مثال: الخلية','Example: Khaliya'))}"></label></div>
@@ -344,6 +344,7 @@
         return;
       }
       const action = button.dataset.ownerAction;
+      if (action === 'filters') { $('#owner-brand')?.focus(); return; }
       if (action === 'products') { $('#owner-product-search')?.focus(); return; }
       if (action === 'refresh') { clearTimeout(searchTimer); void refresh({force:true}); }
       if (action === 'reset') {
