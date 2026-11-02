@@ -36,15 +36,15 @@ def filter_statement(data, driver_ids='', variance='all'):
     return result
 
 
-def source_rows(c,user,bids,ds=None,de=None,manager_shift_id='',manager_shift_ids=None):
+def source_rows(c,user,bids,ds=None,de=None,manager_shift_id='',manager_shift_ids=None,*,include_open_managers=False):
     q="""SELECT r.*,s.manager_shift_id,s.submission,s.scheduled_end_at,s.delivery_window_snapshot,
       s.closed_at shift_closed_at,s.shift_no,mu.display_name manager_name,
       u.display_name driver_name,
       coalesce(m.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) AS "day"
       FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=r.user_id
       JOIN shifts m ON m.id=s.manager_shift_id JOIN users mu ON mu.id=m.user_id
-      WHERE r.brand_id=%s AND r.kind='driver' AND (m.status='closed' OR to_jsonb(m)->>'staffing_ended_at' IS NOT NULL) AND r.branch_ids ?| %s"""
-    args=[user['brand_id'],bids]
+      WHERE r.brand_id=%s AND r.kind='driver' AND (%s OR m.status='closed' OR to_jsonb(m)->>'staffing_ended_at' IS NOT NULL) AND r.branch_ids ?| %s"""
+    args=[user['brand_id'],include_open_managers,bids]
     if ds:
         q+=" AND coalesce(m.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) BETWEEN %s AND %s"
         args.extend([ds,de])
@@ -257,7 +257,10 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
         (SELECT count(*) FROM shifts child WHERE child.manager_shift_id=m.id AND child.kind='driver') expected_driver_count,
         (SELECT r.id FROM closure_reports r WHERE r.shift_id=m.id AND r.kind='manager' ORDER BY r.version DESC,r.created_at DESC LIMIT 1) manager_report_id
         FROM shifts m JOIN users u ON u.id=m.user_id
-        WHERE m.kind='manager' AND m.brand_id=%s AND (m.status='closed' OR to_jsonb(m)->>'staffing_ended_at' IS NOT NULL)
+        WHERE m.kind='manager' AND m.brand_id=%s AND (m.status='closed' OR to_jsonb(m)->>'staffing_ended_at' IS NOT NULL
+          OR m.scheduled_end_at<=now()
+          OR (m.scheduled_end_at IS NULL AND coalesce(m.delivery_window_snapshot->>'period','evening')<>'morning'
+              AND ((coalesce(m.reporting_operational_date,m.delivery_operational_date,(m.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)+1)+time '04:00') AT TIME ZONE 'Asia/Riyadh'<=now()))
         AND m.branch_ids ?| %s"""
     args=[user['brand_id'],bids]
     if manager_shift_ids is not None:q+=' AND m.id=ANY(%s)';args.append(manager_shift_ids)
@@ -276,9 +279,20 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
             opened_at=manager['opened_at'],closed_at=manager['closed_at'] or manager['staffing_ended_at'],
             scheduled_end_at=manager['scheduled_end_at'],branch_ids=manager['branch_ids'],
             branch_names=[branch_names.get(b,b) for b in manager['branch_ids']],
-            operationally_closed=True,financial_ledger_closed=manager['status']=='closed',
+            operationally_closed=manager['status']=='closed' or manager['staffing_ended_at'] is not None,financial_ledger_closed=manager['status']=='closed',
             expected_driver_count=manager['expected_driver_count'],drivers=[],approved_day=approved.get(manager['id']),due_on=None)
-    rows=source_rows(c,user,bids,manager_shift_ids=list(groups))
+        group=groups[manager['id']]
+        if not group['operationally_closed']:
+            try:
+                group['manager_completion_due_at']=closure_deadline(manager,local)['shift_end_at']
+                group['manager_completion_overdue']=datetime.now(TZ)>=group['manager_completion_due_at']
+            except ValueError:
+                group['manager_completion_due_at']=None
+                group['manager_completion_overdue']=False
+    # Only the already-scoped visible cards can include a still-open manager.
+    # Existing child snapshots remain visible; never label them missing merely
+    # because the parent failed to finish its own duty.
+    rows=source_rows(c,user,bids,manager_shift_ids=list(groups),include_open_managers=True)
     changes=histories(c,user,rows)
     extensions={r['entity_id']:r for r in c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.action='accounting.deadline.extended' AND a.entity_id=ANY(%s)",([r['id'] for r in rows],)).fetchall()}
     for r in rows:
@@ -288,7 +302,9 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
         confirmation=variance_confirmation(c,r['id'],v['revision']) if v['reconciliation_complete'] and v['net_difference_halalas'] else None
         variance_pending=bool(v['has_channel_variance'] and not v['period_approval_allowed'])
         deadline=closure_deadline(r,local,extensions.get(r['id']))
-        finished=history[-1]['created_at'] if v['stage']=='cash_received' else None
+        # Receipt alone does not finish an unresolved cash/card difference.
+        # Keep its original deadline active until the review is complete.
+        finished=history[-1]['created_at'] if v['stage']=='cash_received' and v['period_approval_allowed'] else None
         deadline['overdue']=bool((finished or datetime.now(TZ))>=deadline['due_at'])
         deadline['can_extend']=deadline['deadline_policy']=='external_72h' and not deadline['extension'] and not finished
         group=groups.setdefault(r['manager_shift_id'],dict(id=r['manager_shift_id'],manager_name=r['manager_name'],day=r['day'],drivers=[],approved_day=approved.get(r['manager_shift_id']),due_on=None))
@@ -298,7 +314,8 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
     # Show the precise missing driver record and its owner, rather than an
     # unexplained disabled day-approval button. Match by manager id, never clock date.
     children=defaultdict(list)
-    for child in c.execute("""SELECT s.id,s.manager_shift_id,s.status,(to_jsonb(s)->>'staffing_ended_at')::timestamptz staffing_ended_at,u.display_name driver_name
+    for child in c.execute("""SELECT s.id,s.manager_shift_id,s.status,(to_jsonb(s)->>'staffing_ended_at')::timestamptz staffing_ended_at,
+      s.branch_ids,s.delivery_window_snapshot,s.scheduled_end_at,s.closed_at shift_closed_at,u.display_name driver_name
       FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='driver' AND s.brand_id=%s
       AND s.manager_shift_id=ANY(%s) ORDER BY s.opened_at,s.id""",(user['brand_id'],list(groups))).fetchall():
         children[child['manager_shift_id']].append(child)
@@ -311,7 +328,18 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
             # its missing financial report belongs to accounting, not another
             # manager handover. Keep legacy records without that evidence intact.
             released=child['status'] in {'submitted','closed'} and bool(child['staffing_ended_at'])
-            group['pending_drivers'].append(dict(child,
+            # A missing report must not erase the deadline of the underlying
+            # shift. Use the same frozen window policy as documented reports.
+            source=dict(child,day=group['day'])
+            if not source.get('shift_closed_at'):source['shift_closed_at']=child['staffing_ended_at']
+            try:
+                deadline=closure_deadline(source,local)
+                deadline.update(overdue=datetime.now(TZ)>=deadline['due_at'],deadline_documented=True)
+            except ValueError:
+                # A legacy morning duty without end evidence needs review;
+                # never manufacture a morning window from the evening policy.
+                deadline=dict(due_at=None,overdue=False,deadline_documented=False)
+            group['pending_drivers'].append(dict(child,**deadline,
                 reason='driver_accounting_pending' if released else 'driver_shift_open' if child['status']!='closed' else 'driver_report_missing',
                 responsible='accounting' if released else 'delivery_manager'))
         from .cash_bag_custody import summarize
@@ -332,7 +360,9 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
         group['remaining_count']=max(len(group['pending_drivers']),max(group.get('expected_driver_count',group['total']),group['total'])-group['review_completed'])
         group['review_needed_count']=sum(r['variance_pending'] for r in group['drivers'])
         group['blockers']=[]
-        if not group.get('financial_ledger_closed',True):group['blockers'].append(dict(reason='manager_allocation_pending',responsible='accounting'))
+        if not group.get('operationally_closed',True):
+            group['blockers'].append(dict(reason='manager_shift_open',responsible='delivery_manager'))
+        elif not group.get('financial_ledger_closed',True):group['blockers'].append(dict(reason='manager_allocation_pending',responsible='accounting'))
         for responsible in ('delivery_manager','accounting'):
             if any(driver['responsible']==responsible for driver in group['pending_drivers']):
                 group['blockers'].append(dict(reason='driver_accounting_records_pending' if responsible=='accounting' else 'driver_records_pending',responsible=responsible))
@@ -360,11 +390,15 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
         group['financial_completion_scope']='closure_cash_and_recorded_card'
         group['bank_settlement_included']=False
         group['financial_completion_percent']=int(100*group['completed']/group['total']) if group['total'] else 0
-        pending=[r for r in group['drivers'] if r['stage']!='cash_received' or r['variance_pending']]
-        group['due_at']=min((r['due_at'] for r in (pending or group['drivers'])),default=None)
+        pending=[r for r in group['drivers'] if r['stage']!='cash_received' or not r['period_approval_allowed']]
+        reported_shift_ids={r['shift_id'] for r in group['drivers']}
+        pending_children=[r for r in group['pending_drivers'] if r['id'] not in reported_shift_ids]
+        deadline_rows=pending+pending_children
+        if not deadline_rows:deadline_rows=group['drivers']
+        group['due_at']=min((r['due_at'] for r in deadline_rows if r.get('due_at')),default=None)
         group['due_on']=group['due_at'].date() if group['due_at'] else None
-        group['overdue_count']=sum(r['overdue'] for r in pending)
-        group['overdue']=bool(group['overdue_count'])
+        group['overdue_count']=sum(r['overdue'] for r in pending+pending_children)
+        group['overdue']=bool(group['overdue_count'] or group.get('manager_completion_overdue'))
     return safe({'cards':sorted(groups.values(),key=lambda g:(bool(g['approved_day']),-g['day'].toordinal(),g['id'])),'has_more':has_more,'offset':offset,'page_size':page_size})
 
 

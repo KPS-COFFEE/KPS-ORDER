@@ -115,7 +115,7 @@ def test_competing_full_refunds_cannot_overdraw_collection_or_duplicate_cash(ops
     manager, driver = shifts()
     oid = delivered(post, order, driver)
     user = principal('owner')
-    body = operations.Refund(method='cash', amount_halalas=1000, reason='Verified full customer refund')
+    body = operations.Refund(evidence_reference='SYNTHETIC-EXECUTION-SLIP',executed_confirmed=True,method='cash', amount_halalas=1000, reason='Verified full customer refund')
     assert outcome(lambda: operations.refund(oid, body, request('manager-full-refund-denied'), principal('manager')))[0] == 403
     with db.tx() as conn:
         assert conn.execute('SELECT count(*) n FROM refunds WHERE order_id=%s', (oid,)).fetchone()['n'] == 0
@@ -138,7 +138,7 @@ def test_partial_refund_reconnect_replays_once_and_distinct_refund_remains_possi
     manager, driver = shifts()
     oid = delivered(post, order, driver)
     user = principal('owner')
-    body = operations.Refund(method='cash', amount_halalas=100, reason='Verified missing item refund')
+    body = operations.Refund(evidence_reference='SYNTHETIC-EXECUTION-SLIP',executed_confirmed=True,method='cash', amount_halalas=100, reason='Verified missing item refund')
     assert outcome(lambda: operations.refund(oid, body, request('manager-partial-refund-denied'), principal('manager')))[0] == 403
     with db.tx() as conn:
         assert conn.execute('SELECT count(*) n FROM refunds WHERE order_id=%s', (oid,)).fetchone()['n'] == 0
@@ -146,7 +146,7 @@ def test_partial_refund_reconnect_replays_once_and_distinct_refund_remains_possi
     results = race([lambda: operations.refund(oid, body, request('race-partial-reconnect'), user)] * 4)
     assert all(code == 200 for code, result in results), results
     assert len({result['refund_id'] for code, result in results}) == 1
-    distinct = operations.Refund(method='cash', amount_halalas=150, reason='Verified separate item refund')
+    distinct = operations.Refund(evidence_reference='SYNTHETIC-EXECUTION-SLIP',executed_confirmed=True,method='cash', amount_halalas=150, reason='Verified separate item refund')
     operations.refund(oid, distinct, request('race-partial-distinct'), user)
     with db.tx() as conn:
         assert conn.execute('SELECT count(*) n,sum(amount_halalas) amount FROM refunds WHERE order_id=%s', (oid,)).fetchone() == {'n': 2, 'amount': 250}

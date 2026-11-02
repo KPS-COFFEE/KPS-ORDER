@@ -36,7 +36,8 @@ def test_atomic_split_replay_refund_limits_and_no_double_count(v5):
         assert [(r['method'], r['amount_halalas']) for r in rows] == [('card', 600), ('cash', 400)]
         assert rows[0]['tendered_halalas'] is None
         assert rows[1]['change_halalas'] == 100
-    r = {'method': 'cash', 'amount_halalas': 401, 'reason': 'TEST refund'}
+    r = {'method': 'cash', 'amount_halalas': 401, 'reason': 'TEST refund',
+         'evidence_reference': 'SYNTHETIC-SPLIT-REFUND-SLIP', 'executed_confirmed': True}
     assert call('owner', 'POST', f'/api/orders/{oid}/refund', r).status_code == 422
     assert call('owner', 'POST', f'/api/orders/{oid}/refund', r | {'amount_halalas': 400}).json()['payment_status'] == 'partially_refunded'
     assert call('owner', 'POST', f'/api/orders/{oid}/refund', r | {'amount_halalas': 1}).status_code == 422

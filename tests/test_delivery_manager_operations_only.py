@@ -35,7 +35,7 @@ def test_manager_has_operational_capabilities_but_no_account_or_financial_admini
     ('post','/api/identity/staff/driver/owner-activate',{'reason':'Forbidden activation'}),
     ('post','/api/identity/staff/driver/revoke-invitation',{}),
     ('put','/api/identity/staff/driver/permissions',{'enabled_permissions':[],'expected_permissions':[],'reason':'Rejected manager override'}),
-    ('post','/api/orders/old-order/refund',{'amount_halalas':100,'method':'cash','reason':'Forbidden refund'}),
+    ('post','/api/orders/old-order/refund',{'amount_halalas':100,'method':'cash','reason':'Forbidden refund','evidence_reference':'SYNTHETIC-AUTHORITY-PROBE','executed_confirmed':True}),
     ('post','/api/printing/devices',{'branch_id':'kps-branch-1','label':'Forbidden printer'}),
     ('get','/api/printing/devices',None),
     ('post','/api/printing/devices/old-device/test',{}),
@@ -81,7 +81,7 @@ def test_internal_invitation_helper_rechecks_current_actor_role():
 
 def test_refund_authority_precedes_idempotency_even_if_called_internally():
     with pytest.raises(HTTPException) as rejected:
-        operations.refund('previous-order',operations.Refund(amount_halalas=100,method='cash',reason='No grant'),
+        operations.refund('previous-order',operations.Refund(evidence_reference='SYNTHETIC-EXECUTION-SLIP',executed_confirmed=True,amount_halalas=100,method='cash',reason='No grant'),
                           None,{'role':'delivery_manager'})
     assert rejected.value.status_code==403
 

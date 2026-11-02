@@ -130,6 +130,11 @@ def ops(client, request):
     def post(who,path,body=None,key=None,status=200):
         # Successful journeys submit explicit synthetic readings; missing-data tests use the client directly.
         body=dict(body or {})
+        # Existing successful financial journeys document synthetic execution explicitly.
+        # Missing-evidence boundary tests bypass this convenience helper.
+        if path.endswith('/refund'):
+            body.setdefault('evidence_reference','SYNTHETIC-REFUND-RECEIPT')
+            body.setdefault('executed_confirmed',True)
         if status==200 and (path=='/api/shifts' and body.get('kind')=='driver' or path.endswith('/submit') or path.endswith('/driver-close')):
             from app.shift_vehicle import CHECKS
             km=1000

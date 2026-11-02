@@ -1596,6 +1596,8 @@ class Refund(OperationBody):
     line_quantities:dict[str,StrictInt]=Field(default_factory=dict)
     shift_id:str|None=None
     amendment_id:str|None=None
+    evidence_reference:str=Field(min_length=3,max_length=500)
+    executed_confirmed:StrictBool
 
 @router.post('/orders/{oid}/refund')
 def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
@@ -1608,6 +1610,8 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             from .order_financial_cases import scoped
             scoped(c,oid,user)
         def perform():
+            if not body.executed_confirmed:
+                raise db.error(422,'REFUND_EXECUTION_REQUIRED','وثّق رد المبلغ الفعلي للعميل ومرجع التنفيذ؛ الموافقة وحدها ليست استردادًا.')
             if user['role']=='admin':
                 from .order_financial_cases import scoped,case
                 o=scoped(c,oid,user,True)
@@ -1668,13 +1672,15 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
                 elif s['status'] not in ('open','closing') or s['brand_id']!=o['brand_id']:fail(409,'الاسترداد يحتاج عهدة شفت مفتوح؛ لا يعدل تقفيلة تاريخية')
                 if body.method=='cash' and available_balance(c,s)<body.amount_halalas:fail(409,'العهدة النقدية غير كافية')
             elif o['service']=='delivery' and body.method=='cash':fail(409,'يلزم شفت عهدة للاسترداد النقدي')
+            execution_evidence={'reference':body.evidence_reference,'executed_confirmed':True,
+                'recorded_by':user['id'],'evidence_kind':'manual_execution_attestation'}
             remaining=body.amount_halalas;refund_ids=[]
             for source in cols:
                 if not remaining:break
                 amount=min(remaining,int(source['available']));rid=uid()
                 from .fiscal_issuance import credit_before_refund
                 credit_before_refund(c,o,user,rid,amount,body.reason,amendment_id=body.amendment_id)
-                c.execute('INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,line_quantities,reason,authorized_by,amendment_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(rid,source['id'],oid,sid,body.method,amount,db.json(body.line_quantities if not refund_ids else {}),body.reason,user['id'],body.amendment_id))
+                c.execute('INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,line_quantities,reason,authorized_by,amendment_id,execution_evidence) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(rid,source['id'],oid,sid,body.method,amount,db.json(body.line_quantities if not refund_ids else {}),body.reason,user['id'],body.amendment_id,db.json(execution_evidence)))
                 refund_ids.append(rid);remaining-=amount
                 if sid and body.method=='cash':event(c,sid,-amount,'refund',rid,user['id'],body.reason)
             net=paid_balance(c,o)
@@ -1682,7 +1688,7 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s',(status,oid))
             db.audit(c,user['id'],'order.refund','order',oid,{'refund_id':rid,**body.model_dump()})
             db.event(c,oid,user['id'],'order.refund',{'refund_ids':refund_ids,**body.model_dump(),'shift_id':sid,'payment_status':status})
-            return {'refund_id':refund_ids[0],'refund_ids':refund_ids,'payment_status':status}
+            return {'refund_id':refund_ids[0],'refund_ids':refund_ids,'payment_status':status,'execution_evidence':execution_evidence}
         return mutate(c,user,request,'order.refund:'+oid,body.model_dump(),perform)
 
 class PaymentTerminal(OperationBody):

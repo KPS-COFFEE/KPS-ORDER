@@ -425,7 +425,7 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
         # Drivers see their retained assignment, not administrative financial notes.
         if user['role']=='driver':events=[{k:v for k,v in e.items() if k!='details'} for e in events if e['event_type'].startswith(('task.','order.operationally_cancelled'))]
         collections=[] if user['role']=='driver' else c.execute('SELECT id,collector_id,method,amount_halalas,created_at FROM effective_collections WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
-        refunds=[] if user['role']=='driver' else c.execute('SELECT id,authorized_by,method,amount_halalas,reason,created_at FROM refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
+        refunds=[] if user['role']=='driver' else c.execute('SELECT id,authorized_by,method,amount_halalas,reason,created_at,execution_evidence FROM refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         online_collections=[] if user['role']=='driver' else c.execute('SELECT id,attempt_id,provider,amount_halalas,disposition,created_at FROM branch_online_receipts WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         online_refunds=[] if user['role']=='driver' else c.execute('SELECT id,attempt_id,authorized_by,amount_halalas,reason,status,created_at,verified_at FROM branch_online_refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         from .driver_incentives import source_rows,classify

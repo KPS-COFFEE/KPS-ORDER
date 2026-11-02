@@ -23,6 +23,10 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
  assert.match(mixed,/OPEN: End the driver shift and send its closure — Responsible: delivery manager/);
 
  assert.match(context.managerCardNext({financial_ledger_closed:false}),/collect and count the bag/);
+ assert.match(context.managerCardNext({operationally_closed:false,financial_ledger_closed:false}),/delivery manager completes end-of-duty/);
+ assert.match(context.managerCardBlockers({blockers:[{reason:'manager_shift_open',responsible:'delivery_manager'}]}),/Complete the overdue manager shift[^<]+Responsible: delivery manager/);
+ const pendingDeadline=context.managerCardDrivers({id:'missing-report',drivers:[],pending_drivers:[{id:'driver-old',driver_name:'OVERDUE DRIVER',responsible:'accounting',due_at:'2026-01-02T16:00:00+03:00',overdue:true}]});
+ assert.match(pendingDeadline,/OVERDUE DRIVER/);assert.match(pendingDeadline,/Due: 2026-01-02T16:00:00\+03:00 · Overdue/);
  assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:0,balance_completed:1}),/actually received cash/);
  assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:1,balance_completed:1,review_needed_count:1}),/independent approval/);
  assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:1,balance_completed:1,ready:true}),/issue the report/);
