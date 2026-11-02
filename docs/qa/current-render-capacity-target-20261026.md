@@ -1,0 +1,9 @@
+# Current Render capacity target — 2026-10-26
+
+This records the test target, not a passing capacity certificate or a production resource change.
+
+Read-only service metadata verified the existing KPS ORDER service `srv-db4s1v942hec73epmar0` at plan `1c-2g`, and PostgreSQL `dpg-db4rjgo473hc738soueg-a` at plan `0.5c-1g`. The existing isolated `economy` profile matches those kernel limits: application 1 CPU / 2 GiB, PostgreSQL 0.5 CPU / 1 GiB. Two independent hardening repetitions now use this target. The 50/100/250/500 workload, strict P95 below 5000 ms, P99, persistence, report reconciliation and recovery requirements remain unchanged; the allowable HTTP error rate is tightened to zero. No Render service or paid resource was changed.
+
+The historical profile named `current` in `tools/hardening_load.py` is retained unchanged for reproducibility: application 0.5 CPU / 512 MiB and PostgreSQL 0.1 CPU / 256 MiB. It is not the verified deployed plan. Its preliminary candidate `90043355ac21d1216ea1c8d3ef599323d32bb10d` failed both repetitions in [run 40262297875](https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/40262297875). At 500 users, repetition 1 measured P95 21496.890 ms and repetition 2 measured P95 13778.433 ms; each persisted 1000 orders with zero HTTP errors. These failures are not waived or rewritten as passes.
+
+Original GitHub artifacts are retained without alteration and are independently identified in `historical-small-render-budget-90043355.json`. The newly targeted results use separate `current-render-economy-*` artifact names. Passing tests on the larger proposed plan do not certify the current deployed plan. A successful exact-candidate economy result is still required before reporting its capacity as verified. No duplicate hosting workflow is added for the same workload.

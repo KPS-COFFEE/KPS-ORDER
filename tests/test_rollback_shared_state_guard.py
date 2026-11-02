@@ -1,0 +1,229 @@
+"""Historical 80a writer must continue to refuse unsupported operational state.
+
+The frozen original overlay remains an immutable negative compatibility witness.
+It is not the deployable fallback: the b528 fallback is separately certified
+inside its exact image against the operational contracts it supports.
+"""
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import pytest
+from test_enbishan_dual_brand import dual
+from test_operations import ops
+from test_central_workdays import central
+
+ROOT=Path(__file__).resolve().parents[1]
+PATH=ROOT/'tests/fixtures/rollback_80a/db.py'
+spec=importlib.util.spec_from_file_location('prior_shared_state_guard',PATH)
+prior=importlib.util.module_from_spec(spec)
+sys.modules[spec.name]=prior
+spec.loader.exec_module(prior)
+
+class Read:
+    def __init__(self, rows):self.rows=rows
+    def fetchall(self):return self.rows
+    def fetchone(self):return self.rows[0] if self.rows else None
+
+class Catalog:
+    def __init__(self, populated=None, available=()):
+        self.populated=populated
+        self.available=set(available)|({populated} if populated else set())
+        self.queries=[]
+    def execute(self, statement):
+        query=statement.as_string() if hasattr(statement,'as_string') else statement
+        self.queries.append(query)
+        assert query.startswith('SELECT '),query
+        if 'information_schema.tables' in query:return Read([{'table_name':t} for t in self.available])
+        return Read([{'exists':1}] if self.populated and '"'+self.populated+'"' in query else [])
+
+@pytest.mark.parametrize('table',prior.ROLLBACK_UNSUPPORTED_STATE_TABLES)
+def test_prior_writer_refuses_each_new_contract_without_writes(table):
+    c=Catalog(populated=table)
+    with pytest.raises(RuntimeError,match='ROLLBACK_FEATURE_STATE_UNSUPPORTED'):
+        prior.guard_rollback_feature_state(c)
+    assert len(c.queries)==2
+
+
+def test_old_or_empty_new_schema_remains_eligible_for_separate_prior_contract_drill():
+    prior.guard_rollback_feature_state(Catalog())
+    prior.guard_rollback_feature_state(Catalog(available=prior.ROLLBACK_UNSUPPORTED_STATE_TABLES))
+
+
+def test_overlay_manifest_hash_binds_guard_and_records_incompatibility():
+    manifest=json.loads((ROOT/'tests/fixtures/rollback_80a/manifest.json').read_text())
+    assert manifest['baseline_sha']=='80a1d727f6695c4ce3685e726ab5b34674e1cfa0'
+    assert manifest['files']['app/db.py']=='1766f5c71ac2be2d25d4e80ec0d7c33e471fe0f5f771ac36db55a91e993facc6'
+    assert manifest['files']['app/db.py']==hashlib.sha256(PATH.read_bytes()).hexdigest()
+    assert manifest['rollback_feature_policy']['operational_after_feature_use'] is False
+    assert manifest['rollback_feature_policy']['current_aware_image_certified'] is False
+
+
+@pytest.mark.postgres
+def test_real_profile_state_blocks_prior_guard_and_preserves_source(ops):
+    from app import db
+    with db.tx() as c:
+        c.execute("INSERT INTO driver_duty_profiles(driver_id,minutes,updated_by) VALUES('ops-driver',480,'ops-owner')")
+        before=c.execute('SELECT * FROM driver_duty_profiles ORDER BY driver_id').fetchall()
+        with pytest.raises(RuntimeError,match='driver_duty_profiles'):
+            prior.guard_rollback_feature_state(c)
+        assert c.execute('SELECT * FROM driver_duty_profiles ORDER BY driver_id').fetchall()==before
+    db.migrate()
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM driver_duty_profiles ORDER BY driver_id').fetchall()==before
+        event=c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC,id DESC LIMIT 1").fetchone()['details']
+        assert 'driver_duty_profiles' in event['checks']
+        assert event['checks']['driver_duty_profiles']['count']==1
+
+
+@pytest.mark.postgres
+def test_real_shared_declaration_receipt_and_allocation_block_prior_writer_without_mutation(central,monkeypatch):
+    from app import db,reporting
+    from test_aggregate_driver_closure import submit_physical,rows
+    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
+    _,_,post,_,_=central
+    _,driver,path,declared=submit_physical(central)
+    tables=('shifts','shared_driver_closure_declarations','shared_driver_closure_receipts','shared_driver_closure_allocations')
+    def refuse():
+        with db.tx() as c:
+            before={t:c.execute('SELECT * FROM '+t+' ORDER BY 1').fetchall() for t in tables}
+            with pytest.raises(RuntimeError,match='ROLLBACK_FEATURE_STATE_UNSUPPORTED'):
+                prior.guard_rollback_feature_state(c)
+            assert {t:c.execute('SELECT * FROM '+t+' ORDER BY 1').fetchall() for t in tables}==before
+        # The candidate may restart on this same database; the prior writer may not.
+        db.migrate()
+        with db.tx() as c:
+            assert {t:c.execute('SELECT * FROM '+t+' ORDER BY 1').fetchall() for t in tables}==before
+            event=c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC,id DESC LIMIT 1").fetchone()['details']
+            assert set(tables)<=set(event['checks'])
+    refuse()
+    received=post('manager',path+'/physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':700,'confirmed':True,'reference':'Synthetic rollback source receipt'})
+    refuse()
+    post('owner',path+'/physical-allocation',{'declaration_id':declared['declaration_id'],'receipt_id':received['receipt_id'],'legs':rows(driver['shifts']),'reason':'Synthetic accounting source attribution','confirmed':True})
+    refuse()
+
+
+@pytest.mark.postgres
+def test_real_accepted_clarification_refuses_prior_writer_without_rewriting_finance(ops):
+    from uuid import uuid4
+    from app import db
+    from test_financial_clarifications import setup_case,financial_source
+    actor,post,_,_=ops
+    oid=setup_case(ops)
+    before=financial_source(oid)
+    context=actor('accountant').get('/api/financial-clarifications/orders/'+oid).json()
+    created=post('accountant','/api/financial-clarifications/orders/'+oid,{'version':context['order_version'],'assignee_id':'ops-manager','question':'Confirm the immutable source receipt'})['clarification']
+    post('manager','/api/financial-clarifications/'+created['id']+'/decision',{'expected_version':1,'action':'accept','note':'I accept this evidence request'})
+    with db.tx() as c:
+        rows=c.execute('SELECT * FROM financial_case_clarifications ORDER BY id').fetchall()
+        events=c.execute('SELECT * FROM financial_case_clarification_events ORDER BY id').fetchall()
+        with pytest.raises(RuntimeError,match='financial_case_clarifications'):
+            prior.guard_rollback_feature_state(c)
+        assert c.execute('SELECT * FROM financial_case_clarifications ORDER BY id').fetchall()==rows
+        assert c.execute('SELECT * FROM financial_case_clarification_events ORDER BY id').fetchall()==events
+    assert financial_source(oid)==before
+    db.migrate()
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM financial_case_clarifications ORDER BY id').fetchall()==rows
+        assert c.execute('SELECT * FROM financial_case_clarification_events ORDER BY id').fetchall()==events
+        audit=c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC,id DESC LIMIT 1").fetchone()['details']
+        assert {'financial_case_clarifications','financial_case_clarification_events'}<=audit['checks'].keys()
+    assert financial_source(oid)==before
+
+
+def test_current_startup_inventory_covers_all_new_operational_evidence():
+    from app import db
+    assert set(prior.ROLLBACK_UNSUPPORTED_STATE_TABLES)<=set(db.PRESERVED_TABLES)
+
+
+def test_financial_review_state_also_refuses_older_writer_without_mutation():
+    class FinancialCatalog(Catalog):
+        def execute(self,statement):
+            query=statement.as_string() if hasattr(statement,'as_string') else statement
+            if "action LIKE 'accounting.financial_treatment.%'" in query:
+                self.queries.append(query)
+                return Read([{'exists':1}])
+            return super().execute(statement)
+    c=FinancialCatalog(available={'audit_events'})
+    with pytest.raises(RuntimeError,match='new financial or administrative review'):
+        prior.guard_rollback_feature_state(c)
+    assert all(query.startswith('SELECT ') for query in c.queries)
+
+
+@pytest.mark.parametrize('state',['pending_duplicate','duplicate_decision','partial_return'])
+def test_order_safety_contract_refuses_prior_writer_without_any_write(state):
+    class OrderSafetyCatalog(Catalog):
+        def execute(self,statement):
+            query=statement.as_string() if hasattr(statement,'as_string') else statement
+            if (state=='pending_duplicate' and "snapshot->'duplicate_review'" in query
+                    or state!='pending_duplicate' and "event_type='order.duplicate_decided'" in query):
+                self.queries.append(query)
+                return Read([{'exists':1}])
+            return super().execute(statement)
+    c=OrderSafetyCatalog(available={'orders','order_events'})
+    with pytest.raises(RuntimeError,match='ROLLBACK_FEATURE_STATE_UNSUPPORTED'):
+        prior.guard_rollback_feature_state(c)
+    assert all(query.startswith('SELECT ') for query in c.queries)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('state',['pending_duplicate','duplicate_decision','partial_return'])
+def test_real_order_safety_state_blocks_prior_writer_and_keeps_current_source_usable(ops,state):
+    from app import db
+    from uuid import uuid4
+    oid='rollback-order-safety-'+uuid4().hex
+    snapshot={'items':[],'branch_name':'Synthetic'}
+    if state=='pending_duplicate':snapshot['duplicate_review']={'status':'pending','related_order_ids':[]}
+    with db.tx() as c:
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery','pending','cash',1000,0,1000,%s,%s)",
+                  (oid,db.json(snapshot),db.json({'name':'Synthetic','phone':'+966500000001'})))
+        if state!='pending_duplicate':
+            db.event(c,oid,'ops-manager','order.duplicate_decided' if state=='duplicate_decision' else 'delivery.partial_return.requested',{'reason':'Synthetic rollback witness'})
+        before=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        evidence=c.execute('SELECT * FROM order_events WHERE order_id=%s ORDER BY id',(oid,)).fetchall()
+        with pytest.raises(RuntimeError,match='ROLLBACK_FEATURE_STATE_UNSUPPORTED'):
+            prior.guard_rollback_feature_state(c)
+        assert c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()==before
+        assert c.execute('SELECT * FROM order_events WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==evidence
+    db.migrate()
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()==before
+        assert c.execute('SELECT * FROM order_events WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==evidence
+
+
+@pytest.mark.postgres
+def test_real_separate_cash_bag_count_and_vault_refuse_prior_writer_and_survive_current_restart(central,monkeypatch):
+    from app import db
+    from test_aggregate_driver_closure import declare_separate_bag
+    _,_,post,_,_=central
+    manager,driver,path,declared=declare_separate_bag(central,'النعيرية')
+    approved=post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],'confirmed':True})
+    post('manager','/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close',{'confirmed':True})
+    post('accountant','/api/cash-bags/'+declared['cash_bag']['id']+'/count',{
+        'received_cash_halalas':650,'card_halalas':900,
+        'reference':'SYNTHETIC rollback immutable count witness','confirmed':True})
+    new_tables=('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
+    sources=('shifts','shared_driver_closure_declarations','shared_driver_closure_receipts',*new_tables)
+    def exact(c):
+        return {table:c.execute(db.sql.SQL('SELECT * FROM {} ORDER BY 1').format(db.sql.Identifier(table))).fetchall() for table in sources}
+    with db.tx() as c:
+        before=exact(c)
+        assert all(len(before[table])==1 for table in new_tables)
+        assert before['driver_cash_bag_counts'][0]['received_cash_halalas']==650
+        assert before['driver_cash_bags'][0]['declared_cash_halalas']==700
+        # Dependencies coexist in the genuine database. Select each guarded
+        # table in test scope so a preceding dependency cannot mask its guard.
+        for table in new_tables:
+            with monkeypatch.context() as scoped:
+                scoped.setattr(prior,'ROLLBACK_UNSUPPORTED_STATE_TABLES',(table,))
+                with pytest.raises(RuntimeError,match='database contains '+table+';'):
+                    prior.guard_rollback_feature_state(c)
+            assert exact(c)==before
+        with pytest.raises(RuntimeError,match='database contains driver_cash_bags;'):
+            prior.guard_rollback_feature_state(c)
+    db.migrate()
+    with db.tx() as c:
+        assert exact(c)==before
+        proof=c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC,id DESC LIMIT 1").fetchone()['details']
+        assert all(proof['checks'][table]['count']==1 for table in new_tables)

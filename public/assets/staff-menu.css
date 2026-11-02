@@ -1,0 +1,26 @@
+.staff-menu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:12px;margin-block:12px;max-height:420px;overflow:auto}
+.staff-menu-card{display:flex;flex-direction:column;gap:6px;min-width:0;padding:8px;border:1px solid var(--line,#ddd);border-radius:12px;overflow-wrap:anywhere}
+.staff-menu-photo{display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1;padding:0;overflow:hidden}
+.staff-menu-photo img{width:100%;height:100%;object-fit:contain}
+.staff-menu-quantity{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:auto}
+.staff-menu-quantity button{min-width:40px;min-height:40px;padding:6px}.staff-menu-quantity output{font-variant-numeric:tabular-nums}
+
+/* KPS manager ordering: adjacent category buttons and five desktop cards. */
+dialog:has(.staff-order-kps-menu){width:min(1120px,calc(100vw - 24px))}
+.staff-menu-categories{display:flex;gap:8px;overflow-x:auto;max-width:100%;padding-block:10px;scrollbar-width:thin}
+.staff-menu-categories button{flex:1 0 auto;white-space:nowrap;padding:10px 14px;font-size:13px}
+.staff-menu-categories button.active{background:var(--accent-light,#fff0e2);color:var(--accent,#a34f16);border-color:var(--accent,#a34f16)}
+.staff-menu-categories span{font-variant-numeric:tabular-nums;opacity:.7;margin-inline-start:5px}
+.staff-menu-kps-grid{grid-template-columns:repeat(5,minmax(0,1fr));max-height:min(56dvh,560px)}
+@media(max-width:640px){.staff-menu-kps-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.staff-menu-categories button{flex:0 0 auto}}
+
+.staff-order-kps-menu label[hidden]{display:none}
+.staff-selected-product{font-weight:700;margin-block:12px 6px}
+
+/* Approved Enbishan descriptions and compact counter tap targets. */
+.staff-order-enbishan-menu .staff-menu-quantity{justify-content:center;align-self:center;width:max-content;gap:0;border:1px solid var(--line,#ddd);border-radius:10px;overflow:hidden;direction:ltr}
+.staff-order-enbishan-menu .staff-menu-quantity button{width:44px;min-width:44px;min-height:44px;border:0;border-radius:0;margin:0}
+.staff-order-enbishan-menu .staff-menu-quantity output{min-width:28px;text-align:center}
+.staff-order-enbishan-menu .staff-menu-description{font-size:12px;line-height:1.7;color:var(--muted,#555);margin:0}
+.staff-order-enbishan-menu .staff-mahashi-sizes{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}.staff-order-enbishan-menu .staff-mahashi-sizes legend{font-weight:700}.staff-order-enbishan-menu .staff-mahashi-sizes button[aria-pressed=true]{outline:2px solid var(--accent,#267481)}
+.staff-order-enbishan-menu #staff-options fieldset[hidden]{display:none}

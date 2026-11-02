@@ -1,0 +1,275 @@
+name: KPS ORDER Software Hardening
+
+on:
+  push:
+    branches: [agent/kps-order-emergency-v4]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Coalesce push/PR duplicates for this exact candidate, not a different HEAD
+  # whose diagnostic evidence must be allowed to finish.
+  group: kps-order-hardening-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-security:
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/customer-finance-clarity-20261101' || github.head_ref == 'agent/operations-supervision-20261031' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/enbishan-customer-journey-guest-20261024' || github.head_ref == 'agent/enbishan-approved-journey-20261025' || github.head_ref == 'agent/enbishan-menu-clarity-20261025' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audit resolved runtime and test dependencies without waivers
+        run: |
+          python -m pip install pip-audit==2.10.1
+          mkdir -p test-artifacts
+          python -m pip_audit -r requirements.txt -r requirements-dev.txt --strict --format json --output test-artifacts/dependency-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardening-dependency-audit
+          path: test-artifacts/dependency-audit.json
+
+  isolated-load-recovery:
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/customer-finance-clarity-20261101' || github.head_ref == 'agent/operations-supervision-20261031' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hardening_load
+          POSTGRES_USER: hardening_test
+          POSTGRES_PASSWORD: isolated-load-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hardening_test -d test_hardening_load"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hardening_test:isolated-load-only@127.0.0.1:5432/test_hardening_load
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install pinned requirements and isolated observation tools
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Gate the Docker-matched two-worker profile and verify committed business data
+        run: >-
+          python tools/hardening_load.py
+          --output test-artifacts/hardening-load.json
+          --database-container '${{ job.services.postgres.id }}'
+      - name: Diagnose failed gate separately without relaxing or replacing its result
+        if: failure()
+        run: >-
+          python tools/hardening_load.py --profile-cpu --workers 1 --levels 50
+          --output test-artifacts/diagnostic/load.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardening-load-recovery
+          path: |
+            test-artifacts/hardening-load.json
+            test-artifacts/load-app.log
+            test-artifacts/diagnostic/
+
+  isolated-two-worker-capacity:
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/customer-finance-clarity-20261101' || github.head_ref == 'agent/operations-supervision-20261031' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hardening_two_workers
+          POSTGRES_USER: hardening_test
+          POSTGRES_PASSWORD: isolated-load-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hardening_test -d test_hardening_two_workers"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hardening_test:isolated-load-only@127.0.0.1:5432/test_hardening_two_workers
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install pinned requirements for independent release-profile repetition
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Independently repeat the unchanged complete two-worker load and recovery gate
+        run: >-
+          python tools/hardening_load.py
+          --workers 2
+          --output test-artifacts/hardening-two-worker-load.json
+          --database-container '${{ job.services.postgres.id }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardening-two-worker-capacity
+          path: |
+            test-artifacts/hardening-two-worker-load.json
+            test-artifacts/load-app.log
+
+  proposed-capacity-budget:
+    name: proposed-capacity-budget (${{ matrix.repetition }})
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hardening_proposed_budget
+          POSTGRES_USER: hardening_test
+          POSTGRES_PASSWORD: isolated-load-only
+        ports: ['5432:5432']
+        options: >-
+          --cpus 1 --memory 2g --memory-swap 2g
+          --health-cmd "pg_isready -U hardening_test -d test_hardening_proposed_budget"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hardening_test:isolated-load-only@127.0.0.1:5432/test_hardening_proposed_budget
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      KPS_LOAD_RESOURCE_PROFILE: proposed
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install unchanged requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Verify resource boundaries and distinct proposal evidence
+        run: python -m pytest tests/test_resource_load_profile.py -q
+      - name: Prepare a CI-only proposed 2 CPU 4 GiB application group
+        shell: bash
+        run: |
+          mkdir -p test-artifacts
+          KPS_LOAD_CGROUP_PATH="/sys/fs/cgroup/kps_order_load_$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+          printf 'KPS_LOAD_CGROUP_PATH=%s\n' "$KPS_LOAD_CGROUP_PATH" >> "$GITHUB_ENV"
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py \
+            --prepare-application-cgroup "$KPS_LOAD_CGROUP_PATH" "$(id -u)" "$(id -g)" \
+            2>&1 | tee test-artifacts/resource-setup.log
+      - name: Test the proposal without changing Render or accepting the current plan
+        run: >-
+          python tools/hardening_load.py
+          --application-cgroup "$KPS_LOAD_CGROUP_PATH"
+          --database-container '${{ job.services.postgres.id }}'
+          --output test-artifacts/proposed-budget-${{ matrix.repetition }}.json
+      - name: Remove only the empty run-owned application group
+        if: always() && env.KPS_LOAD_CGROUP_PATH != ''
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py
+          --cleanup-application-cgroup "$KPS_LOAD_CGROUP_PATH"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proposed-resource-budget-${{ matrix.repetition }}
+          path: |
+            test-artifacts/proposed-budget-${{ matrix.repetition }}.json
+            test-artifacts/load-app.log
+            test-artifacts/resource-setup.log
+
+  representative-render-budget:
+    name: representative-render-budget (${{ matrix.repetition }})
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/customer-finance-clarity-20261101' || github.head_ref == 'agent/operations-supervision-20261031' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
+    runs-on: ubuntu-latest
+    # Match verified owner-approved live Render: app 2 CPU/4 GiB, DB 1 CPU/2 GiB.
+    # App scale verified by live deploy dep-dbidk5egekts73ab1trg on 2026-10-30.
+    # Prior medium (app 1 CPU/2 GiB) failures remain in run 41100489814.
+    # Prior economy (DB 0.5 CPU/1 GiB) failures remain historical evidence in run 41099594723.
+    # Retain every workload, recovery drill and latency/error gate unchanged.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hardening_render_budget
+          POSTGRES_USER: hardening_test
+          POSTGRES_PASSWORD: isolated-load-only
+        ports: ['5432:5432']
+        options: >-
+          --cpus 1 --memory 2g --memory-swap 2g
+          --health-cmd "pg_isready -U hardening_test -d test_hardening_render_budget"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hardening_test:isolated-load-only@127.0.0.1:5432/test_hardening_render_budget
+      KPS_LOAD_RESOURCE_PROFILE: production_scaled
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install the same pinned application and test dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Verify resource ownership and strict latency gate guards
+        run: python -m pytest tests/test_resource_load_profile.py -q
+      - name: Prepare a real run-owned 2 CPU and 4 GiB application cgroup
+        shell: bash
+        run: |
+          mkdir -p test-artifacts
+          KPS_LOAD_CGROUP_PATH="/sys/fs/cgroup/kps_order_load_$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+          printf 'KPS_LOAD_CGROUP_PATH=%s\n' "$KPS_LOAD_CGROUP_PATH" >> "$GITHUB_ENV"
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py \
+            --prepare-application-cgroup "$KPS_LOAD_CGROUP_PATH" "$(id -u)" "$(id -g)" \
+            2>&1 | tee test-artifacts/resource-setup.log
+      - name: Complete the unchanged 50 100 250 500 workload and all recovery drills
+        run: >-
+          python tools/hardening_load.py
+          --max-error-rate 0
+          --application-cgroup "$KPS_LOAD_CGROUP_PATH"
+          --database-container '${{ job.services.postgres.id }}'
+          --output test-artifacts/current-render-production-scaled-budget-${{ matrix.repetition }}.json
+      - name: Remove only the empty run-owned application cgroup
+        if: always() && env.KPS_LOAD_CGROUP_PATH != ''
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py
+          --cleanup-application-cgroup "$KPS_LOAD_CGROUP_PATH"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: current-render-production-scaled-resource-budget-${{ matrix.repetition }}
+          path: |
+            test-artifacts/current-render-production-scaled-budget-${{ matrix.repetition }}.json
+            test-artifacts/load-app.log
+            test-artifacts/resource-setup.log

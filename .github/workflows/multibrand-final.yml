@@ -1,0 +1,297 @@
+name: Multi-brand final acceptance
+'on':
+  pull_request:
+    branches: [agent/kps-order-emergency-v4, agent/multibrand-safe-release-20261023]
+  push:
+    branches: [agent/enbishan-invoice-parity-20261023]
+permissions:
+  contents: read
+concurrency:
+  group: multibrand-final-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+# This gate is additional acceptance; existing protected image, security,
+# rollback and complete-regression checks remain mandatory and unchanged.
+jobs:
+  invoice-parity:
+    if: github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/enbishan-invoice-parity-20261023' || github.ref == 'refs/heads/agent/enbishan-invoice-parity-20261023'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_enbishan_invoice_parity
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d test_enbishan_invoice_parity"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_invoice_parity
+      APP_ENV: testing
+      OTP_PROVIDER: disabled
+      EMAIL_PROVIDER: disabled
+      REPORT_WORKER_ENABLED: 'false'
+      EMAIL_WORKER_ENABLED: 'false'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Exact KPS output and Enbishan layout preservation
+        run: |
+          node tests/test_brand_receipt_layout.cjs
+          node --check public/ops.js
+          node --check public/assets/customer-order.js
+      - name: Real PostgreSQL identity, scoped uniqueness, old references and printing
+        env:
+          TEST_BROWSER: '1'
+        run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_brand_receipt_logos.py tests/test_branch_printing.py tests/test_dispatch_numbering.py tests/test_brand_receipt_visual_browser.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: invoice-parity-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            test-results/enbishan/
+            test-artifacts/brand-receipt-*.png
+          retention-days: 14
+  multibrand-postgres:
+    if: github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_enbishan_multibrand_final
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d test_enbishan_multibrand_final"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_multibrand_final
+      APP_ENV: testing
+      OTP_PROVIDER: disabled
+      EMAIL_PROVIDER: disabled
+      REPORT_WORKER_ENABLED: 'false'
+      EMAIL_WORKER_ENABLED: 'false'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Prepare genuine current production source for the isolated upgrade witness
+        run: |
+          mkdir -p /tmp/kps-startup-baseline
+          git archive 4e4d781b4fa82b7459410694ff5c4ac06842e6e7 | tar -x -C /tmp/kps-startup-baseline
+          python - <<'PY'
+          import json, pathlib, subprocess
+          revision = '4e4d781b4fa82b7459410694ff5c4ac06842e6e7'
+          tree = subprocess.check_output(['git', 'rev-parse', revision + '^{tree}'], text=True).strip()
+          pathlib.Path('/tmp/kps-startup-baseline/baseline-source-identity.json').write_text(json.dumps({'revision': revision, 'tree': tree}))
+          PY
+          echo 'PENDING_MIGRATION_BASELINE_DIR=/tmp/kps-startup-baseline' >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install existing pinned application and test requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Record exact source and local PostgreSQL version
+        run: |
+          mkdir -p test-results/multibrand
+          git rev-parse HEAD > test-results/multibrand/revision.txt
+          test "$(git rev-parse HEAD)" = "$RUNTIME_REVISION"
+          python - <<'PY'
+          import os, psycopg
+          with psycopg.connect(os.environ['TEST_DATABASE_URL']) as connection:
+              version = connection.execute('SHOW server_version').fetchone()[0]
+          assert version.startswith('18.6'), version
+          print('Isolated PostgreSQL:', version)
+          PY
+      - name: ENBISHAN menu source, approval, scope and shared financial invariants
+        run: >-
+          python -m pytest -q
+          tests/test_pending_startup_upgrade.py tests/test_rollback_schema_compatibility.py tests/test_customer_engagement_closure.py tests/test_customer_engagement_restore.py
+          tests/test_enbishan_menu_readiness.py tests/test_enbishan_owner_menu_decisions.py
+          tests/test_enbishan_operations_preparation.py tests/test_enbishan_owner_approved_journey.py
+          tests/test_enbishan_storefront_identity.py tests/test_enbishan_menu_assets.py tests/test_enbishan_final_menu_review.py
+          tests/test_enbishan_customer_scope_constraints.py tests/test_enbishan_financial_ownership_constraints.py tests/test_enbishan_shared_terminal.py
+          tests/test_enbishan_shared_float.py tests/test_enbishan_sms_boundary.py
+          tests/test_enbishan_dual_brand.py tests/test_brand_receipt_logos.py tests/test_storefront_scope.py
+          tests/test_multibrand_final_boundary.py tests/test_public_default_brand_scope.py
+          tests/test_production_release_preflight.py tests/test_production_release_preflight_postgres.py
+          --junitxml=test-results/multibrand/brand-menu.xml
+      - name: Customer taps, district, campaigns and reporting
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m pytest -q
+          tests/test_ops_retry_compatibility.py tests/test_operational_customer_lookup.py tests/test_customer_card_quantity.py tests/test_customer_gift_pricing_identity.py tests/test_customer_neighborhood_policy.py
+          tests/test_minimum_order_feedback.py tests/test_optional_customer_address.py
+          tests/test_customer_hotpath.py tests/test_customer_language.py
+          tests/test_campaign_reporting.py tests/test_campaign_reporting_postgres.py
+          tests/test_campaign_report_closures_postgres.py tests/test_campaign_report_multibrand_postgres.py
+          tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py
+          tests/test_storefront_advertising.py tests/test_storefront_advertising_postgres.py
+          --junitxml=test-results/multibrand/customer-campaign.xml
+      - name: Authentica preparation and retained OTP identity boundaries
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m pytest -q
+          tests/test_enbishan_otp_provider_gate.py tests/test_tawked_otp.py
+          tests/test_authentica_challenges.py
+          tests/test_v5_identity.py tests/test_final_identity.py
+          tests/test_context_cookie_isolation.py tests/test_sms_mandatory_policy.py
+          tests/test_owner_sensitive_sms.py
+          --junitxml=test-results/multibrand/otp-identity.xml
+      - name: KPS order, delivery, grants and accounting regression
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m pytest -q
+          tests/test_core.py tests/test_operations.py tests/test_split_payment.py
+          tests/test_delivery_hours.py tests/test_morning_delivery.py
+          tests/test_morning_delivery_postgres.py tests/test_morning_manager_context.py
+          tests/test_morning_manager_context_postgres.py tests/test_morning_manager_parity_postgres.py
+          tests/test_fleet_active_swap.py tests/test_employee_permissions.py
+          tests/test_smart_dispatch.py tests/test_accounting.py tests/test_accounting_deadlines.py
+          tests/test_simple_driver_close.py tests/test_driver_customer_chat.py
+          --junitxml=test-results/multibrand/kps-delivery.xml
+      - name: Actual driver harnesses and browser script syntax
+        if: ${{ !cancelled() }}
+        run: |
+          node --test tests/test_campaign_report_ui.cjs
+          node tests/test_brand_receipt_layout.cjs
+          node tests/test_driver_simple_ui.cjs
+          node tests/test_blind_driver_closure_ui.cjs
+          node tests/test_driver_alerts_ui.cjs
+          node --check public/customer.js
+          node --check public/ops.js
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: multibrand-postgres-${{ github.event.pull_request.head.sha }}
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: error
+
+  multibrand-browser:
+    if: github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_enbishan_multibrand_browser
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d test_enbishan_multibrand_browser"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_multibrand_browser
+      APP_ENV: testing
+      TEST_BROWSER: '1'
+      OTP_PROVIDER: disabled
+      EMAIL_PROVIDER: disabled
+      REPORT_WORKER_ENABLED: 'false'
+      EMAIL_WORKER_ENABLED: 'false'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install existing pinned application and test requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Match the approved staff acceptance mirror handling; keep suites,
+          # components, signatures, engines and application thresholds unchanged.
+          configured=false
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+            fi
+          done
+          test "$configured" = true
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
+      - name: Install both required real browser engines
+        run: python -m playwright install --with-deps chromium webkit
+      - name: Record exact tested source
+        run: |
+          mkdir -p test-results/multibrand
+          git rev-parse HEAD > test-results/multibrand/revision.txt
+          test "$(git rev-parse HEAD)" = "$RUNTIME_REVISION"
+      - name: Real ENBISHAN and KPS bilingual mobile journeys
+        run: >-
+          python -m pytest -q
+          tests/test_enbishan_mobile_browser.py tests/test_enbishan_menu_browser.py
+          tests/test_customer_engagement_browser.py tests/test_customer_card_browser.py
+          --junitxml=test-results/multibrand/dual-brand-browser.xml
+      - name: Customer checkout, location, staff touch and approved gift creative
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m pytest -q
+          tests/test_branch_payment_policy_browser.py tests/test_optional_customer_plate_browser.py
+          tests/test_experience_entry_browser.py tests/test_customer_location_link_browser.py
+          tests/test_customer_map_browser.py tests/test_staff_phone_edit_browser.py
+          tests/test_gift_creative_browser.py tests/test_storefront_advertising_browser.py tests/test_campaign_report_browser.py
+          tests/test_v5_ui.py tests/test_customer_language.py tests/test_sms_mandatory_policy.py
+          --junitxml=test-results/multibrand/customer-browser.xml
+      - name: Delivery manager, vehicle swap and persistent alert interfaces
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m pytest -q
+          tests/test_morning_manager_browser.py tests/test_fleet_active_swap_browser.py
+          tests/test_delivery_workspace_browser.py
+          --junitxml=test-results/multibrand/delivery-browser.xml
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: multibrand-browser-${{ github.event.pull_request.head.sha }}
+          path: |
+            test-results/
+            test-artifacts/
+          retention-days: 14
+          if-no-files-found: error

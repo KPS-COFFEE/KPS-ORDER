@@ -1,0 +1,2109 @@
+[
+  {
+    "id": "enbishan-menu-028afa83b0694d93a171b9b5",
+    "brand_id": "enbishan",
+    "name": "مسخن",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/owner-20261025/clean-d325d61dca922cdc.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/clean-d325d61dca922cdc.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-3301de500e7478b4e03b3a73"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/clean-20b3ac765178214e.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973"
+        },
+        "image_url": "/assets/enbishan-menu/clean-9ef21f8e8294e1f1.png"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-969127f17958a830d1bcc973",
+            "name": "صغير · 6 قطعة",
+            "name_en": "Small · 6 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-3301de500e7478b4e03b3a73",
+            "name": "كبير · 18 قطعة",
+            "name_en": "Large · 18 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-037e5bbee12e0d9a177f149f",
+            "name": "وسط · 12 قطعة",
+            "name_en": "Medium · 12 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-0d6d5352fce7cbd44ad6594a",
+    "brand_id": "enbishan",
+    "name": "بطاطس",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/source-64b60282a385143c.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-0c3c6975d14be803eadb81c3"
+        },
+        "image_url": "/assets/enbishan-menu/source-64b60282a385143c.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-5aa17088e68c7f2d82d1483f"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-e85b9e7abbd014c8.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-ed6f8b4385ec00c2519aadd4"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-c5e8f6e25a8ef8fb.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-0c3c6975d14be803eadb81c3",
+            "name": "صغير · 3 قطعة",
+            "name_en": "Small · 3 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-ed6f8b4385ec00c2519aadd4",
+            "name": "عائلي · 18 قطعة",
+            "name_en": "Family · 18 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-5aa17088e68c7f2d82d1483f",
+            "name": "وسط · 6 قطعة",
+            "name_en": "Medium · 6 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-2abc3c6b5efd0180c521eef0",
+    "brand_id": "enbishan",
+    "name": "ملفوف",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/source-20e25705ea9b06fe.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973"
+        },
+        "image_url": "/assets/enbishan-menu/source-20e25705ea9b06fe.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-acbdb1bab93fe213.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-595e30afdccc68f585b1030d"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-01c3a3ef5c19296b.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-969127f17958a830d1bcc973",
+            "name": "صغير · 6 قطعة",
+            "name_en": "Small · 6 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-595e30afdccc68f585b1030d",
+            "name": "كبير · 24 قطعة",
+            "name_en": "Large · 24 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-037e5bbee12e0d9a177f149f",
+            "name": "وسط · 12 قطعة",
+            "name_en": "Medium · 12 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-3facf0781142b248264e4be9",
+    "brand_id": "enbishan",
+    "name": "بوكس رمضان · 5 كبة + 5 سمبوسة + 5 ورق عنب كريسبي",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/owner-20261025/clean-52333d1391dafeb1.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-355ce388c67a995c750fa30b"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/clean-52333d1391dafeb1.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-355ce388c67a995c750fa30b",
+            "name": "كبير · 15 قطعة",
+            "name_en": "Large · 15 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-43ff27d14aa7990095f3af11",
+    "brand_id": "enbishan",
+    "name": "كبة و سمبوسة",
+    "category": "المقليات",
+    "image_url": "/assets/enbishan-menu/owner-20261025/source-0311c6434255548e.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-186258c13214fb740e8c8334"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-0311c6434255548e.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-bc42129f258572396b767e58"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-3b775d191f5928cc.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-bc42129f258572396b767e58",
+            "name": "كبير · 20 قطعة",
+            "name_en": "Large · 20 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-186258c13214fb740e8c8334",
+            "name": "وسط · 15 قطعة",
+            "name_en": "Medium · 15 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-6c7a9f521d5f21500c2e6d9a",
+    "brand_id": "enbishan",
+    "name": "ورق عنب كريسبى",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/owner-review/crispy-small.jpeg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-186258c13214fb740e8c8334"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/clean-66eb1ff184914477.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-ae30aa8905d03bd330310bfb"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/clean-9b941b822c5ea952.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-774fa9ee015940670c61c84c"
+        },
+        "image_url": "/assets/enbishan-menu/owner-review/crispy-small.jpeg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-774fa9ee015940670c61c84c",
+            "name": "صغير · 5 قطعة",
+            "name_en": "Small · 5 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-ae30aa8905d03bd330310bfb",
+            "name": "وسط · 10 قطعة",
+            "name_en": "Medium · 10 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-186258c13214fb740e8c8334",
+            "name": "وسط · 15 قطعة",
+            "name_en": "Medium · 15 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-7b0752b4daa269674e08576f",
+    "brand_id": "enbishan",
+    "name": "عنبيشن سيجنتشر",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/owner-20261025/source-6f7efb0f38241172.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-b77b6cf14198f496f49c1d3c"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-6f7efb0f38241172.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-b77b6cf14198f496f49c1d3c",
+            "name": "عائلي · 44 قطعة",
+            "name_en": "Family · 44 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-7f0dd1ebba3e28f5b134aea5",
+    "brand_id": "enbishan",
+    "name": "بصل",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/source-af290844eddac1cb.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973"
+        },
+        "image_url": "/assets/enbishan-menu/source-af290844eddac1cb.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-bc42129f258572396b767e58"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-92b471015d554177.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-969127f17958a830d1bcc973",
+            "name": "صغير · 6 قطعة",
+            "name_en": "Small · 6 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-bc42129f258572396b767e58",
+            "name": "كبير · 20 قطعة",
+            "name_en": "Large · 20 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-894fad254b67890eafc2c47e",
+    "brand_id": "enbishan",
+    "name": "ورق عنب",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/source-273d1169ec5c3a2f.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "pair-783331fde37a9bb0a6e0"
+        },
+        "image_url": "/assets/enbishan-menu/source-273d1169ec5c3a2f.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "pair-749acf6e4741e1aa3f89"
+        },
+        "image_url": "/assets/enbishan-menu/source-273d1169ec5c3a2f.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "pair-6ede9179169c89d85168"
+        },
+        "image_url": "/assets/enbishan-menu/source-273d1169ec5c3a2f.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+        },
+        "image_url": "/assets/enbishan-menu/source-273d1169ec5c3a2f.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "pair-783331fde37a9bb0a6e0"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-c6f775eb35653867.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "pair-749acf6e4741e1aa3f89"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-c6f775eb35653867.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "pair-6ede9179169c89d85168"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-c6f775eb35653867.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-c6f775eb35653867.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "pair-783331fde37a9bb0a6e0"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-66930e12efb98caf.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "pair-749acf6e4741e1aa3f89"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-66930e12efb98caf.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "pair-6ede9179169c89d85168"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-66930e12efb98caf.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-66930e12efb98caf.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "pair-783331fde37a9bb0a6e0"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "pair-749acf6e4741e1aa3f89"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "pair-6ede9179169c89d85168"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-969127f17958a830d1bcc973",
+            "name": "صغير · 6 قطعة",
+            "name_en": "Small · 6 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-4d099242d361cb106794a77c",
+            "name": "عائلي · 60 قطعة",
+            "name_en": "Family · 60 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-11c6710e023eb15c7985af50",
+            "name": "كبير · 30 قطعة",
+            "name_en": "Large · 30 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-037e5bbee12e0d9a177f149f",
+            "name": "وسط · 12 قطعة",
+            "name_en": "Medium · 12 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "FLAVOUR",
+        "name": "نكهات ورق العنب · نكهتان أو مشكل",
+        "type": "select",
+        "values": [
+          {
+            "code": "pair-783331fde37a9bb0a6e0",
+            "name": "دبس رمان + سبايسي",
+            "name_en": "Pomegranate molasses + Spicy",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "pair-749acf6e4741e1aa3f89",
+            "name": "دبس رمان + ليمون",
+            "name_en": "Pomegranate molasses + Lemon",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "pair-6ede9179169c89d85168",
+            "name": "سبايسي + ليمون",
+            "name_en": "Spicy + Lemon",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-2606b799a8a89a992bffd12e",
+            "name": "مشكل",
+            "name_en": "Mixed",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Grape leaf flavours · two flavours or mixed",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-8b9c0ac992a637fc6e97e3e9",
+    "brand_id": "enbishan",
+    "name": "سمبوسة",
+    "category": "المقليات",
+    "image_url": "/assets/enbishan-menu/source-e3f85aac4e917d84.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973"
+        },
+        "image_url": "/assets/enbishan-menu/source-e3f85aac4e917d84.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-ae30aa8905d03bd330310bfb"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-e378e68d960145ea.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-355ce388c67a995c750fa30b"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-062f0b0775d491ab.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-160dc4939c7ad157f2860b0d"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f061268f12edde14.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-969127f17958a830d1bcc973",
+            "name": "صغير · 6 قطعة",
+            "name_en": "Small · 6 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-160dc4939c7ad157f2860b0d",
+            "name": "عائلي · 30 قطعة",
+            "name_en": "Family · 30 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-355ce388c67a995c750fa30b",
+            "name": "كبير · 15 قطعة",
+            "name_en": "Large · 15 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-ae30aa8905d03bd330310bfb",
+            "name": "وسط · 10 قطعة",
+            "name_en": "Medium · 10 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-97454e7c5796562295e4937c",
+    "brand_id": "enbishan",
+    "name": "نودلز",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/source-385e0d7c6a7be1e6.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8"
+        },
+        "image_url": "/assets/enbishan-menu/source-385e0d7c6a7be1e6.jpg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-9a85ab30d44850bc6d2e6e18",
+    "brand_id": "enbishan",
+    "name": "فتة",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/source-9c47e8d94faf1617.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8"
+        },
+        "image_url": "/assets/enbishan-menu/source-9c47e8d94faf1617.jpg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-b641eb7a3572b133717e64ef",
+    "brand_id": "enbishan",
+    "name": "عنبيشن كبير",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/owner-20261025/source-3b5898d94e55dee6.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-3301de500e7478b4e03b3a73"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-3b5898d94e55dee6.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-3301de500e7478b4e03b3a73",
+            "name": "كبير · 18 قطعة",
+            "name_en": "Large · 18 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-b912778fdbf8eeb4211ccf60",
+    "brand_id": "enbishan",
+    "name": "خلية",
+    "category": "المخبوزات",
+    "image_url": "/assets/enbishan-menu/clean-9d13311fbb324706.png",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-fcdb9008ab654ee829014225"
+        },
+        "image_url": "/assets/enbishan-menu/clean-9d13311fbb324706.png"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-de821d9f2eb4a4cfcc4f64d0"
+        },
+        "image_url": "/assets/enbishan-menu/clean-9d13311fbb324706.png"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-191ae8690a8717a4cea5f903"
+        },
+        "image_url": "/assets/enbishan-menu/clean-9d13311fbb324706.png"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-b0d476f1539cd3b162a08884"
+        },
+        "image_url": "/assets/enbishan-menu/clean-9d13311fbb324706.png"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "FLAVOUR",
+        "name": "النكهة",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-b0d476f1539cd3b162a08884",
+            "name": "بيكان",
+            "name_en": "Pecan",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-fcdb9008ab654ee829014225",
+            "name": "سينابون",
+            "name_en": "Cinnabon",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-de821d9f2eb4a4cfcc4f64d0",
+            "name": "كلاسيك",
+            "name_en": "Classic",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-191ae8690a8717a4cea5f903",
+            "name": "مكس",
+            "name_en": "Mix",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Flavour",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-ba943fd11771582e9003ac47",
+    "brand_id": "enbishan",
+    "name": "محاشي مشكل",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/approved-d287e8cc49f6dc3e.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-560ef2b6869cbecee1bdd900"
+        },
+        "image_url": "/assets/enbishan-menu/approved-d287e8cc49f6dc3e.jpg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-560ef2b6869cbecee1bdd900",
+            "name": "صغير",
+            "name_en": "Small",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "CHOICE_1",
+        "name": "الاختيار 1",
+        "type": "select",
+        "values": [
+          {
+            "code": "potato",
+            "name": "بطاطس · حبة",
+            "name_en": "Potato · 1 piece",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "pepper",
+            "name": "فليفلة · حبة",
+            "name_en": "Pepper · 1 piece",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "grape",
+            "name": "ورق عنب · حبتان",
+            "name_en": "Grape leaves · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "onion",
+            "name": "بصل · حبتان",
+            "name_en": "Onion · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "zucchini",
+            "name": "كوسا · حبتان",
+            "name_en": "Zucchini · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "eggplant",
+            "name": "باذنجان · حبتان",
+            "name_en": "Eggplant · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Choice 1",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "CHOICE_2",
+        "name": "الاختيار 2",
+        "type": "select",
+        "values": [
+          {
+            "code": "potato",
+            "name": "بطاطس · حبة",
+            "name_en": "Potato · 1 piece",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "pepper",
+            "name": "فليفلة · حبة",
+            "name_en": "Pepper · 1 piece",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "grape",
+            "name": "ورق عنب · حبتان",
+            "name_en": "Grape leaves · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "onion",
+            "name": "بصل · حبتان",
+            "name_en": "Onion · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "zucchini",
+            "name": "كوسا · حبتان",
+            "name_en": "Zucchini · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "eggplant",
+            "name": "باذنجان · حبتان",
+            "name_en": "Eggplant · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Choice 2",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "CHOICE_3",
+        "name": "الاختيار 3",
+        "type": "select",
+        "values": [
+          {
+            "code": "potato",
+            "name": "بطاطس · حبة",
+            "name_en": "Potato · 1 piece",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "pepper",
+            "name": "فليفلة · حبة",
+            "name_en": "Pepper · 1 piece",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "grape",
+            "name": "ورق عنب · حبتان",
+            "name_en": "Grape leaves · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "onion",
+            "name": "بصل · حبتان",
+            "name_en": "Onion · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "zucchini",
+            "name": "كوسا · حبتان",
+            "name_en": "Zucchini · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "eggplant",
+            "name": "باذنجان · حبتان",
+            "name_en": "Eggplant · 2 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Choice 3",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-babdb49012d7b67402db8fc2",
+    "brand_id": "enbishan",
+    "name": "بوكس رمضان · 5 كبة + 6 مسخن + 5 سمبوسة",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/owner-review/ramadan-box.jpeg",
+    "variant_images": [],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-ec6a1ea71637fe5a95981a3b",
+            "name": "كبير · 16 قطعة",
+            "name_en": "Large · 16 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-c434c397f9072844ba9c93b4",
+    "brand_id": "enbishan",
+    "name": "ورق عنب وملفوف",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "pair-783331fde37a9bb0a6e0"
+        },
+        "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "pair-749acf6e4741e1aa3f89"
+        },
+        "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "pair-6ede9179169c89d85168"
+        },
+        "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+        },
+        "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "pair-783331fde37a9bb0a6e0"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-a403b7e8dc2e6242.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "pair-749acf6e4741e1aa3f89"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-a403b7e8dc2e6242.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "pair-6ede9179169c89d85168"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-a403b7e8dc2e6242.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-a403b7e8dc2e6242.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "pair-783331fde37a9bb0a6e0"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-193cf5dc249e0086.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "pair-749acf6e4741e1aa3f89"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-193cf5dc249e0086.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "pair-6ede9179169c89d85168"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-193cf5dc249e0086.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-193cf5dc249e0086.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "pair-783331fde37a9bb0a6e0"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/grape-cabbage-family.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "pair-749acf6e4741e1aa3f89"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/grape-cabbage-family.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "pair-6ede9179169c89d85168"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/grape-cabbage-family.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/grape-cabbage-family.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-a0c277ce10ff7c635fd1e9ec",
+            "name": "٦ حبات (٤ ورق عنب + ٢ ملفوف)",
+            "name_en": "6 pieces (4 grape leaves + 2 cabbage)",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-5eaf865e16c194c339bace33",
+            "name": "١٢ حبة (٨ ورق عنب + ٤ ملفوف)",
+            "name_en": "12 pieces (8 grape leaves + 4 cabbage)",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-b804a3f4814cc6028d7ef9da",
+            "name": "٢٤ حبة (١٦ ورق عنب + ٨ ملفوف)",
+            "name_en": "24 pieces (16 grape leaves + 8 cabbage)",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-f79d0c0c352f2bb2fc40e13a",
+            "name": "عائلي · ٣٦ حبة (١٨ ملفوف + ١٨ ورق عنب)",
+            "name_en": "Family · 36 pieces (18 cabbage + 18 grape leaves)",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "FLAVOUR",
+        "name": "نكهات ورق العنب · نكهتان أو مشكل",
+        "type": "select",
+        "values": [
+          {
+            "code": "pair-783331fde37a9bb0a6e0",
+            "name": "دبس رمان + سبايسي",
+            "name_en": "Pomegranate molasses + Spicy",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "pair-749acf6e4741e1aa3f89",
+            "name": "دبس رمان + ليمون",
+            "name_en": "Pomegranate molasses + Lemon",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "pair-6ede9179169c89d85168",
+            "name": "سبايسي + ليمون",
+            "name_en": "Spicy + Lemon",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-2606b799a8a89a992bffd12e",
+            "name": "مشكل",
+            "name_en": "Mixed",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Grape leaf flavours · two flavours or mixed",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-cfe9ad0bccc96e0d0537be28",
+    "brand_id": "enbishan",
+    "name": "ورق عنب كريسبي وملفوف",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/owner-20261025/clean-1d5c846f506902b7.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f5e13f8169208e047d65bbd2"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/clean-1d5c846f506902b7.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f5e13f8169208e047d65bbd2",
+            "name": "وسط · 10 قطعة (5 كريسبي + 5 ملفوف)",
+            "name_en": "Medium · 10 pieces (5 crispy grape leaves + 5 cabbage)",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-d99fd6d6d3f908666e604235",
+    "brand_id": "enbishan",
+    "name": "موهيتو مع صحن فتة",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-cc3971eb583b962536a0d133"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-af81bab458678c11d1199f87"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "FLAVOUR",
+        "name": "النكهة",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-0648331d8c487bc633f3dfcd",
+            "name": "باشن فروت",
+            "name_en": "Passion fruit",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-2e537d9cd7148f6a198d5d62",
+            "name": "بلاك بيرى",
+            "name_en": "Blackberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-cc3971eb583b962536a0d133",
+            "name": "بلولوجن",
+            "name_en": "Blue Lagoon",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-2c3a36587e2510bc4a6f2c5c",
+            "name": "راسبيرى",
+            "name_en": "Raspberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-af81bab458678c11d1199f87",
+            "name": "رمان",
+            "name_en": "Pomegranate",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-c15c65cd891cb3baa03fac95",
+            "name": "ستروبرى",
+            "name_en": "Strawberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Flavour",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-d9c5375981f3b70a043b43c9",
+    "brand_id": "enbishan",
+    "name": "كبة",
+    "category": "المقليات",
+    "image_url": "/assets/enbishan-menu/source-f48daa45d98f47a3.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-5882ebc52c9272d677f69192"
+        },
+        "image_url": "/assets/enbishan-menu/source-f48daa45d98f47a3.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f5d5e6c461d0eac78c8c6c2a"
+        },
+        "image_url": "/assets/enbishan-menu/source-4c26f68070d68005.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-160dc4939c7ad157f2860b0d"
+        },
+        "image_url": "/assets/enbishan-menu/source-4c26f68070d68005.jpg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-5882ebc52c9272d677f69192",
+            "name": "صغير · 4 قطعة",
+            "name_en": "Small · 4 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-160dc4939c7ad157f2860b0d",
+            "name": "عائلي · 30 قطعة",
+            "name_en": "Family · 30 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-f5d5e6c461d0eac78c8c6c2a",
+            "name": "وسط · 7 قطعة",
+            "name_en": "Medium · 7 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-e739fd96698117d6fc9cd87d",
+    "brand_id": "enbishan",
+    "name": "بوكس رمضان · 5 سمبوسة + 12 مسخن",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/owner-20261025/clean-0591372cd12d8df4.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-8d233ce061e384d30eea3f77"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/clean-0591372cd12d8df4.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-8d233ce061e384d30eea3f77",
+            "name": "كبير · 17 قطعة",
+            "name_en": "Large · 17 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-eea4f81998c7705a69c69532",
+    "brand_id": "enbishan",
+    "name": "محاشي مشكل",
+    "category": "المحاشي",
+    "image_url": "/assets/enbishan-menu/owner-20261025/source-ff47b177d47c34cf.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-8bc5ff94ef1484666fa0cfde"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-ff47b177d47c34cf.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-7ec6c327c235a99f12ee1173"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f62a1f85346c19c4.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-8bc5ff94ef1484666fa0cfde",
+            "name": "كبير · 10 قطعة",
+            "name_en": "Large · 10 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-7ec6c327c235a99f12ee1173",
+            "name": "كبير جداً · 21 قطعة",
+            "name_en": "Extra Large · 21 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-f7a3a347bc71bf37d6645975",
+    "brand_id": "enbishan",
+    "name": "بوكس رمضان · 5 كبة + 12 مسخن",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/owner-20261025/clean-b73f213d553708c1.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-8d233ce061e384d30eea3f77"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/clean-b73f213d553708c1.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-8d233ce061e384d30eea3f77",
+            "name": "كبير · 17 قطعة",
+            "name_en": "Large · 17 pieces",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-fda651bf4e57088442d6c972",
+    "brand_id": "enbishan",
+    "name": "موهيتو مع صحن محاشي مشكل",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-cc3971eb583b962536a0d133"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-af81bab458678c11d1199f87"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "FLAVOUR",
+        "name": "النكهة",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-0648331d8c487bc633f3dfcd",
+            "name": "باشن فروت",
+            "name_en": "Passion fruit",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-2e537d9cd7148f6a198d5d62",
+            "name": "بلاك بيرى",
+            "name_en": "Blackberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-cc3971eb583b962536a0d133",
+            "name": "بلولوجن",
+            "name_en": "Blue Lagoon",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-2c3a36587e2510bc4a6f2c5c",
+            "name": "راسبيرى",
+            "name_en": "Raspberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-af81bab458678c11d1199f87",
+            "name": "رمان",
+            "name_en": "Pomegranate",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-c15c65cd891cb3baa03fac95",
+            "name": "ستروبرى",
+            "name_en": "Strawberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Flavour",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-fff314143ea1fb39265e203f",
+    "brand_id": "enbishan",
+    "name": "موهيتو مع صحن ورق عنب",
+    "category": "أصناف أخرى",
+    "image_url": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-cc3971eb583b962536a0d133"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg"
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-af81bab458678c11d1199f87"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      },
+      {
+        "code": "FLAVOUR",
+        "name": "النكهة",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-0648331d8c487bc633f3dfcd",
+            "name": "باشن فروت",
+            "name_en": "Passion fruit",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-2e537d9cd7148f6a198d5d62",
+            "name": "بلاك بيرى",
+            "name_en": "Blackberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-cc3971eb583b962536a0d133",
+            "name": "بلولوجن",
+            "name_en": "Blue Lagoon",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-2c3a36587e2510bc4a6f2c5c",
+            "name": "راسبيرى",
+            "name_en": "Raspberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-af81bab458678c11d1199f87",
+            "name": "رمان",
+            "name_en": "Pomegranate",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          },
+          {
+            "code": "v-c15c65cd891cb3baa03fac95",
+            "name": "ستروبرى",
+            "name_en": "Strawberry",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Flavour",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-citrus-20261026",
+    "brand_id": "enbishan",
+    "name": "حمضيات",
+    "category": "المشروبات",
+    "image_url": "/assets/enbishan-menu/owner-20261026/citrus-can.jpg",
+    "variant_images": [],
+    "option_groups": []
+  },
+  {
+    "id": "enbishan-menu-2bafb30d47293596fcc41f07",
+    "brand_id": "enbishan",
+    "name": "بيبسي",
+    "category": "المشروبات",
+    "image_url": "/assets/enbishan-menu/beverages/pepsi-240ml.webp",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8"
+        },
+        "image_url": "/assets/enbishan-menu/beverages/pepsi-240ml.webp"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-3a1075f078a64e58726b861e",
+    "brand_id": "enbishan",
+    "name": "سفن اب",
+    "category": "المشروبات",
+    "image_url": "/assets/enbishan-menu/beverages/7up-240ml.png",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8"
+        },
+        "image_url": "/assets/enbishan-menu/beverages/7up-240ml.png"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  },
+  {
+    "id": "enbishan-menu-b3de6ed8adc01188db5d239b",
+    "brand_id": "enbishan",
+    "name": "ماء",
+    "category": "المشروبات",
+    "image_url": "/assets/enbishan-menu/beverages/water-kps.jpg",
+    "variant_images": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8"
+        },
+        "image_url": "/assets/enbishan-menu/beverages/water-kps.jpg"
+      }
+    ],
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0,
+            "available": true,
+            "unavailable_reason": null
+          }
+        ],
+        "name_en": "Size",
+        "required": true,
+        "max_select": 1,
+        "min_select": 1
+      }
+    ]
+  }
+]

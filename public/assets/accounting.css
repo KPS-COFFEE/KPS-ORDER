@@ -1,0 +1,162 @@
+.accounting{min-width:0;display:grid;gap:1rem}.accounting .ac-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem;align-items:end}.accounting label{display:grid;gap:.4rem}.accounting select[multiple]{min-height:100px}.accounting .ac-tabs,.accounting .ac-actions{display:flex;gap:.6rem;flex-wrap:wrap}.accounting .ac-table{overflow:auto;max-width:100%;border:1px solid var(--line,#ddd);border-radius:12px}.accounting table{border-collapse:collapse;width:100%;font-size:.86rem}.accounting th,.accounting td{padding:.8rem;text-align:start;white-space:nowrap;border-bottom:1px solid #ddd;word-break:normal;overflow-wrap:normal}.accounting th{background:#f5eee8;color:#30241e;position:sticky;top:0}.accounting td.ac-text{white-space:normal;min-width:200px;max-width:360px;overflow-wrap:break-word;line-height:1.9}.accounting tfoot{font-weight:700;background:#faf5ef}.accounting .ac-shortage{color:#b42318;font-weight:700}.accounting .ac-note{line-height:1.9;max-width:100%;white-space:normal}.accounting [role=alert]{color:#b42318}.ac-case-form{display:grid;gap:1rem}.ac-case-form label{display:grid;gap:.4rem}.ac-case-history{padding:.8rem;border-bottom:1px solid #ddd}.ac-case-history p{white-space:pre-wrap;overflow-wrap:break-word}.ac-files{display:flex;flex-wrap:wrap;gap:1rem}.ac-files img{width:140px;max-height:140px;object-fit:contain}@media(max-width:600px){.accounting .ac-filters{grid-template-columns:1fr}.accounting th,.accounting td{padding:.6rem}.accounting .ac-actions>*{flex:1}}
+.accounting{grid-template-columns:minmax(0,1fr)}.accounting>*{min-width:0;max-width:100%}.accounting .ac-tabs button,.accounting .ac-actions button{max-width:100%;white-space:normal}.accounting #ac-results{min-width:0}.accounting .ac-filters label{min-width:0}
+
+/* Equal navigation cards and a readable filter panel at every viewport. */
+.accounting .ac-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.accounting .ac-tabs .ac-section-card{display:flex;align-items:center;gap:12px;min-height:106px;width:100%;padding:18px;text-align:start;border:1px solid var(--line,#e5ddd5);border-radius:16px;background:#fff;color:#30241e;box-shadow:0 2px 8px #30241e05;transition:border-color .15s,background .15s,box-shadow .15s}
+.accounting .ac-section-mark{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:#fff3e9;color:#a64116;font-size:.8rem;font-weight:700;font-variant-numeric:tabular-nums}
+.accounting .ac-section-copy{display:grid;gap:5px;min-width:0;flex:1}
+.accounting .ac-section-title{font-size:.95rem;font-weight:750;line-height:1.6}
+.accounting .ac-section-subtitle{font-size:.77rem;font-weight:400;line-height:1.7;color:#766b63}
+.accounting .ac-section-arrow{font-size:1.5rem;color:#a3978c;flex:none}
+[dir=ltr] .accounting .ac-section-arrow{transform:rotate(180deg)}
+.accounting .ac-tabs .ac-section-card:hover{border-color:#bb5a2d;background:#fffaf6}
+.accounting .ac-tabs .ac-section-card[aria-pressed=true]{border-color:#a64116;background:#fff5ec;box-shadow:inset 0 0 0 1px #a64116}
+.accounting .ac-tabs .ac-section-card:focus-visible{outline:3px solid #c46a36;outline-offset:3px}
+.accounting .ac-filters{grid-template-columns:repeat(4,minmax(0,1fr));padding:22px;border:1px solid var(--line,#e5ddd5);border-radius:16px;background:#fff;gap:18px 16px;align-items:start}
+.accounting .ac-filters label{font-size:.84rem;font-weight:650;line-height:1.7}
+.accounting .ac-filters input,.accounting .ac-filters select{box-sizing:border-box;width:100%;max-width:100%;min-height:44px;border-radius:10px;font-size:.88rem;font-weight:400}
+.accounting .ac-filters select[multiple]{height:112px;min-height:112px;padding:7px}
+.accounting .ac-filters select[multiple] option{padding:6px 8px;border-radius:5px}
+.accounting .ac-filters>button{align-self:end;min-height:44px;margin:0;border-radius:10px}
+.accounting .ac-actions{justify-content:flex-end;gap:10px;padding:14px 18px;border:1px solid var(--line,#e5ddd5);border-radius:14px;background:#fff}
+.accounting .ac-actions>button{min-height:42px;border-radius:9px;padding:10px 16px;font-size:.85rem}
+.accounting .ac-note{margin:0;padding:0 4px;font-size:.82rem;color:#766b63}
+.accounting #ac-error:empty{display:none}
+.accounting [hidden]{display:none!important}
+@media(max-width:1100px){.accounting .ac-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.accounting .ac-filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.accounting .ac-filters{grid-template-columns:repeat(2,minmax(0,1fr));padding:16px}.accounting .ac-tabs .ac-section-card{padding:14px;gap:9px}.accounting .ac-section-mark{width:30px;height:30px}.accounting .ac-actions{justify-content:stretch}.accounting .ac-actions>button{flex:1 1 140px}}
+@media(max-width:480px){.accounting .ac-tabs{grid-template-columns:1fr}.accounting .ac-tabs .ac-section-card{min-height:84px}.accounting .ac-filters{grid-template-columns:1fr}.accounting .ac-actions{padding:12px}}
+.ac-manager-card{margin-block:14px;padding:14px;min-width:0}
+.ac-manager-card>summary{display:flex;align-items:center;flex-wrap:wrap;gap:12px;cursor:pointer;padding:8px;border-radius:8px;background:#f7f3ef}
+.ac-manager-card>summary strong{font-size:1.15rem;margin-inline-end:auto}
+.ac-manager-card td:last-child{min-width:210px}
+.ac-manager-card td button,.ac-manager-card td a{display:inline-block;margin:4px}
+.ac-day-report{display:flex;align-items:center;flex-wrap:wrap;gap:16px;padding-block:12px}
+.ac-manager-card{border:1px solid #e5ddd5;border-radius:18px;background:white;padding:20px;box-shadow:0 4px 18px #30241e06}
+.ac-manager-card>summary{padding:16px;background:#faf7f3;border-radius:12px}
+.ac-manager-card summary progress{flex-basis:100%;width:100%;height:9px;accent-color:#397764}
+.ac-completion{font-size:1.3rem;font-weight:750;color:#397764;font-variant-numeric:tabular-nums}
+.ac-card-metrics{display:flex;gap:10px;flex-wrap:wrap;padding-block:14px}
+.ac-card-metrics span{background:#f6f3ef;border:1px solid #eee6df;padding:8px 12px;border-radius:9px;font-size:.83rem}
+.ac-manager-card td{padding:14px 10px;vertical-align:top}
+.ac-manager-card td small{display:block;font-size:.76rem;line-height:1.8;white-space:normal}
+.ac-manager-card td:first-child{min-width:180px}
+.ac-manager-card .ac-secondary{background:#f8f4ef;color:#675246;border:1px solid #dfd4c8}
+.ac-manager-card td:last-child{white-space:normal;max-width:300px}
+.ac-manager-card td button{font-size:.8rem;border-radius:8px}
+.ac-driver-deadline{margin-block:6px;color:#766b63}
+@media(max-width:760px){.ac-manager-card{padding:12px}.ac-manager-card table,.ac-manager-card tbody,.ac-manager-card tr,.ac-manager-card td{display:block;width:auto;min-width:0!important}.ac-manager-card thead{display:none}.ac-manager-card tr{border:1px solid #e8ded5;border-radius:12px;padding:10px;margin-block:12px}.ac-manager-card td{padding:6px;border:0;white-space:normal}.ac-manager-card td:before{display:inline-block;min-width:110px;color:#766b63;font-size:.8rem;content:attr(data-label)}.ac-manager-card td:first-child:before,.ac-manager-card td:last-child:before{display:none}.ac-manager-card .ac-table{overflow:visible}.ac-manager-card td button{min-height:42px}}
+
+/* Each driver keeps amounts, review state and actions together. */
+.accounting .ac-manager-card{container-type:inline-size}
+.accounting .ac-manager-card .ac-table{border:0;overflow:visible}
+.accounting .ac-manager-card table,.accounting .ac-manager-card tbody{display:block;width:100%}
+.accounting .ac-manager-card thead{display:block;position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.accounting .ac-manager-card [data-driver-row]{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;padding:18px;margin:0 0 16px;border:1px solid #e7ded5;border-radius:16px;background:#fff;box-shadow:0 2px 8px #30241e04}
+.accounting .ac-manager-card [data-driver-row]>td{display:block;box-sizing:border-box;min-width:0!important;width:auto;max-width:none;border:0;padding:12px;background:#f8f6f3;border-radius:10px;white-space:normal;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;line-height:1.7}
+.accounting .ac-manager-card [data-driver-row]>td:before{display:block;min-width:0;margin-bottom:6px;content:attr(data-label);font-size:.76rem;font-weight:500;color:#766b63}
+.accounting .ac-manager-card [data-driver-row]>td:first-child,.accounting .ac-manager-card [data-driver-row]>td:last-child{grid-column:1/-1;background:transparent;padding:0}
+.accounting .ac-manager-card [data-driver-row]>td:first-child{padding-bottom:12px;border-bottom:1px solid #eee7df;border-radius:0}
+.accounting .ac-manager-card [data-driver-row]>td:first-child:before,.accounting .ac-manager-card [data-driver-row]>td:last-child:before{display:none}
+.accounting .ac-manager-card [data-driver-row]>td:first-child>strong{display:block;font-size:1.05rem;color:#30241e}
+.accounting .ac-manager-card .ac-driver-deadline{margin:4px 0 0;font-size:.75rem}
+.accounting .ac-manager-card .ac-driver-heading{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.accounting .ac-manager-card .ac-driver-heading>strong{font-size:1.05rem;color:#30241e;overflow-wrap:anywhere}
+.accounting .ac-manager-card .ac-driver-total{display:grid;gap:2px;padding:8px 14px;background:#fff5ec;border:1px solid #f1d8c4;border-radius:10px;min-width:140px;max-width:100%;box-sizing:border-box}
+.accounting .ac-manager-card .ac-driver-total>span{font-size:.74rem;color:#766b63}
+.accounting .ac-manager-card .ac-driver-total>strong{font-size:1.12rem;font-variant-numeric:tabular-nums;color:#8e3915;overflow-wrap:anywhere}
+.accounting .ac-manager-card .ac-driver-total>small{font-size:.68rem}
+.accounting .ac-manager-card .ac-settlement-status{display:inline-block;padding:6px 11px;margin:0;border-radius:8px;background:#f3eee7;color:#675246;font-size:.82rem;font-weight:650;line-height:1.7}
+.accounting .ac-manager-card .ac-settlement-status[data-state=difference]{background:#fff1dc;color:#875718}
+.accounting .ac-manager-card .ac-settlement-status[data-state=confirmed]{background:#eaf5ef;color:#27634e}
+.accounting .ac-manager-card .ac-settlement-detail{margin-block:8px;color:#766b63;line-height:1.8;white-space:normal;overflow-wrap:anywhere}
+.accounting .ac-manager-card .ac-settlement-confirmation{padding:10px 12px;margin-block:10px;background:#f0f7f3;border:1px solid #daeadf;border-radius:10px;line-height:1.9}
+.accounting .ac-manager-card .ac-settlement-actions,.accounting .ac-manager-card .ac-settlement-links{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.accounting .ac-manager-card .ac-settlement-actions:empty{display:none}
+.accounting .ac-manager-card td button,.accounting .ac-manager-card td a{box-sizing:border-box;margin:0;max-width:100%;min-height:42px;padding:9px 14px;font-size:.82rem;line-height:1.6;white-space:normal;text-align:center;overflow-wrap:anywhere}
+.accounting .ac-manager-card .ac-settlement-links{padding-top:10px;border-top:1px solid #eee7df}
+.accounting .ac-manager-card .ac-settlement-links a{display:inline-flex;align-items:center;border:1px solid #dfd4c8;border-radius:8px;color:#675246;text-decoration:none;background:#fff}
+.accounting .ac-manager-card .ac-positive{color:#27634e;font-weight:700;background:#f0f7f3!important}
+.accounting .ac-manager-card .ac-shortage{background:#fff5f3!important}
+.accounting .ac-manager-card .ac-driver-deadline.ac-shortage{background:transparent!important}
+.accounting .ac-manager-card [data-day-approve]{max-width:100%;min-height:44px;white-space:normal;line-height:1.7}
+@container(max-width:850px){.accounting .ac-manager-card [data-driver-row]{grid-template-columns:repeat(6,minmax(0,1fr))}.accounting .ac-manager-card [data-driver-row]>td{grid-column:span 2}.accounting .ac-manager-card [data-driver-row]>td:nth-child(5),.accounting .ac-manager-card [data-driver-row]>td:nth-child(6){grid-column:span 3}}
+@container(max-width:500px){.accounting .ac-manager-card [data-driver-row]{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px}.accounting .ac-manager-card [data-driver-row]>td{grid-column:auto;font-size:.88rem;padding:10px}.accounting .ac-manager-card [data-driver-row]>td:nth-child(2),.accounting .ac-manager-card [data-driver-row]>td:first-child,.accounting .ac-manager-card [data-driver-row]>td:last-child{grid-column:1/-1}.accounting .ac-manager-card [data-driver-row]>td:nth-child(5),.accounting .ac-manager-card [data-driver-row]>td:nth-child(6){grid-column:auto}.accounting .ac-manager-card .ac-settlement-actions>*,.accounting .ac-manager-card .ac-settlement-links>*{flex:1 1 120px}}
+
+/* Keep compact content while using the full accounting workspace width. */
+.accounting .ac-manager-card{padding:14px;max-width:none;width:100%;box-sizing:border-box}
+.accounting .ac-manager-card>summary{padding:10px 12px;gap:8px}
+.accounting .ac-manager-card .ac-card-metrics{padding-block:8px;gap:6px}
+.accounting .ac-manager-card .ac-card-metrics span{padding:5px 9px}
+.accounting .ac-manager-card [data-driver-row]{width:100%;box-sizing:border-box;align-items:start;gap:7px;margin:0 0 10px;padding:10px;border-radius:12px}
+.accounting .ac-manager-card [data-driver-row]>td{padding:7px 9px;line-height:1.45;border-radius:8px}
+.accounting .ac-manager-card [data-driver-row]>td:before{margin-bottom:3px}
+.accounting .ac-manager-card [data-driver-row]>td:first-child{padding-bottom:6px}
+.accounting .ac-manager-card .ac-driver-heading{justify-content:flex-start;gap:8px 12px}
+.accounting .ac-manager-card .ac-driver-heading>strong{font-size:1rem}
+.accounting .ac-manager-card .ac-driver-total{display:flex;align-items:center;flex-wrap:wrap;gap:3px 8px;min-width:0;padding:4px 8px;border-radius:7px}
+.accounting .ac-manager-card .ac-driver-total>strong{font-size:1rem}
+.accounting .ac-manager-card .ac-driver-total>small{flex-basis:100%;line-height:1.3}
+.accounting .ac-manager-card .ac-driver-deadline{line-height:1.5;margin-top:3px}
+.accounting .ac-manager-card .ac-settlement-status{padding:4px 8px;line-height:1.5}
+.accounting .ac-manager-card .ac-settlement-detail{margin-block:4px;line-height:1.5}
+.accounting .ac-manager-card .ac-settlement-confirmation{padding:7px 9px;margin-block:6px;line-height:1.6}
+.accounting .ac-manager-card .ac-settlement-actions,.accounting .ac-manager-card .ac-settlement-links{display:inline-flex;vertical-align:top;max-width:100%;gap:6px;margin-top:5px}
+.accounting .ac-manager-card .ac-settlement-links{border:0;padding-top:0;margin-inline-start:6px}
+.accounting .ac-manager-card td button,.accounting .ac-manager-card td a{min-height:36px;padding:6px 10px;line-height:1.45}
+@media(max-width:760px){.accounting .ac-manager-card{padding:10px}.accounting .ac-manager-card td button,.accounting .ac-manager-card td a{min-height:42px}.accounting .ac-manager-card .ac-settlement-links{margin-inline-start:0}}
+
+/* Read-only settlement history lives in the shared modal, outside .accounting. */
+.accounting .ac-cash-ticket{border:1px solid #e6d8c8;border-inline-start:3px solid #ac682c;background:#fffbf5;border-radius:8px;padding:8px 10px;margin-block:8px;max-width:100%;overflow-wrap:anywhere}
+.accounting .ac-cash-ticket header{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;justify-content:space-between;font-size:12px}
+.accounting .ac-cash-ticket header span{color:#875718;background:#fff1df;border-radius:5px;padding:3px 6px}
+.accounting .ac-cash-ticket p{margin:4px 0;font-size:12px;line-height:1.6;white-space:pre-wrap}
+.accounting .ac-cash-ticket small{font-size:11px;line-height:1.6}
+.ac-settlement-history{display:grid;gap:12px;min-width:0;text-align:start;font-size:14px;line-height:1.55;color:#30241e}
+.ac-settlement-history *{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}
+.ac-history-context{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px}
+.ac-history-context>strong{font-size:16px}.ac-history-context>small{flex-basis:100%;color:#766b63;font-size:12px}
+.ac-history-original,.ac-history-receipt{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}
+.ac-history-original>div{padding:9px 11px;border:1px solid #e7ded5;border-radius:9px;background:#faf7f3}
+.ac-settlement-history dt{font-size:12px;color:#766b63}.ac-settlement-history dd{margin:3px 0 0;font-weight:700;font-variant-numeric:tabular-nums}
+.ac-history-timeline{display:grid;gap:10px;list-style:none;padding:0;margin:0}
+.ac-history-event{padding:12px;border:1px solid #e7ded5;border-inline-start:3px solid #a7a095;border-radius:11px;background:#fff}
+.ac-history-event[data-action-kind=correction]{border-inline-start-color:#b65b20}.ac-history-event[data-action-kind=receipt]{border-inline-start-color:#397764}
+.ac-history-event-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.ac-history-event-head h3{font-size:14px;line-height:1.5;margin:0;font-weight:750}
+.ac-history-kind{flex:none;padding:3px 8px;border-radius:6px;background:#f3eee7;color:#675246;font-size:11px;font-weight:700}
+.ac-history-event[data-action-kind=correction] .ac-history-kind{background:#fff1df;color:#875718}.ac-history-event[data-action-kind=receipt] .ac-history-kind{background:#eaf5ef;color:#27634e}
+.ac-history-meta{display:flex;flex-wrap:wrap;justify-content:space-between;gap:3px 10px;margin-top:5px;color:#766b63;font-size:12px}.ac-history-meta strong{color:#51463d}.ac-history-meta time{font-variant-numeric:tabular-nums}
+.ac-history-state{margin:6px 0 8px;color:#766b63;font-size:12px}
+.ac-history-amounts{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px}
+.ac-history-amounts caption{text-align:start;font-size:12px;font-weight:650;color:#766b63;padding-bottom:4px}
+.ac-history-amounts th,.ac-history-amounts td{text-align:start;white-space:normal;padding:7px 8px;border-bottom:1px solid #eee7df;font-variant-numeric:tabular-nums}
+.ac-history-amounts thead th{position:static;background:#f8f5f1;font-size:11px;color:#766b63;font-weight:600}.ac-history-amounts th:first-child{width:34%}.ac-history-amounts tbody th{font-weight:500}.ac-history-amounts [data-changed=true]>td:last-child{color:#8e3915;background:#fff5ec;font-weight:750}
+.ac-history-receipt{grid-template-columns:repeat(2,minmax(0,1fr));padding:9px 10px;margin-top:9px;border:1px solid #daeadf;border-radius:8px;background:#f0f7f3}
+.ac-history-received{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px}.ac-history-received dd{font-size:17px;color:#27634e;margin:0}
+.ac-history-note{margin-top:8px;font-size:12px;color:#675246}.ac-history-note>strong{font-size:11px}.ac-history-note p{white-space:pre-wrap;margin:2px 0 0}
+@media(max-width:480px){.ac-settlement-history{font-size:13px;gap:10px}.ac-history-event{padding:9px}.ac-history-event-head{flex-wrap:wrap}.ac-history-amounts th,.ac-history-amounts td{padding:6px 4px;font-size:12px}.ac-history-meta{display:grid;gap:3px}.ac-history-received{align-items:flex-start;flex-wrap:wrap}}
+
+/* Source-treatment dialogs keep native control intrinsic widths inside the modal. */
+.order-source-treatment{min-width:0;max-width:100%;grid-template-columns:minmax(0,1fr);overflow-wrap:anywhere}
+.order-source-treatment *{box-sizing:border-box;min-width:0}
+.order-source-treatment :is(section,label,dl,dt,dd,p,button){max-width:100%}
+.order-source-treatment :is(input:not([type=checkbox]),select,textarea){width:100%;min-width:0;max-width:100%}
+.order-source-treatment button{white-space:normal;overflow-wrap:anywhere}
+
+.ac-statement-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:12px 0}.ac-statement-metrics>div{padding:12px;background:#f8f6f3;border-radius:10px;min-width:0}.ac-statement-metrics dt{font-size:.82rem;color:#675246}.ac-statement-metrics dd{margin:6px 0 0;font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums}.ac-driver-statement{min-width:0;margin-block:16px}.ac-driver-statement details{min-width:200px}.ac-driver-statement .ac-text{white-space:pre-wrap}.ac-driver-statement table{min-width:1100px}.ac-driver-statement td{white-space:nowrap}.ac-driver-statement td:last-child{white-space:normal}
+@media(max-width:650px){.ac-driver-statement .ac-table{overflow:visible}.ac-driver-statement table,.ac-driver-statement tbody,.ac-driver-statement tr,.ac-driver-statement td{display:block;min-width:0;width:auto}.ac-driver-statement thead{display:none}.ac-driver-statement tr{margin-block:14px;border:1px solid #e5ddd5;border-radius:12px;padding:10px}.ac-driver-statement td{display:flex;justify-content:space-between;gap:12px;padding:8px;border:0;white-space:normal;overflow-wrap:anywhere}.ac-driver-statement td::before{content:attr(data-label);font-size:.8rem;color:#675246;flex:0 0 45%}.ac-driver-statement td:last-child{display:block}.ac-driver-statement td:last-child::before{display:none}.ac-driver-statement details{min-width:0}}
+.ac-shift-meta{line-height:1.8;overflow-wrap:anywhere;color:var(--muted,#605951)}
+.ac-card-blockers{padding:12px 16px;margin:12px 0;border-inline-start:4px solid #b65a21;background:#fff6e9;border-radius:8px}
+.ac-card-blockers ul{margin:8px 0 0;padding-inline-start:22px;line-height:1.8}
+.ac-driver-heading>strong small{display:block;font-weight:normal;margin-top:5px}
+.ac-card-pages{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:12px;margin:18px 0}
+
+@media(max-width:650px){.ac-driver-statement tfoot{display:block}.ac-driver-statement tfoot th{display:block;padding:8px}.ac-driver-statement tfoot tr{background:#f5f0e9}}
+
+.accounting.ac-direct-statement .ac-tabs{display:none}
+
+/* One operational accounting workspace; receipt remains a separately witnessed fact. */
+.ac-workflow{padding:18px;margin-block:16px;border:1px solid #e5ddd5;border-radius:14px;background:#fff}.ac-workflow h2{font-size:1.1rem;margin:0 0 14px}.ac-workflow ol{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;list-style-position:inside;padding:0;counter-reset:acstep}.ac-workflow li{min-width:0;padding:12px;background:#f8f5f1;border-radius:10px;line-height:1.6}.ac-workflow li span{display:block;font-size:.8rem;color:#675246;margin-top:6px}.ac-workflow-actions,.ac-bag-filters{display:flex;gap:12px;flex-wrap:wrap;align-items:end}.ac-bag-filters label{display:grid;gap:6px;flex:1;min-width:170px}.ac-bag-filters input,.ac-bag-filters select{width:100%;min-width:0}.ac-bag-queue>header{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;margin-top:16px}.ac-bag-queue h3{font-size:1rem}.ac-bag-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:center;padding:15px 0;border-bottom:1px solid #eee7df;overflow-wrap:anywhere}.ac-bag-row small{display:block;margin-top:5px;color:#675246}.ac-bag-row dl{display:flex;gap:16px;flex-wrap:wrap;margin:0}.ac-bag-row dt{font-size:.8rem;color:#675246}.ac-bag-row dd{margin:5px 0 0;font-weight:700;font-variant-numeric:tabular-nums}.ac-bag-row button{white-space:normal;max-width:100%}@media(max-width:850px){.ac-workflow ol{grid-template-columns:repeat(2,minmax(0,1fr))}.ac-bag-row{grid-template-columns:minmax(0,1fr)}}@media(max-width:430px){.ac-workflow{padding:12px}.ac-workflow ol{grid-template-columns:minmax(0,1fr)}.ac-bag-filters label{min-width:0;flex-basis:100%}}
+
+.ac-next-action{padding:12px 14px;border-radius:9px;background:#f2f5ef;color:#425037;line-height:1.8;overflow-wrap:anywhere}

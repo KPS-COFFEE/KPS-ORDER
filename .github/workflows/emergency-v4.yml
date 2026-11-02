@@ -1,0 +1,490 @@
+name: KPS ORDER Independent V5
+
+"on":
+  push:
+    branches:
+      - agent/kps-order-emergency-v4
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+env:
+  RELEASE_FULL_CI: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keep completed/ongoing evidence tied to its immutable candidate. Concurrent
+  # feature pushes must not cancel the last shard of another candidate's CI.
+  group: kps-order-emergency-v4-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  windows-print-bridge:
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/customer-finance-clarity-20261101' || github.head_ref == 'agent/owner-dashboard-20261031' || github.head_ref == 'agent/operations-supervision-20261031' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/accounting-manager-day-20261029' || github.head_ref == 'agent/owner-session-approval-20261029' || github.head_ref == 'agent/driver-auto-return-20261029' || github.head_ref == 'agent/driver-fair-hours-20261029' || github.head_ref == 'agent/amend-guidance-layout-20261025' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/wall-eta-lifecycle-20261028' || github.head_ref == 'agent/wall-eta-final-closure-20261028' || github.head_ref == 'agent/wall-eta-20261028' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/morning-operational-day-20261025' || github.head_ref == 'agent/receipt-time-label-20261025' || github.head_ref == 'agent/enbishan-customer-journey-guest-20261024' || github.head_ref == 'agent/enbishan-approved-journey-20261025' || github.head_ref == 'agent/enbishan-menu-clarity-20261025' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024' || github.head_ref == 'agent/enbishan-invoice-parity-20261023')"
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile Windows bridge and check logo and JSON
+        shell: pwsh
+        run: |
+          Set-Location tools/windows-print-bridge
+          Copy-Item ../../public/assets/kps-receipt-logo.png logo.png
+          Copy-Item ../../public/assets/enbishan-original.jpeg enbishan-logo.jpeg
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /out:KpsPrintBridge.exe /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll KpsPrintBridge.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./KpsPrintBridge.exe --self-test
+          exit $LASTEXITCODE
+  independent-postgres-regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    # pull_request branch filters target branches. This gate restricts execution
+    # to the emergency source branch without changing legacy integrations.
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/customer-finance-clarity-20261101' || github.head_ref == 'agent/owner-dashboard-20261031' || github.head_ref == 'agent/operations-supervision-20261031' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/accounting-manager-day-20261029' || github.head_ref == 'agent/owner-session-approval-20261029' || github.head_ref == 'agent/driver-auto-return-20261029' || github.head_ref == 'agent/driver-fair-hours-20261029' || github.head_ref == 'agent/amend-guidance-layout-20261025' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/wall-eta-lifecycle-20261028' || github.head_ref == 'agent/wall-eta-final-closure-20261028' || github.head_ref == 'agent/wall-eta-20261028' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/morning-operational-day-20261025' || github.head_ref == 'agent/receipt-time-label-20261025' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_enbishan_kps_regression
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kps_test -d test_enbishan_kps_regression"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Synthetic, ephemeral CI credentials only. No Render/production secrets.
+      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
+      APP_ENV: testing
+      PUBLIC_BASE_URL: http://testserver
+      APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
+      SESSION_COOKIE_SECURE: "false"
+      OTP_PROVIDER: disabled
+      INITIAL_CATALOG_IMPORT: "true"
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      # Browser tests must launch real Chromium against the isolated app/DB.
+      # No provider credentials or intercepted API responses are used.
+      TEST_BROWSER: "1"
+      RELEASE_FULL_CI: "1"
+      ROLLBACK_BASELINE_DIR: /tmp/kps-rollback-baseline
+      PENDING_MIGRATION_BASELINE_DIR: /tmp/kps-startup-baseline
+      ROLLBACK_COMPAT_DIR: /tmp/kps-rollback-compat
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Select affected regression scope
+        id: scope
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', 'HEAD^', 'HEAD'], text=True).splitlines())
+          # Guest-session changes do not require replaying catalog, printing,
+          # dispatch, maintenance and report suites. Unknown changes stay full.
+          identity_files = {
+              'app/auth.py', 'tests/test_guest_session_policy.py',
+              'tests/test_v5_identity.py', '.github/workflows/emergency-v4.yml',
+              'public/ops.js', 'tests/test_owner_driver_activation.py',
+              'tests/test_owner_staff_management.py',
+          }
+          focused = bool(changed & {'app/auth.py', 'tests/test_owner_staff_management.py'}) and changed <= identity_files
+          operation_files = {
+              'app/invoice_profiles.py', 'tests/test_invoice_profiles.py', 'requirements-dev.txt',
+              'Dockerfile',
+              'app/auth.py', 'app/admin.py', 'app/operations.py', 'app/main.py',
+              'app/exports.py', 'app/branch_printing.py', 'app/print_translations.py', 'app/orders.py', 'migrations/024_branch_printing.sql',
+              'migrations/025_printer_acceptance.sql',
+              'public/ops.js', 'public/customer.js', 'public/index.html',
+              'tests/test_branch_printing.py', 'tests/test_launch_admin.py',
+              'tests/test_receipt_customer_privacy.py', 'tests/test_thermal_receipt_browser.py',
+              'tools/windows-print-bridge/KpsPrintBridge.cs',
+              'tools/windows-print-bridge/Start.cmd', 'tools/windows-print-bridge/README.txt',
+              '.github/workflows/emergency-v4.yml',
+          }
+          staff_tests = bool(changed) and changed <= {'tests/test_owner_staff_management.py', 'public/ops.js', 'public/ops.css', '.github/workflows/emergency-v4.yml'}
+          password_owner = 'tests/test_additional_password_owner.py' in changed and changed <= {'app/auth.py','public/ops.js','tests/test_additional_password_owner.py','.github/workflows/emergency-v4.yml'}
+          vehicle_shift = bool(changed) and changed <= {'app/operations.py','app/shift_vehicle.py','app/reporting.py','public/ops.js','public/ops.css','migrations/026_shift_vehicle_log.sql','tests/test_operations.py','tests/test_shift_vehicle.py','tests/test_owner_staff_management.py','.github/workflows/emergency-v4.yml'} and bool(changed & {'app/shift_vehicle.py','tests/test_shift_vehicle.py','migrations/026_shift_vehicle_log.sql'})
+          vehicle_shift = vehicle_shift or (bool(changed) and changed <= {'public/ops.js','public/ops.css','public/ops.html','tests/test_dispatch_numbering.py','.github/workflows/emergency-v4.yml'})
+          alerts = 'tests/test_operational_alerts.py' in changed and changed <= {'app/operations.py','app/chat.py','app/catalog.py','public/ops.js','tests/test_operational_alerts.py','.github/workflows/emergency-v4.yml'}
+          images = 'tests/test_image_previews.py' in changed and changed <= {'.gitignore','Dockerfile','app/image_previews.py','app/main.py','app/admin.py','public/customer.js','tests/test_image_previews.py','.github/workflows/emergency-v4.yml'}
+          coverage = 'tests/test_coverage_reasons.py' in changed and changed <= {'app/catalog.py','public/customer.js','tests/test_coverage_reasons.py','.github/workflows/emergency-v4.yml'}
+          driver_cash = bool(changed & {'tests/test_driver_cash_handover.py','tests/test_driver_closure_browser.py'}) and changed <= {'app/operations.py','app/reporting.py','app/report_notifications.py','public/ops.js','public/ops.css','migrations/027_driver_cash_handover.sql','tests/test_operations.py','tests/test_shift_vehicle.py','tests/test_driver_closure_browser.py','tests/test_driver_cash_handover.py','.github/workflows/emergency-v4.yml'}
+          printer_setup = 'tests/test_printer_setup_browser.py' in changed and changed <= {'app/branch_printing.py','public/ops.js','public/ops.css','tools/windows-print-bridge/KpsPrintBridge.cs','tools/windows-print-bridge/Start.cmd','tools/windows-print-bridge/README.txt','tests/test_branch_printing.py','tests/test_printer_setup_browser.py','.github/workflows/emergency-v4.yml'}
+          support = 'tests/test_order_support.py' in changed and changed <= {'app/order_support.py','app/chat.py','app/operations.py','app/reporting.py','app/main.py','public/ops.js','public/customer.js','migrations/028_order_support.sql','tests/test_order_support.py','tests/test_order_support_browser.py','tests/test_operations.py','tests/test_dispatch_numbering.py','.github/workflows/emergency-v4.yml'}
+          chat_refresh = bool(changed & {'tests/test_chat_refresh_browser.py','tests/test_operational_alerts.py'}) and changed <= {'public/ops.js','public/ops.css','tests/test_chat_refresh_browser.py','tests/test_operational_alerts.py','.github/workflows/emergency-v4.yml'}
+          alerts = alerts and not chat_refresh
+          accounting_files = {'app/accounting.py','app/accounting_export.py','app/auth.py','app/main.py','app/exports.py','migrations/029_accounting_workspace.sql','public/ops.js','public/ops.html','public/assets/accounting.js','public/assets/accounting.css','tests/test_accounting.py','tests/test_accounting_browser.py','.github/workflows/emergency-v4.yml'}
+          accounting = bool(changed & {'app/accounting.py','app/accounting_export.py','tests/test_accounting.py','tests/test_accounting_browser.py','public/assets/accounting.js'}) and changed <= accounting_files
+          focused = accounting or chat_refresh or support or focused or staff_tests or password_owner or vehicle_shift or alerts or images or coverage or driver_cash or printer_setup
+          operations = bool(changed) and changed <= operation_files and not focused
+          # Release certification must execute the complete suite on every
+          # candidate, even when its last commit contains only a narrow fix.
+          if os.getenv('RELEASE_FULL_CI') == '1':
+              accounting = chat_refresh = support = printer_setup = driver_cash = coverage = images = alerts = vehicle_shift = staff_tests = password_owner = focused = operations = False
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('accounting_only=' + str(accounting).lower() + '\n')
+              output.write('chat_refresh_only=' + str(chat_refresh).lower() + '\n')
+              output.write('support_only=' + str(support).lower() + '\n')
+              output.write('printer_setup_only=' + str(printer_setup).lower() + '\n')
+              output.write('driver_cash_only=' + str(driver_cash).lower() + '\n')
+              output.write('coverage_only=' + str(coverage).lower() + '\n')
+              output.write('images_only=' + str(images).lower() + '\n')
+              output.write('alerts_only=' + str(alerts).lower() + '\n')
+              output.write('vehicle_shift_only=' + str(vehicle_shift).lower() + '\n')
+              output.write('staff_tests_only=' + str(staff_tests).lower() + '\n')
+              output.write('password_owner_only=' + str(password_owner).lower() + '\n')
+              output.write('identity_only=' + str(focused).lower() + '\n')
+              output.write('operations_only=' + str(operations).lower() + '\n')
+          print('Identity/access regression' if focused else 'Full regression')
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install pinned application and test requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Prepare genuine prior application for the complete rollback regression
+        run: |
+          python tools/rollback_prepare_compat.py --repository "$PWD" --output "$ROLLBACK_COMPAT_DIR"
+          mkdir "$ROLLBACK_BASELINE_DIR"
+          git archive b528f14c5ea93e32a15a5c37f43f7e93477136e8 | tar -x -C "$ROLLBACK_BASELINE_DIR"
+          mkdir "$PENDING_MIGRATION_BASELINE_DIR"
+          git archive 4e4d781b4fa82b7459410694ff5c4ac06842e6e7 | tar -x -C "$PENDING_MIGRATION_BASELINE_DIR"
+          python - <<'PYBASELINE'
+          import json, os, pathlib, subprocess
+          revision = '4e4d781b4fa82b7459410694ff5c4ac06842e6e7'
+          tree = subprocess.check_output(['git', 'rev-parse', revision + '^{tree}'], text=True).strip()
+          (pathlib.Path(os.environ['PENDING_MIGRATION_BASELINE_DIR']) / 'baseline-source-identity.json').write_text(json.dumps({'revision': revision, 'tree': tree}))
+          PYBASELINE
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep Ubuntu suites, components and signing keys unchanged. Only the
+          # slow Azure mirror host is replaced with the official Ubuntu archive.
+          configured=false
+          processed=0
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              # A local mirrorlist can select Azure even when the sources file
+              # itself has no Azure URL. Verify every observed configuration path.
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+              processed=$((processed+1))
+            fi
+          done
+          if [ "$configured" != true ]; then
+            echo 'Expected Ubuntu APT sources were not found.' >&2
+            exit 1
+          fi
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
+          printf 'Ubuntu APT source files verified: %s\n' "$processed"
+      - name: Install Chromium and required system libraries
+        run: python -m playwright install --with-deps chromium webkit
+      - name: Check Python and browser script syntax
+        shell: bash
+        run: |
+          python -m compileall -q app tools tests
+          for script in public/*.js public/assets/accounting.js; do
+            node --check "$script"
+          done
+          git diff --check
+      - name: Verify chat reading position before the complete regression
+        if: matrix.shard == 1
+        run: python -m pytest -q tests/test_chat_refresh_browser.py --junitxml=test-results/chat-reading-first.xml
+      - name: Verify owner confirmation and cancellation in both brands and languages
+        if: matrix.shard == 0
+        run: node --test tests/test_owner_operational_confirmation.cjs tests/test_customer_checkout_quote_race.cjs tests/test_customer_chat_context.cjs
+      - name: Verify evidenced accounting treatment UI and bilingual clarification actions
+        if: matrix.shard == 0
+        run: node tests/test_manager_closure_visibility_ui.cjs && node tests/test_accounting_treatment_ui.cjs && node tests/test_financial_completion_scope_ui.cjs && node tests/test_financial_clarifications_ui.cjs && node tests/test_owner_audit_ui.cjs && node tests/test_financial_treatment_recovery_ui.cjs && node tests/test_refund_item_allocation_ui.cjs && node tests/test_bank_matching_ui.cjs && node tests/test_employee_ticket_workflow_ui.cjs && node tests/test_order_source_treatment_ui.cjs
+      - name: Verify fiscal issuance, refunds and actual thermal QR decoding
+        # Full mode runs every pytest node once in the disjoint shards below.
+        # Preserve focused preflights without spending the full worker's budget
+        # repeating 319 cases before its mandatory complete coverage run.
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
+        run: python -m pytest tests/test_fiscal.py tests/test_fiscal_browser.py tests/test_fiscal_issuance_browser.py -q
+      - name: Verify current mandatory SMS checkout and bilingual mobile privacy
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
+        run: python -m pytest -q --strict-markers tests/test_customer_experience.py tests/test_customer_experience_browser.py tests/test_customer_final_account.py tests/test_customer_final_account_browser.py --junitxml=test-results/customer-experience.xml
+      - name: Run financial, retry, printing and recovery hardening acceptance
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_hardening_operations.py tests/test_hardening_orders.py
+          tests/test_hardening_printing.py tests/test_hardening_recovery.py
+          tests/test_hardening_staff_browser.py tests/test_hardening_load_observer.py
+          tests/test_hardening_order_pipeline.py
+          tests/test_pipeline_transaction_boundary.py tests/test_database_json_response.py
+          tests/test_http_security.py tests/test_release_worker_profile.py
+          tests/test_hardening_pool.py tests/test_monitoring_workers.py tests/test_customer_hotpath.py
+          --junitxml=test-results/hardening-focused.xml
+      - name: Run preserved appearance and complete staff role journeys
+        # Full mode includes every legacy file in the disjoint shards below.
+        # Keep this narrower path without running the same browser journeys twice.
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_appearance.py tests/test_browser.py tests/test_v5_browser.py
+          --junitxml=test-results/preserved-journeys.xml
+      - name: Run temporary dispatch and numbering acceptance
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1' && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
+        run: python -m pytest -q --strict-markers tests/test_dispatch_numbering.py tests/test_driver_configuration_lock.py tests/test_driver_configuration_browser.py --junitxml=test-results/dispatch-numbering.xml
+      - name: Run scoped bilingual vehicle maintenance acceptance
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1' && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py
+          --junitxml=test-results/vehicle-maintenance.xml
+      - name: Run focused launch, access and delivery-hours checks
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1' && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_launch_admin.py tests/test_launch_branches.py
+          tests/test_launch_browser.py tests/test_delivery_hours.py
+          tests/test_homepage_presentation.py
+          tests/test_identity_closure.py tests/test_owner_closure.py
+          tests/test_branch_location_import.py tests/test_monitoring.py
+          tests/test_owner_closure_browser.py tests/test_customer_language.py
+          tests/test_staff_invitation_browser.py
+          --junitxml=test-results/launch-focused.xml
+      - name: Run isolated PostgreSQL 18 and source regression
+        run: python tools/full_regression.py --shard ${{ matrix.shard }}
+      - name: Run focused identity, sessions, ownership and browser regression
+        if: steps.scope.outputs.identity_only == 'true' && steps.scope.outputs.staff_tests_only != 'true' && steps.scope.outputs.password_owner_only != 'true' && steps.scope.outputs.vehicle_shift_only != 'true' && steps.scope.outputs.alerts_only != 'true' && steps.scope.outputs.images_only != 'true' && steps.scope.outputs.coverage_only != 'true' && steps.scope.outputs.driver_cash_only != 'true' && steps.scope.outputs.printer_setup_only != 'true' && steps.scope.outputs.support_only != 'true' && steps.scope.outputs.chat_refresh_only != 'true' && steps.scope.outputs.accounting_only != 'true'
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_guest_session_policy.py tests/test_core.py
+          tests/test_owner_driver_activation.py tests/test_owner_staff_management.py
+          tests/test_v5_identity.py tests/test_final_identity.py
+          tests/test_identity_closure.py tests/test_owner_closure.py
+          tests/test_browser.py tests/test_staff_invitation_browser.py
+          --junitxml=test-results/identity-focused.xml
+      - name: Verify accounting money, scope, exports, closure and browser workflows
+        if: steps.scope.outputs.accounting_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_accounting.py tests/test_accounting_browser.py tests/test_operations.py tests/test_backup.py tests/test_owner_staff_management.py tests/test_order_support.py --junitxml=test-results/accounting.xml
+      - name: Verify append-only staff chat and stable notification UI
+        if: steps.scope.outputs.chat_refresh_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_chat_refresh_browser.py tests/test_operational_alerts.py --junitxml=test-results/chat-refresh.xml
+      - name: Verify support tickets, photo evidence, retention and report integration
+        if: steps.scope.outputs.support_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_order_support.py tests/test_order_support_browser.py tests/test_operations.py tests/test_dispatch_numbering.py --junitxml=test-results/support.xml
+      - name: Verify guided printer setup, scope, queue safety and bilingual browser acceptance
+        if: steps.scope.outputs.printer_setup_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_branch_printing.py tests/test_printer_setup_browser.py tests/test_receipt_customer_privacy.py --junitxml=test-results/printer-setup.xml
+      - name: Check driver discrepancy approval, branch bags and terminal snapshots
+        if: steps.scope.outputs.driver_cash_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_driver_cash_handover.py tests/test_driver_closure_browser.py tests/test_operations.py tests/test_shift_vehicle.py --junitxml=test-results/driver-cash.xml
+      - name: Check geographic exclusion reasons, branch scope and checkout coverage
+        if: steps.scope.outputs.coverage_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_coverage_reasons.py tests/test_launch_branches.py tests/test_core.py --junitxml=test-results/coverage-reasons.xml
+      - name: Check driver inspections, fuel, reports and compact staff UI
+        if: steps.scope.outputs.vehicle_shift_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_shift_vehicle.py tests/test_operations.py tests/test_owner_staff_management.py tests/test_dispatch_numbering.py --junitxml=test-results/shift-vehicle.xml
+      - name: Check operational alerts, stock, no-answer escalation and print safety
+        if: steps.scope.outputs.alerts_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_operational_alerts.py tests/test_operations.py tests/test_branch_printing.py --junitxml=test-results/operational-alerts.xml
+      - name: Check optimized images, original zoom and private cache boundaries
+        if: steps.scope.outputs.images_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_image_previews.py tests/test_guest_session_policy.py tests/test_owner_closure.py --junitxml=test-results/image-previews.xml
+      - name: Check additional owner password access and existing owner safeguards
+        if: steps.scope.outputs.password_owner_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_additional_password_owner.py tests/test_owner_closure.py tests/test_owner_staff_management.py --junitxml=test-results/owner-password.xml
+      - name: Run focused owner staff lifecycle and browser checks
+        if: steps.scope.outputs.staff_tests_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_owner_staff_management.py tests/test_branch_printing.py --junitxml=test-results/staff-focused.xml
+      - name: Run affected driver, permissions, printing, receipt and restore checks
+        if: steps.scope.outputs.operations_only == 'true'
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_branch_printing.py tests/test_receipt_customer_privacy.py
+          tests/test_invoice_profiles.py
+          tests/test_thermal_receipt_browser.py tests/test_driver_configuration_lock.py
+          tests/test_driver_configuration_browser.py tests/test_operations.py
+          tests/test_launch_admin.py tests/test_launch_branches.py tests/test_launch_browser.py
+          tests/test_backup.py tests/test_v5_identity.py tests/test_dispatch_numbering.py
+          --junitxml=test-results/operations-focused.xml
+      - name: Retain synthetic test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v5-test-results-${{ matrix.shard }}
+          path: |
+            test-results/*.xml
+            test-results/full-shard-*.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain actual browser emulation screenshots and metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v5-browser-evidence-${{ matrix.shard }}
+          # Only explicit synthetic-data browser evidence. Never upload the
+          # repository, environment files, credentials or operational backups.
+          path: |
+            test-artifacts/*.png
+            test-artifacts/*.json
+            test-artifacts/*.pdf
+            test-artifacts/*.csv
+            test-artifacts/v5-reports/**
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Publish allowlisted synthetic UI evidence checksums
+        if: always()
+        # Original PNGs remain in the authenticated artifact above. Compact
+        # checksums keep decoded job logs readable without duplicate image bytes.
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const names = ['original-store-1280.png', 'original-menu-390.png', 'charcoal-menu-390.png', 'charcoal-store-1280.png', 'charcoal-khaliya-390.png', 'charcoal-owner-appearance-1280.png', 'original-restored-1280.png', 'final-khaliya-single-card-390.png', 'final-khaliya-single-card-1280.png', 'final-khaliya-required-types-390.png', 'final-khaliya-required-types-1280.png', 'final-registered-mobile-login-390-390.png', 'final-registered-mobile-login-1280-1280.png', 'text-only-strip-390.png', 'text-only-strip-1280.png', 'text-only-strip-owner-1280.png', 'text-strip-paused-390.png', 'text-strip-paused-1280.png', 'launch-nearest-delivery-390.png', 'launch-location-denied-manual-390.png', 'launch-owner-banner-1280.png',
+            'owner-original-image-draft-390.png', 'owner-original-image-draft-1280.png', 'customer-black-paused-blue-available-390.png', 'customer-black-paused-blue-available-1280.png', 'owner-black-branch-one-only-390.png', 'owner-black-branch-one-only-1280.png', 'owner-item-control-english-390.png', 'owner-item-control-english-1280.png',
+            'customer-language-ar-390.png', 'customer-language-ar-1280.png', 'customer-language-en-390.png', 'customer-language-en-1280.png', 'customer-language-en-order-390.png', 'customer-language-en-order-1280.png', 'customer-language-en-chat-390.png', 'customer-language-en-chat-1280.png'];
+          for (const name of names) {
+            const path = 'test-artifacts/' + name;
+            if (fs.existsSync(path)) { const bytes = fs.readFileSync(path); console.log('KPS_PUBLIC_UI_EVIDENCE ' + JSON.stringify({name, synthetic: true, revision: process.env.RUNTIME_REVISION, size_bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex')})); }
+          }
+          NODE
+
+  focused-staff-journeys:
+    # Additional early feedback only; all full shards and their aggregate gate
+    # remain mandatory and retain their existing exact coverage manifests.
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/customer-finance-clarity-20261101' || github.head_ref == 'agent/owner-dashboard-20261031' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/accounting-manager-day-20261029' || github.head_ref == 'agent/owner-session-approval-20261029' || github.head_ref == 'agent/driver-auto-return-20261029' || github.head_ref == 'agent/driver-fair-hours-20261029' || github.head_ref == 'agent/amend-guidance-layout-20261025' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/wall-eta-lifecycle-20261028' || github.head_ref == 'agent/wall-eta-final-closure-20261028' || github.head_ref == 'agent/wall-eta-20261028' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/morning-operational-day-20261025' || github.head_ref == 'agent/receipt-time-label-20261025' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_enbishan_kps_regression
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kps_test -d test_enbishan_kps_regression"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
+      APP_ENV: testing
+      PUBLIC_BASE_URL: http://testserver
+      APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
+      SESSION_COOKIE_SECURE: "false"
+      OTP_PROVIDER: disabled
+      INITIAL_CATALOG_IMPORT: "true"
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      TEST_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install pinned application and test requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep Ubuntu suites, components and signing keys unchanged. Only the
+          # slow Azure mirror host is replaced with the official Ubuntu archive.
+          configured=false
+          processed=0
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              # A local mirrorlist can select Azure even when the sources file
+              # itself has no Azure URL. Verify every observed configuration path.
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+              processed=$((processed+1))
+            fi
+          done
+          if [ "$configured" != true ]; then
+            echo 'Expected Ubuntu APT sources were not found.' >&2
+            exit 1
+          fi
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
+          printf 'Ubuntu APT source files verified: %s\n' "$processed"
+      - name: Install real Chromium and required system libraries
+        run: python -m playwright install --with-deps chromium
+      - name: Verify staff invitation and complete V5 journey early
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_staff_invitation_browser.py tests/test_v5_browser.py
+          --junitxml=test-results/focused-staff-journeys.xml
+      - name: Retain focused synthetic journey evidence separately
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-staff-journeys-evidence
+          path: |
+            test-results/focused-staff-journeys.xml
+            test-artifacts/*.png
+            test-artifacts/*.json
+            test-artifacts/*.pdf
+            test-artifacts/*.csv
+            test-artifacts/v5-reports/**
+          if-no-files-found: warn
+          retention-days: 7
+
+  complete-release-regression:
+    name: independent-postgres-regression
+    needs: independent-postgres-regression
+    if: always() && !cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/ali-order-evidence-upload-20261101' || github.head_ref == 'agent/customer-finance-clarity-20261101' || github.head_ref == 'agent/owner-dashboard-20261031' || github.head_ref == 'agent/operations-supervision-20261031' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030' || github.head_ref == 'agent/accounting-manager-day-20261029' || github.head_ref == 'agent/owner-session-approval-20261029' || github.head_ref == 'agent/driver-auto-return-20261029' || github.head_ref == 'agent/driver-fair-hours-20261029' || github.head_ref == 'agent/amend-guidance-layout-20261025' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/wall-eta-lifecycle-20261028' || github.head_ref == 'agent/wall-eta-final-closure-20261028' || github.head_ref == 'agent/wall-eta-20261028' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/morning-operational-day-20261025' || github.head_ref == 'agent/receipt-time-label-20261025' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every isolated full-regression worker to succeed
+        env:
+          SHARD_RESULT: ${{ needs.independent-postgres-regression.result }}
+        run: test "$SHARD_RESULT" = success
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v5-test-results-*
+          path: all-test-results
+      - name: Verify exact revision and complete nonduplicated test coverage
+        run: python tools/full_regression.py --verify all-test-results --revision '${{ github.event.pull_request.head.sha || github.sha }}'
