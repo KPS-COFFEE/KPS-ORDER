@@ -392,7 +392,7 @@ PRESERVED_TABLES = ('manager_notification_subscriptions', 'manager_email_notific
                     'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
                     'customer_wallets','benefit_order_states','customer_wallet_entries',
                     'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports',
-                    'driver_duty_profiles', 'shared_driver_closure_declarations', 'shared_driver_closure_returns',
+                    'driver_duty_profiles', 'driver_duty_cities', 'shared_driver_closure_declarations', 'shared_driver_closure_returns',
                     'shared_driver_closure_receipts', 'shared_driver_closure_allocations',
                     'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations',
                     'financial_case_clarifications', 'financial_case_clarification_events', 'bank_reconciliation_batches', 'bank_reconciliation_receipts', 'bank_reconciliation_decisions', 'bank_reconciliation_source_claims', 'bank_reconciliation_bank_lines', 'bank_reconciliation_bank_claims', 'audit_events')

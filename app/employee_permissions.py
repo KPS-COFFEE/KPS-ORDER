@@ -209,6 +209,7 @@ ROUTES = {
         'manager_handover': 'shifts_handover', 'manager_handover_list': 'shifts_view',
         'accept_manager_handover': 'shifts_handover', 'closure_draft': 'shifts_view',
         'save_closure_draft': 'shifts_close', 'set_shift_availability': 'drivers_availability',
+        'correct_driver_city': 'drivers_availability',
     },
     'orders': {'create_delivery_center_order': 'orders_create_customer', 'quote_delivery_center_order': 'orders_create_customer', 'create_complimentary':'orders_create_customer', 'quote_complimentary':('orders_create_customer','complimentary_approve'), 'authorize_complimentary':'complimentary_approve', 'revoke_complimentary_authorization':'complimentary_approve', 'list_complimentary_authorizations':('orders_create_customer','complimentary_approve'), 'list_orders': 'orders_view', 'get_order': 'orders_view',
                'preparation': {'delivery_manager': 'orders_cancel', 'branch_manager': 'orders_prepare'}, 'operational_confirmation': 'orders_contact'},

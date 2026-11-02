@@ -237,6 +237,7 @@ def authorize_replay(c,user,operation,body,result):
         elif not row or not same_scope(user,row) or (not unrestricted_owner(user) and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
 
 class ShiftOpen(OperationBody):
+    duty_city: str | None = Field(None, max_length=100)
     delivery_period: Literal['morning','evening']|None=None
     receipt_trial: StrictBool=False
     vehicle_inspection: shift_vehicle.Inspection|None=None
@@ -414,6 +415,10 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
         b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
         if not b or (not unrestricted_owner(target) and bid not in target.get('branch_ids',[])) or (not unrestricted_owner(user) and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
         branch_rows.append(b)
+    if body.kind == 'driver':
+        from .driver_shift_city import select as select_city, assigned
+        branch_rows = select_city(branch_rows, assigned(c, target['id'], body.duty_city))
+        bids = [b['id'] for b in branch_rows]
     if body.opening_halalas:
         roles(user,'owner')
         if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
@@ -647,6 +652,8 @@ def people_data(c,user):
         shared=c.execute("SELECT u.* FROM users u JOIN staff_brand_memberships m ON m.user_id=u.id WHERE m.brand_id=%s AND m.active AND u.active AND u.role IN ('owner','delivery_manager','driver')",(user['brand_id'],)).fetchall()
         users += [multibrand.project(c,u,user['brand_id']) for u in shared if u['id'] not in known]
     users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role'],'branch_ids':u['branch_ids']} for u in users if unrestricted_owner(user) or set(u['branch_ids'])&set(user.get('branch_ids',[])) or (u['role']=='owner' and not user.get('home_brand_id'))]
+    city_assignments={r['driver_id']:r['city'] for r in c.execute('SELECT driver_id,city FROM driver_duty_cities WHERE driver_id=ANY(%s)',([u['id'] for u in users],)).fetchall()}
+    users=[dict(u,duty_city=city_assignments.get(u['id'])) for u in users]
     if user.get('home_brand_id') and user['role']=='owner':
         users=[dict(u,branch_ids=[b for b in u['branch_ids'] if b in user['branch_ids']]) for u in users]
     managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,s.delivery_window_snapshot,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
@@ -2240,6 +2247,78 @@ def save_closure_draft(sid:str,body:ClosureDraft,request:Request,user=Depends(au
 class AvailabilityUpdate(OperationBody):
     model_config=ConfigDict(extra='forbid')
     available:bool
+
+
+class DriverCityCorrection(OperationBody):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    city: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+@router.post('/shifts/{sid}/duty-city')
+def correct_driver_city(sid:str, body:DriverCityCorrection, request:Request,
+                        user=Depends(auth.current_user)):
+    roles(user, 'owner', 'delivery_manager')
+    with db.tx() as c:
+        initial = c.execute('SELECT * FROM shifts WHERE id=%s', (sid,)).fetchone()
+        shift_access(c, user, initial)
+        from .central_workdays import association, lock_lanes, authorized
+        grouped = association(c, sid)
+        if grouped:
+            lock_lanes(c)
+            authorized(c, user, sid)
+        def perform():
+            if grouped:
+                from .driver_shift_city import correct_group
+                return correct_group(c, user, sid, body)
+            c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',
+                      ('shift:'+initial['user_id'],))
+            s = lock_shift(c, sid)
+            shift_access(c, user, s)
+            if user['role']!='owner':
+                from .driver_shift_city import assigned
+                assigned(c,s['user_id'],body.city)
+            from .central_workdays import association
+            if association(c, sid) or (s.get('vehicle_log') or {}).get('central_vehicle_shift_id'):
+                raise db.error(409, 'CENTRAL_WORKDAY_REQUIRED', 'صحح مدينة الوردية المشتركة من مسارها المعتمد.')
+            if s['kind'] != 'driver' or s['status'] != 'open':
+                fail(409, 'التصحيح يخص شفت سائق مفتوح فقط.')
+            # Never hide task history or change attribution of an existing trip.
+            if c.execute('SELECT 1 FROM driver_tasks WHERE shift_id=%s LIMIT 1', (sid,)).fetchone():
+                fail(409, 'الشفت يحتوي سجل مهام؛ يلزم مسار تسليم معتمد بدل تغيير نطاقه.')
+            from . import multibrand
+            driver = c.execute('SELECT * FROM users WHERE id=%s', (s['user_id'],)).fetchone()
+            manager = lock_shift(c, s['manager_shift_id'])
+            if not manager or manager['kind'] != 'manager' or manager['status'] != 'open' or manager['brand_id'] != s['brand_id']:
+                fail(409, 'مناوبة المدير لا تستقبل مهام جديدة.')
+            principal = c.execute('SELECT * FROM users WHERE id=%s', (manager['user_id'],)).fetchone()
+            if multibrand.enabled():
+                driver = multibrand.project(c, driver, s['brand_id'])
+                principal = multibrand.project(c, principal, s['brand_id'])
+            if not driver or not driver['active'] or driver['role'] != 'driver' or not principal or not principal['active'] or principal['role'] not in ('owner', 'delivery_manager'):
+                fail(409, 'صلاحية السائق أو مدير المناوبة غير سارية.')
+            permitted = set(s['branch_ids']) & set(driver['branch_ids']) & set(manager['branch_ids'])
+            if not unrestricted_owner(principal):
+                permitted &= set(principal['branch_ids'])
+            rows = c.execute('SELECT * FROM branches WHERE id=ANY(%s) AND brand_id=%s',
+                             (sorted(permitted), s['brand_id'])).fetchall()
+            from .driver_shift_city import select as select_city
+            selected = select_city(rows, body.city)
+            bids = [b['id'] for b in selected]
+            _, window = driver_shift_window(c, s['brand_id'], selected, manager, principal)
+            # Keep admission time/date, vehicle evidence, manager and all money.
+            window = dict(s.get('delivery_window_snapshot') or window or {})
+            if 'branches' in window:
+                window['branches'] = {k:v for k,v in window['branches'].items() if k in bids}
+            c.execute('UPDATE shifts SET branch_ids=%s,delivery_window_snapshot=%s WHERE id=%s',
+                      (db.json(bids), db.json(window), sid))
+            db.audit(c, user['id'], 'shift.duty_city.corrected', 'shift', sid,
+                     {'before_branch_ids':s['branch_ids'], 'branch_ids':bids,
+                      'city':body.city, 'reason':body.reason, 'financial_changes':False})
+            from .driver_shift_city import remember
+            remember(c,user,s['user_id'],body.city,body.reason)
+            return {'shift_id':sid, 'branch_ids':bids, 'city':body.city, 'financial_changes':False}
+        return mutate(c, user, request, 'shift.duty_city:'+sid, body.model_dump(), perform)
 
 
 @router.post('/shifts/{sid}/availability')

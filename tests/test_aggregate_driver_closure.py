@@ -245,7 +245,11 @@ def test_physical_receipt_preserves_pending_incentive_review_for_accounting(cent
 
 def declare_separate_bag(central,city):
     _,actor,post,_,_=central
-    with db.tx() as c:c.execute('UPDATE branches SET city=%s WHERE id=%s',(city,'kps-branch-1'))
+    # This fixture exercises two brand ledgers in one physical city. Move all
+    # admitted synthetic branches together; a mixed-city duty must stay denied.
+    with db.tx() as c:
+        c.execute('UPDATE branches SET city=%s WHERE id=ANY(%s)',
+                  (city,['kps-branch-1','enbishan-test-1','enbishan-test-2']))
     manager,driver=open_days(central)
     path='/api/central-operations/workdays/'+driver['shift']['id']
     request=post('driver',path+'/request',{'reason':'Finished synthetic shift'})
