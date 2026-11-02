@@ -5,6 +5,20 @@ from app import auth, db, operations as ops
 from test_enbishan_dual_brand import dual
 from test_central_workdays import central
 from test_aggregate_driver_closure import submit_physical
+from test_operations import ops as legacy_ops
+
+
+@pytest.mark.postgres
+def test_legacy_shift_listing_without_shared_staffing_column(legacy_ops):
+    actor,_,_,shifts=legacy_ops
+    manager,driver=shifts()
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() "
+                             "AND table_name='shifts' AND column_name='staffing_ended_at'").fetchone()
+    for name,expected in (('driver',{driver}),('manager',{manager,driver})):
+        response=actor(name).get('/api/shifts/current')
+        assert response.status_code==200,response.text
+        assert expected <= {s['id'] for s in response.json()['shifts']}
 
 
 @pytest.mark.postgres

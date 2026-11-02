@@ -30,6 +30,7 @@ def submit_physical(central):
 @pytest.mark.postgres
 @pytest.mark.parametrize('kind',['driver','manager'])
 def test_owner_future_grants_can_change_after_physical_end_without_losing_accounting(central,kind,monkeypatch):
+    from inspect import signature
     from app import auth, reporting
     monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
     _,actor,post,_,_=central
@@ -60,8 +61,19 @@ def test_owner_future_grants_can_change_after_physical_end_without_losing_accoun
         with pytest.raises(HTTPException) as error:
             auth.ensure_safe_staff_scope_change(c,target,[],True)
         assert error.value.detail['code']=='STAFF_OPEN_SHIFT'
-    changed=post('owner',staff_path,change,method='patch')
-    assert changed['user']['branch_ids']==['kps-branch-1'] and changed['user']['active']
+    # The rollback gate overlays current tests onto the immutable prior app.
+    # Its conservative denial is safe; only the new capability may separate
+    # future grants from a physically ended financial ledger.
+    separate_future_grants='owner_scope_change' in signature(auth.ensure_safe_staff_scope_change).parameters
+    changed=post('owner',staff_path,change,method='patch',status=200 if separate_future_grants else 409)
+    if separate_future_grants:
+        assert changed['user']['branch_ids']==['kps-branch-1'] and changed['user']['active']
+    else:
+        assert changed['detail']['code']=='STAFF_OPEN_SHIFT'
+        with db.tx() as c:
+            assert c.execute('SELECT branch_ids FROM users WHERE id=%s',('dual-'+kind,)).fetchone()['branch_ids']==target['branch_ids']
+            membership=c.execute("SELECT branch_ids,active FROM staff_brand_memberships WHERE user_id=%s AND brand_id='enbishan'",('dual-'+kind,)).fetchone()
+            assert membership['active'] and membership['branch_ids']==['enbishan-test-1','enbishan-test-2']
     disabled=post('owner',staff_path,{'active':False,'reason':'Financial pending duties still protect account lifecycle'},method='patch',status=409)
     assert disabled['detail']['code']=='STAFF_OPEN_SHIFT'
     with db.tx() as c:

@@ -638,7 +638,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             historical_ids={r['id'] for r in c.execute("SELECT s.id FROM shifts s "
                 "JOIN users actor ON actor.id=%s AND actor.active AND actor.role=%s "
                 "LEFT JOIN shifts parent ON parent.id=s.manager_shift_id AND parent.kind='manager' AND parent.brand_id=s.brand_id "
-                "WHERE s.id=ANY(%s) AND s.status IN ('submitted','closed') AND s.staffing_ended_at IS NOT NULL "
+                "WHERE s.id=ANY(%s) AND s.status IN ('submitted','closed') AND to_jsonb(s)->>'staffing_ended_at' IS NOT NULL "
                 "AND ((s.user_id=actor.id AND ((s.kind='driver' AND actor.role='driver') OR (s.kind='manager' AND actor.role='delivery_manager'))) "
                 "OR (s.kind='driver' AND actor.role='delivery_manager' AND parent.user_id=actor.id))",
                 (user['id'],user['role'],[r['id'] for r in rows])).fetchall()}
