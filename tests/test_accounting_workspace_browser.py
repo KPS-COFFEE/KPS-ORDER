@@ -79,3 +79,67 @@ def test_accounting_default_queue_collect_count_and_refresh(width, lang):
         assert page.evaluate('window.writes.length') == 1
         assert not errors
         browser.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_accounting_busy_controls_wait_for_reads_and_preserve_filter_drafts(width):
+    """A slow initial read cannot silently consume a report/tab/filter click."""
+    from playwright.sync_api import sync_playwright, expect
+    with sync_playwright() as runtime:
+        launch={'headless':True,'args':['--no-sandbox']}
+        if os.getenv('CHROMIUM_EXECUTABLE'):
+            launch['executable_path']=os.environ['CHROMIUM_EXECUTABLE']
+        browser=runtime.chromium.launch(**launch)
+        page=browser.new_page(viewport={'width':width,'height':1000})
+        errors=[]
+        page.on('pageerror',lambda error:errors.append(str(error)))
+        page.set_content('<html><body><main id="content"></main></body></html>')
+        page.add_script_tag(path=str(ROOT/'public/assets/accounting.js'))
+        page.evaluate('''()=>{
+          window.writes=[];window.reportReads=0;
+          const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+          const result={rows:[],columns:[],totals:{},definitions:'Authoritative report loaded'};
+          window.opening=KPSAccounting.open({lang:'en',user:{id:'viewer',role:'admin'},tr:(ar,en)=>en,esc,money:String,cents:Number,heading:()=>{},modal:()=>{},closeModal:()=>{},mutation:async(path,body)=>window.writes.push({path,body}),api:async path=>{
+            if(path.endsWith('/options'))return {today:'2026-11-02',can_report:true,can_review:false,branches:[],people:[],products:[],categories:{},states:{},responsibilities:{}};
+            if(path.includes('/manager-cards'))return new Promise(resolve=>window.releaseInitial=()=>resolve({cards:[]}));
+            if(path.includes('/reports?')){window.reportReads++;return new Promise((resolve,reject)=>{window.releaseReport=()=>resolve(result);window.rejectReport=()=>reject(Error('Authoritative report unavailable'));});}
+            throw Error('Unexpected read '+path);
+          }});
+        }''')
+        page.wait_for_function('typeof window.releaseInitial === "function"')
+        expect(page.locator('.accounting')).to_have_attribute('aria-busy','true')
+        expect(page.locator('[data-ac=reports]')).to_be_disabled()
+        expect(page.locator('#ac-filters button[type=submit]')).to_be_disabled()
+        assert page.evaluate('window.reportReads') == 0
+        assert page.evaluate('window.writes') == []
+        page.evaluate('window.releaseInitial()')
+        expect(page.locator('[data-ac=reports]')).to_be_enabled()
+        page.locator('[data-ac=reports]').click()
+        page.wait_for_function('window.reportReads === 1')
+        # shell() replaced every control during the tab switch; replacements
+        # must remain disabled until this new authoritative read finishes.
+        expect(page.locator('[data-ac=reports]')).to_have_attribute('aria-pressed','true')
+        expect(page.locator('[data-ac=reports]')).to_be_disabled()
+        expect(page.locator('#ac-filters button[type=submit]')).to_be_disabled()
+        page.evaluate('window.releaseReport()')
+        expect(page.locator('[name=start]')).to_be_enabled()
+        expect(page.locator('.accounting')).to_have_attribute('aria-busy','false')
+        page.locator('[name=start]').fill('2026-11-01')
+        page.locator('[name=end]').fill('2026-11-02')
+        # Represent a control already disabled by its own availability policy.
+        page.locator('[data-ac=pdf]').evaluate('(button)=>button.disabled=true')
+        page.locator('#ac-filters button[type=submit]').click()
+        page.wait_for_function('window.reportReads === 2')
+        expect(page.locator('[name=start]')).to_be_disabled()
+        expect(page.locator('[name=start]')).to_have_value('2026-11-01')
+        page.evaluate('window.rejectReport()')
+        expect(page.locator('#ac-error')).to_contain_text('Authoritative report unavailable')
+        expect(page.locator('[name=start]')).to_be_enabled()
+        expect(page.locator('[name=start]')).to_have_value('2026-11-01')
+        expect(page.locator('[name=end]')).to_have_value('2026-11-02')
+        expect(page.locator('#ac-filters button[type=submit]')).to_be_enabled()
+        expect(page.locator('[data-ac=reports]')).to_be_enabled()
+        expect(page.locator('[data-ac=pdf]')).to_be_disabled()
+        assert page.evaluate('window.writes') == [], 'Loading and navigation never queue or replay a financial mutation'
+        assert not errors
+        browser.close()
