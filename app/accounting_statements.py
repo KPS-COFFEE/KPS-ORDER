@@ -179,6 +179,8 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
         item['notes']+='\n'.join(x for x in notes if x)+'\n'
         details.append(dict(id=r['id'],shift_id=r['shift_id'],manager_shift_id=r['manager_shift_id'],
             driver_id=r['user_id'],driver=r['driver_name'],day=r['day'],variance_pending=pending,variance_confirmation=confirmation,**v))
+    from .cash_bag_custody import summarize
+    custody=summarize([review for detail in details for review in detail.get('cash_bag_custody_reviews',[])])
     incidents=[]
     for r in cases:
         item=daily[r['subject_id'],r['occurred_on']]
@@ -211,7 +213,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
     for identifier,name in names.items():
         entries=[r for r in output if r['driver_id']==identifier]
         summaries.append(dict(driver_id=identifier,driver=name,**{k:sum(r[k] for r in entries) for k in money}))
-    return safe(dict(group='driver_statement',rows=output,drivers=summaries,settlements=details,adjustment_history=audit,deadline_extensions=deadline_extensions,
+    return safe(dict(group='driver_statement',rows=output,drivers=summaries,settlements=details,adjustment_history=audit,deadline_extensions=deadline_extensions,**custody,
         incidents=incidents,branches=bs,period={'start':ds,'end':de,'timezone':'Asia/Riyadh'},generated_at=datetime.now(TZ),
         definitions=('Each delivered order counts once. Balance papers and physical cash are approved independently. Waiting cash is not a shortage. Cash and card differences remain separate. Notes never settle money or assign employee liability. Independent documented treatments preserve outstanding receivables and payables until actual recovery or payment. Incident values show recorded amounts and responsibility, without payroll deductions. This is closure cash and recorded-card review only; recorded card collection does not establish receipt at the bank. Bank matching remains a separate evidence scope.' if en else
         'كل طلب مسلّم يُعد مرة واحدة. اعتماد ورقة الموازنة مستقل عن استلام الكاش. النقد المنتظر ليس عجزًا. فرق الكاش مستقل عن فرق الشبكة. الملاحظة لا تسوي المبلغ ولا تحمل الموظف مسؤولية. المعالجة المستقلة الموثقة تبقي المستحقات ظاهرة حتى التحصيل أو الرد الفعلي. قيم المخالفات مبالغ مسجلة مع حالة المسؤولية ولا تنشئ خصمًا من الراتب. نطاق هذا الكشف مراجعة الكاش والشبكة المسجلة فقط؛ تحصيل الشبكة المسجل لا يثبت وصوله للبنك، ومطابقة البنك نطاق مستقل بالأدلة.')))
@@ -312,6 +314,8 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
             group['pending_drivers'].append(dict(child,
                 reason='driver_accounting_pending' if released else 'driver_shift_open' if child['status']!='closed' else 'driver_report_missing',
                 responsible='accounting' if released else 'delivery_manager'))
+        from .cash_bag_custody import summarize
+        group.update(summarize([review for driver in group['drivers'] for review in driver.get('cash_bag_custody_reviews',[])]))
         group['completed']=sum(r['financially_complete'] for r in group['drivers'])
         group['review_completed']=sum(r['period_approval_allowed'] for r in group['drivers'])
         group['outstanding_receivable_halalas']=sum(r['outstanding_receivable_halalas'] for r in group['drivers'])
@@ -335,6 +339,7 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
         if group['balance_completed']<group['total']:group['blockers'].append(dict(reason='balance_approval_pending',responsible='accounting'))
         if group['cash_completed']<group['total']:group['blockers'].append(dict(reason='cash_receipt_pending',responsible='accounting'))
         if group['review_needed_count']:group['blockers'].append(dict(reason='variance_treatment_pending',responsible='accounting'))
+        if group['custody_review_pending']:group['blockers'].append(dict(reason='cash_bag_custody_review_pending',message='راجع فرق استلام المدير وجرد المحاسبة من كيس السائق؛ لا يحمل تلقائيًا على السائق.',responsible='accounting'))
         from .financial_integrity import inspect_snapshot
         if any(not inspect_snapshot(r['snapshot'])['verified'] for r in rows if r['manager_shift_id']==group['id']):
             group['blockers'].append(dict(reason='financial_integrity_pending',responsible='accounting'))
@@ -417,7 +422,7 @@ def approve_day(c,user,manager_shift_id,note):
             item['approved_closure_count']=item['closure_count']
             item['approval_status']='اعتماد يوم المدير محفوظ'
             item['approval_references']=identifier
-    report['financial_state']='review_approved_outstanding' if any(r.get('outstanding_receivable_halalas') or r.get('outstanding_payable_halalas') for r in report.get('settlements',[])) else 'matched'
+    report['financial_state']='review_approved_outstanding' if any(r.get('outstanding_receivable_halalas') or r.get('outstanding_payable_halalas') for r in report.get('settlements',[])) or not report.get('custody_financially_complete',True) else 'matched'
     report['outstanding_receivable_halalas']=sum(r.get('outstanding_receivable_halalas',0) for r in report.get('settlements',[]))
     report['outstanding_payable_halalas']=sum(r.get('outstanding_payable_halalas',0) for r in report.get('settlements',[]))
     row=c.execute("""INSERT INTO accounting_daily_closures(id,manager_shift_id,brand_id,branch_ids,operational_date,snapshot,approved_by,note)

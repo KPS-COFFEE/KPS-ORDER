@@ -52,6 +52,7 @@ ENDPOINTS['driver_hours_reports'] = {'dashboard', 'export_xlsx', 'export_pdf'}
 ENDPOINTS['task_recovery'] = {'listing', 'detail', 'review_revision'}
 ENDPOINTS['driver_order_review'] = {'listing'}
 ENDPOINTS['operating_reports'] = {'listing', 'export'}
+ENDPOINTS['owner_dashboard'] = {'product_sales'}
 
 
 def enabled(user):

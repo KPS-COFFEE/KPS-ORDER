@@ -11,23 +11,24 @@
   const presets = ['today','yesterday','last7','month','custom'];
   const sorts = ['created_desc','created_asc','value_desc','value_asc'];
 
-  function create({api,getUser,getScope,getLang,isActive,onOrder,onAccessDenied}) {
+  function create({api,getUser,getScope,getLang,isActive,onOrder,onAccessDenied,productOnly = false}) {
     let host = null, scope = null, data = null, dataKey = '', sequence = 0;
     let controller = null, searchTimer = null, requestPromise = null, lastFetch = 0;
     let filters = null, options = {brands:[],cities:[],branches:[],drivers:[]};
-    let productSearch = '';
+    let productSearch = '', productState = 'sold', productSort = 'quantity';
     let language = '', dateDraft = false, loading = false, error = '', stale = false;
     const renderedHTML = new WeakMap();
     const tr = (ar,en) => getLang() === 'en' ? en : ar;
     const $ = selector => host?.querySelector(selector);
-    const active = () => !!host?.isConnected && getUser()?.role === 'owner' && (!isActive || isActive());
+    const permitted = () => getUser()?.role === 'owner' || productOnly && ['admin','delivery_manager'].includes(getUser()?.role) && (getUser()?.effective_permissions || []).some(permission => ['accounting_reports','reports_view'].includes(permission));
+    const active = () => !!host?.isConnected && permitted() && (!isActive || isActive());
     const key = () => JSON.stringify(filters);
     const initialFilters = () => {
       const user = getUser();
-      const brands = user?.central_operations?.brands || [];
+      const brands = user?.role === 'owner' ? user?.central_operations?.brands || [] : [];
       return {brand_id:brands.length > 1 ? 'all' : user?.brand_id || '',period:'today',start:'',end:'',city:'',branch_id:'',driver_id:'',search:'',sort:'created_desc',offset:0};
     };
-    const availableBrands = () => options.brands.length ? options.brands : (getUser()?.central_operations?.brands || []).map(brand => ({id:brand.id,name:brand.name}));
+    const availableBrands = () => options.brands.length ? options.brands : (getUser()?.role === 'owner' ? getUser()?.central_operations?.brands || [] : []).map(brand => ({id:brand.id,name:brand.name}));
     const date = value => {
       if (!value) return '—';
       const parsed = new Date(value);
@@ -59,7 +60,7 @@
     }
 
     function reset() {
-      productSearch = '';
+      productSearch = ''; productState = 'sold'; productSort = 'quantity';
       pause(); data = null; dataKey = ''; filters = null; scope = null; lastFetch = 0;
       options = {brands:[],cities:[],branches:[],drivers:[]}; error = ''; stale = false; dateDraft = false;
       if (host) { host.replaceChildren(); host.removeAttribute('aria-busy'); }
@@ -67,12 +68,12 @@
 
     function shell() {
       language = getLang();
-      host.className = 'owner-dashboard';
+      host.className = 'owner-dashboard' + (productOnly ? ' product-sales-workspace' : '');
       host.setAttribute('dir',language === 'en' ? 'ltr' : 'rtl');
       host.innerHTML = `
         <section class="owner-intro" aria-label="${escape(tr('ملخص الملاك','Owner overview'))}">
-          <div><span class="owner-eyebrow">${escape(tr('رؤية موحّدة لأعمالك','YOUR BUSINESS AT A GLANCE'))}</span><h2 id="owner-period-title">${escape(presetName(filters.period))}</h2><div id="owner-brand-context" class="owner-brand-context"></div></div>
-          <div class="owner-freshness"><span class="owner-access-badge">${escape(tr('خاص بالملاك','Owners only'))}</span><button type="button" class="quiet owner-products-shortcut" data-owner-action="products">${escape(tr('مبيعات المنتجات','Product sales'))}</button><span id="owner-updated">${escape(tr('بانتظار البيانات','Waiting for data'))}</span><button type="button" class="quiet owner-refresh" data-owner-action="refresh"><span aria-hidden="true">↻</span> ${escape(tr('تحديث','Refresh'))}</button></div>
+          <div><span class="owner-eyebrow">${escape(productOnly ? tr('تقرير واضح حسب نطاق حسابك','PRODUCT SALES IN YOUR SCOPE') : tr('رؤية موحّدة لأعمالك','YOUR BUSINESS AT A GLANCE'))}</span><h2 id="owner-period-title">${escape(presetName(filters.period))}</h2><div id="owner-brand-context" class="owner-brand-context"></div></div>
+          <div class="owner-freshness"><span class="owner-access-badge">${escape(productOnly ? tr('تقرير للاطلاع','Read-only report') : tr('خاص بالملاك','Owners only'))}</span><button type="button" class="quiet owner-products-shortcut" data-owner-action="products">${escape(tr('مبيعات المنتجات','Product sales'))}</button><span id="owner-updated">${escape(tr('بانتظار البيانات','Waiting for data'))}</span><button type="button" class="quiet owner-refresh" data-owner-action="refresh"><span aria-hidden="true">↻</span> ${escape(tr('تحديث','Refresh'))}</button></div>
         </section>
         <form id="owner-filters" class="owner-filters" aria-label="${escape(tr('تصفية جميع مؤشرات اللوحة','Filter all dashboard values'))}">
           <label for="owner-brand"><span>${escape(tr('البراند','Brand'))}</span><select id="owner-brand" name="brand_id"></select></label>
@@ -85,17 +86,19 @@
         </form>
         <div id="owner-period-basis" class="owner-period-basis"></div>
         <div id="owner-notice" class="owner-notice" role="status" aria-live="polite" hidden></div>
-        <div id="owner-results" aria-busy="false">
+        <div id="owner-results" aria-busy="false"${productOnly ? ' hidden' : ''}>
           <section id="owner-metrics" class="owner-metrics" aria-label="${escape(tr('المؤشرات الرئيسية','Key metrics'))}"></section>
           <section id="owner-finance-context" class="owner-finance-context" aria-label="${escape(tr('تفاصيل التحصيل والضيافة','Collections and complimentary orders'))}"></section>
           <div class="owner-analysis"><section id="owner-status-chart" class="owner-panel" aria-label="${escape(tr('توزيع حالات الطلبات','Order status distribution'))}"></section><section id="owner-brand-breakdown" class="owner-panel" aria-label="${escape(tr('الأرقام حسب البراند','Values by brand'))}"></section></div>
         </div>
-        <section class="owner-panel owner-details" aria-labelledby="owner-products-title">
+        <section class="owner-panel owner-details owner-products-panel" aria-labelledby="owner-products-title">
           <div class="owner-section-heading"><div><h2 id="owner-products-title">${escape(tr('مبيعات المنتجات','Product sales'))}</h2><p>${escape(tr('نفس الفترة والفرع والمدينة والسائق المحددين أعلاه. الكمية من الطلبات المكتملة؛ دون الملغي والضيافة والهدايا.','Uses the period, branch, city and driver above. Completed commercial quantities only; excludes cancellations, complimentary orders and gifts.'))}</p></div></div>
           <div class="owner-table-tools"><label for="owner-product-search"><span>${escape(tr('ابحث عن منتج','Find a product'))}</span><input id="owner-product-search" type="search" maxlength="120" value="${escape(productSearch)}" placeholder="${escape(tr('مثال: الخلية','Example: Khaliya'))}"></label></div>
+          <div class="owner-product-controls"><label for="owner-product-state"><span>${escape(tr('عرض المنتجات','Show products'))}</span><select id="owner-product-state"><option value="sold">${escape(tr('المباعة أو المرتجعة','Sold or returned'))}</option><option value="all">${escape(tr('كل المنتجات','All products'))}</option><option value="returned">${escape(tr('بها مرتجع','With returns'))}</option><option value="unsold">${escape(tr('دون مبيعات','No sales'))}</option></select></label><label for="owner-product-sort"><span>${escape(tr('ترتيب المنتجات','Product order'))}</span><select id="owner-product-sort"><option value="quantity">${escape(tr('الأكثر مبيعا','Most sold'))}</option><option value="value">${escape(tr('الأعلى قيمة','Highest item value'))}</option><option value="returned">${escape(tr('الأكثر مرتجعا','Most returned'))}</option><option value="name">${escape(tr('اسم المنتج','Product name'))}</option></select></label><p id="owner-product-count" aria-live="polite"></p></div>
+          <div id="owner-product-totals" class="owner-product-totals"></div>
           <div id="owner-products"></div>
         </section>
-        <section id="owner-details" class="owner-panel owner-details" aria-labelledby="owner-orders-title">
+        <section id="owner-details"${productOnly ? ' hidden' : ''} class="owner-panel owner-details" aria-labelledby="owner-orders-title">
           <div class="owner-section-heading"><div><span class="owner-eyebrow">${escape(tr('من المؤشرات إلى التفاصيل','FROM OVERVIEW TO DETAIL'))}</span><h2 id="owner-orders-title">${escape(tr('الطلبات والحركات','Orders and movements'))}</h2><p id="owner-rows-note">${escape(tr('نفس البراند والفترة والفلاتر المختارة أعلاه.','The same brand, period and filters selected above.'))}</p></div><span id="owner-record-count" class="owner-record-count"></span></div>
           <div class="owner-table-tools"><label for="owner-search"><span>${escape(tr('البحث في جميع النتائج','Search all results'))}</span><input id="owner-search" type="search" maxlength="120" autocomplete="off" placeholder="${escape(tr('رقم الطلب أو المرجع','Order number or reference'))}" value="${escape(filters.search)}" aria-describedby="owner-search-note"></label><label for="owner-sort"><span>${escape(tr('ترتيب النتائج','Sort results'))}</span><select id="owner-sort">${[[sorts[0],tr('الأحدث أولًا','Newest first')],[sorts[1],tr('الأقدم أولًا','Oldest first')],[sorts[2],tr('الأعلى قيمة','Highest value')],[sorts[3],tr('الأقل قيمة','Lowest value')]].map(([value,label]) => `<option value="${value}"${filters.sort === value ? ' selected' : ''}>${escape(label)}</option>`).join('')}</select></label><p id="owner-search-note">${escape(tr('يُطبّق البحث على المؤشرات والتفاصيل معًا.','Search applies to both the metrics and details.'))}</p></div>
           <div id="owner-orders" class="owner-orders"></div>
@@ -131,6 +134,7 @@
       $('#owner-custom-dates').hidden = filters.period !== 'custom';
       if (!dateDraft) { $('#owner-start').value = filters.start || data?.period?.start || ''; $('#owner-end').value = filters.end || data?.period?.end || ''; }
       $('#owner-sort').value = filters.sort;
+      $('#owner-product-state').value = productState; $('#owner-product-sort').value = productSort;
       if (document.activeElement !== $('#owner-search')) $('#owner-search').value = filters.search;
     }
 
@@ -144,6 +148,7 @@
     function renderLoading() {
       setHTML('#owner-metrics',Array.from({length:6},(_,index) => `<div class="owner-metric owner-skeleton${index < 2 ? ' owner-metric-featured' : ''}" aria-hidden="true"><span></span><strong></strong><span></span></div>`).join(''));
       setHTML('#owner-finance-context','');
+      setHTML('#owner-product-totals',''); setHTML('#owner-product-count','');
       setHTML('#owner-products',`<p role="status">${escape(tr('جاري تحميل مبيعات المنتجات…','Loading product sales…'))}</p>`);
       setHTML('#owner-status-chart',`<h3>${escape(tr('حالات الطلبات','Order status'))}</h3><div class="owner-chart-placeholder" aria-hidden="true"></div>`);
       setHTML('#owner-brand-breakdown',`<h3>${escape(tr('حسب البراند','By brand'))}</h3><div class="owner-chart-placeholder" aria-hidden="true"></div>`);
@@ -153,7 +158,7 @@
 
     function renderError() {
       if (data && dataKey === key()) return;
-      setHTML('#owner-products','');
+      setHTML('#owner-products',''); setHTML('#owner-product-totals','');
       setHTML('#owner-metrics',''); setHTML('#owner-finance-context',''); setHTML('#owner-status-chart',''); setHTML('#owner-brand-breakdown','');
       setHTML('#owner-orders',`<div class="owner-empty owner-error"><strong>${escape(tr('تعذر تحميل البيانات','Could not load data'))}</strong><p>${escape(tr('أعد المحاولة لعرض أرقام مؤكدة من النظام.','Retry to load confirmed values from the system.'))}</p><button type="button" class="quiet" data-owner-action="refresh">${escape(tr('إعادة المحاولة','Try again'))}</button></div>`);
       setHTML('#owner-pagination',''); setHTML('#owner-record-count','');
@@ -200,7 +205,13 @@
 
     function renderProducts() {
       const query = productSearch.trim().toLocaleLowerCase();
-      const rows = (data.product_sales || []).filter(row => !query || [row.label,row.product_id,row.brand_name].some(value => String(value || '').toLocaleLowerCase().includes(query)));
+      const rows = (data.product_sales || []).filter(row => (!query || [row.label,row.product_id,row.brand_name].some(value => String(value || '').toLocaleLowerCase().includes(query))) && (productState === 'all' || productState === 'sold' && (row.quantity > 0 || row.returned_quantity > 0) || productState === 'returned' && row.returned_quantity > 0 || productState === 'unsold' && row.quantity === 0));
+      rows.sort((a,b) => productSort === 'name' ? String(a.label).localeCompare(String(b.label),getLang()) : ((productSort === 'value' ? b.gross - a.gross : productSort === 'returned' ? b.returned_quantity - a.returned_quantity : b.quantity - a.quantity) || String(a.label).localeCompare(String(b.label),getLang())));
+      setHTML('#owner-product-count',`${number(rows.length)} ${escape(tr('منتج مطابق','matching products'))}`);
+      const total = field => rows.reduce((sum,row) => sum + Number(row[field] || 0),0);
+      const totals = [[tr('الكمية المباعة','Units sold'),number(total('quantity'))],[tr('المرتجع الموثق','Documented returns'),number(total('returned_quantity'))],[tr('صافي الكمية','Net quantity'),rows.some(row => row.net_quantity == null) ? '—' : number(total('net_quantity'))],[tr('قيمة الأصناف','Item value'),money(total('gross'))]];
+      setHTML('#owner-product-totals',totals.map(([label,value]) => `<div><span>${escape(label)}</span><strong>${value}</strong></div>`).join(''));
+
       const columns = [tr('المنتج','Product'),tr('المباع','Sold'),tr('المرتجع الموثق','Documented returns'),tr('صافي الكمية','Net quantity'),tr('قيمة الأصناف','Item value')];
       const td = (index,content) => `<td data-label="${escape(columns[index])}">${content}</td>`;
       const warning = data.product_sales_unallocated_refunds ? `<p class="owner-notice owner-notice-warning">${escape(tr('توجد استردادات لم توثق كمياتها؛ صافي الكمية غير مؤكد حتى تخصيص المحاسبة للأصناف.','Some refunds have no documented item quantities. Net quantity remains unconfirmed until accounting allocates them.'))}</p>` : '';
@@ -224,7 +235,7 @@
     }
 
     function renderData() {
-      renderMeta(); renderMetrics(); renderCharts(); renderProducts(); renderRows();
+      renderMeta(); renderProducts(); if (!productOnly) { renderMetrics(); renderCharts(); renderRows(); }
       if (data.financial_completion_blocked) showNotice(tr('توجد تقفيلات مشتركة معلّقة. الأرقام المعروضة لا تعني اكتمال الإقفال المالي.','Shared closures are pending. These values do not confirm final financial closure.'),'warning');
       else showNotice();
     }
@@ -253,6 +264,10 @@
 
     function handleChange(event) {
       const id = event.target.id;
+      if (id === 'owner-product-state' || id === 'owner-product-sort') {
+        if (id === 'owner-product-state') productState = event.target.value; else productSort = event.target.value;
+        if (data && dataKey === key()) renderProducts(); return;
+      }
       if (id === 'owner-start' || id === 'owner-end') return;
       const fields = {'owner-brand':'brand_id','owner-period':'period','owner-city':'city','owner-branch':'branch_id','owner-driver':'driver_id','owner-sort':'sort'};
       const field = fields[id]; if (!field) return;
@@ -307,6 +322,7 @@
       if (action === 'products') { $('#owner-product-search')?.focus(); return; }
       if (action === 'refresh') { clearTimeout(searchTimer); void refresh({force:true}); }
       if (action === 'reset') {
+        productSearch = ''; productState = 'sold'; productSort = 'quantity'; $('#owner-product-search').value = '';
         const brand = filters.brand_id; filters = {...initialFilters(),brand_id:brand}; dateDraft = false; syncControls(); void refresh({force:true});
       }
       if (action === 'prev' || action === 'next') {
@@ -336,9 +352,9 @@
       const current = () => !abort.signal.aborted && requestSequence === sequence && active() && getScope() === requestScope && key() === requestedKey;
       const task = (async () => {
         try {
-          const response = await api('/api/owner-dashboard?' + query,{signal:abort.signal});
+          const response = await api((productOnly ? '/api/owner-dashboard/product-sales?' : '/api/owner-dashboard?') + query,{signal:abort.signal});
           if (!current()) return false;
-          if (!response?.summary || !response.period || !Array.isArray(response.rows)) throw new Error(tr('استجابة البيانات غير مكتملة. أعد المحاولة.','The data response was incomplete. Please retry.'));
+          if (!response?.period || (productOnly ? !Array.isArray(response.product_sales) : !response.summary || !Array.isArray(response.rows))) throw new Error(tr('استجابة البيانات غير مكتملة. أعد المحاولة.','The data response was incomplete. Please retry.'));
           options = {brands:response.options?.brands || [],cities:response.options?.cities || [],branches:response.options?.branches || [],drivers:response.options?.drivers || []};
           // A central staff context can contain a brand with a lower role.
           // Only the endpoint's owner-authorized options permit aggregation.
@@ -378,7 +394,7 @@
     }
 
     async function mount(nextHost) {
-      if (getUser()?.role !== 'owner') { reset(); return false; }
+      if (!permitted()) { reset(); return false; }
       const changed = scope !== getScope();
       if (changed) reset();
       const newHost = host !== nextHost; host = nextHost; scope = getScope();

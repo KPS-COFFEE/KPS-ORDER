@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   screen-fault-recovery:
-    if: github.event_name == 'push' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030'
+    if: github.event_name == 'push' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/connection-accounting-20261101' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/deadlock-read-stability-20261030'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

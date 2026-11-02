@@ -13,7 +13,7 @@ concurrency:
 # rollback and complete-regression checks remain mandatory and unchanged.
 jobs:
   invoice-parity:
-    if: github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/enbishan-invoice-parity-20261023' || github.ref == 'refs/heads/agent/enbishan-invoice-parity-20261023'
+    if: github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/enbishan-invoice-parity-20261023' || github.ref == 'refs/heads/agent/enbishan-invoice-parity-20261023'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
@@ -66,7 +66,7 @@ jobs:
             test-artifacts/brand-receipt-*.png
           retention-days: 14
   multibrand-postgres:
-    if: github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
+    if: github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -196,7 +196,7 @@ jobs:
           if-no-files-found: error
 
   multibrand-browser:
-    if: github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
+    if: github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:

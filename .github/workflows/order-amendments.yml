@@ -4,7 +4,7 @@ on:
     types: [opened, synchronize, reopened]
 jobs:
   amendments-postgres:
-    if: github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4'
+    if: github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/order-journey-closure-20261101' || github.head_ref == 'agent/kps-order-emergency-v4'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

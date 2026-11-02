@@ -1,0 +1,28 @@
+'use strict';
+window.KPSDriverFuelReport = {async open(ctx) {
+ const {api, tr, esc, heading, lang} = ctx;
+ const root = document.querySelector('#content');
+ const opt = await api('/api/fleet/driver-report/options');
+ const t = (ar,en)=>tr?tr(ar,en):ar;
+ const n = x => x == null ? '—' : new Intl.NumberFormat(lang==='en'?'en':'ar',{maximumFractionDigits:2}).format(x);
+ const money = x => x == null ? '—' : n(x/100)+' '+t('ر.س','SAR');
+ const options = (rows,key,label)=>rows.map(r=>`<option value="${esc(r[key])}">${esc(r[label])}</option>`).join('');
+ heading(t('البنزين والمسافات حسب السائق','Driver fuel and distance'));
+ root.innerHTML=`<section class="panel driver-fuel-report"><p>${esc(t('اختر الفترة والسائق لمراجعة القراءات والتعبئة. البيانات الناقصة تظهر بوضوح ولا تحسب كعجز.','Review readings and refuelling by driver and period. Missing data is explicit and is not a driver shortage.'))}</p><form id="driver-fuel-filters" class="driver-fuel-filters"><label>${t('من','From')}<input name="start" type="date" required value="${esc(opt.today)}"></label><label>${t('إلى','To')}<input name="end" type="date" required value="${esc(opt.today)}"></label><label>${t('السائق','Driver')}<select name="driver_id"><option value="">${t('كل السائقين','All drivers')}</option>${options(opt.drivers,'id','display_name')}</select></label><label>${t('السيارة','Vehicle')}<select name="vehicle_id"><option value="">${t('كل السيارات','All vehicles')}</option>${options(opt.vehicles,'id','plate')}</select></label><label>${t('المدينة','City')}<select name="city"><option value="">${t('كل المدن','All cities')}</option>${opt.cities.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label><button type="submit">${t('عرض التقرير','Show report')}</button></form><p data-fuel-error role="alert"></p><div data-fuel-result aria-live="polite"></div></section>`;
+ const form=root.querySelector('form'), result=root.querySelector('[data-fuel-result]'), error=root.querySelector('[data-fuel-error]');
+ let offset=0,sequence=0,submitted=new URLSearchParams(new FormData(form));
+ const labels=[['operating_day',t('اليوم التشغيلي','Operating day')],['driver_name',t('السائق','Driver')],['plate',t('السيارة','Vehicle')],['cities',t('المدينة','City')],['start_odometer',t('عداد البداية','Start odometer')],['end_odometer',t('عداد النهاية','End odometer')],['actual_distance',t('المسافة كم','Distance km')],['liters',t('اللترات المسجلة','Recorded liters')],['fuel_amount_halalas',t('قيمة البنزين','Fuel amount')],['record_status',t('حالة السجل','Record status')]];
+ async function load(){
+  const current=++sequence;error.textContent='';form.querySelector('button').disabled=true;
+  try{
+   const q=new URLSearchParams(submitted);q.set('offset',offset);q.set('limit','50');
+   const data=await api('/api/fleet/driver-report?'+q);
+   if(current!==sequence||!root.contains(result))return;
+   const s=data.summary;
+   result.innerHTML=`<div class="driver-fuel-summary"><article><small>${t('المسافة المسجلة','Recorded distance')}</small><strong>${n(s.distance_km)} ${t('كم','km')}</strong><span>${n(s.distance_missing_records)} ${t('سجلات دون مسافة مكتملة','records without complete distance')}</span></article><article><small>${t('البنزين المسجل','Recorded fuel')}</small><strong>${n(s.liters)} ${t('لتر','L')}</strong><span>${n(s.fuel_record_missing)} ${t('سجلات دون تعبئة مسجلة','records without refuelling')}</span></article><article><small>${t('قيمة التعبئة المعروفة','Known fuel amount')}</small><strong>${money(s.fuel_amount_known_halalas)}</strong><span>${s.fuel_amount_halalas==null?t('الإجمالي غير مكتمل — توجد بيانات غير مسجلة','Total incomplete — missing records'):t('القيمة المسجلة مكتملة','Recorded amount complete')}</span></article></div><p>${esc(t('كل صف فترة استلام سيارة في شفت؛ قد يتكرر اليوم عند تعدد الشفتات أو تغيير السيارة. الشرطـة تعني غير مسجل.','Each row is a vehicle interval in a shift. A day may repeat across shifts or vehicle changes. A dash means not recorded.'))}</p><div class="table-wrap" tabindex="0"><table><thead><tr>${labels.map(([,x])=>`<th scope="col">${esc(x)}</th>`).join('')}</tr></thead><tbody>${data.rows.map(r=>`<tr>${labels.map(([k])=>`<td class="${(k==='actual_distance'&&r[k]==null)||(k==='liters'&&r.fuel_record_missing)||(k==='fuel_amount_halalas'&&r[k]==null)?'driver-fuel-missing':''}">${esc(k==='liters'&&r.fuel_record_missing?t('غير مسجل','Not recorded'):k==='fuel_amount_halalas'?money(r[k]):k==='cities'?r[k].join(' / '):k==='record_status'?({closed:t('مغلق','Closed'),open:t('مفتوح','Open'),exception:t('استثناء','Exception')}[r[k]]||r[k]):['start_odometer','end_odometer','actual_distance','liters'].includes(k)?n(r[k]):r[k]??'—')}</td>`).join('')}</tr>`).join('')||`<tr><td colspan="10">${t('لا توجد سجلات ضمن الفترة والفلاتر المختارة','No records in the selected period and filters')}</td></tr>`}</tbody></table></div><div class="driver-fuel-pages"><button type="button" data-fuel-prev ${offset===0?'disabled':''}>${t('السابق','Previous')}</button><span>${n(data.total)} ${t('سجل','records')}</span><button type="button" data-fuel-next ${offset+data.rows.length>=data.total?'disabled':''}>${t('التالي','Next')}</button></div><p class="muted">${esc(data.note)}</p>`;
+  }catch(ex){if(current===sequence)error.textContent=ex.message;}finally{if(current===sequence)form.querySelector('button').disabled=false;}
+ }
+ form.addEventListener('submit',e=>{e.preventDefault();submitted=new URLSearchParams(new FormData(form));offset=0;void load();});
+ result.addEventListener('click',e=>{if(e.target.closest('[data-fuel-prev]')){offset=Math.max(0,offset-50);void load();}if(e.target.closest('[data-fuel-next]')){offset+=50;void load();}});
+ await load();
+}};

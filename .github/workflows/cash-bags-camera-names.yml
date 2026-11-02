@@ -3,6 +3,9 @@ on:
   pull_request:
     branches: [agent/kps-order-emergency-v4]
     paths:
+      - app/cash_bag_custody.py
+      - tests/test_cash_bag_custody_scope_unit.py
+      - tests/test_cash_bag_custody.py
       - app/cash_bags.py
       - app/aggregate_driver_closure.py
       - app/aggregate_manager_closure.py
@@ -49,7 +52,7 @@ jobs:
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/ops.js && node --check public/assets/order-amendments.js
-      - run: python -m pytest -q tests/test_aggregate_driver_closure.py tests/test_aggregate_manager_closure.py tests/test_physical_receipt_boundary.py tests/test_administrative_guidance.py tests/test_employee_tickets.py tests/test_delivery_controls_backup.py tests/test_driver_camera_browser.py tests/test_central_workdays_browser.py tests/test_closure_ui_browser.py tests/test_closure_ui_context.py tests/test_remote_driver_approval_unit.py tests/test_driver_live_status.py --junitxml=batch-results.xml
+      - run: python -m pytest -q tests/test_cash_bag_custody_scope_unit.py tests/test_cash_bag_custody.py tests/test_aggregate_driver_closure.py tests/test_aggregate_manager_closure.py tests/test_physical_receipt_boundary.py tests/test_administrative_guidance.py tests/test_employee_tickets.py tests/test_delivery_controls_backup.py tests/test_driver_camera_browser.py tests/test_central_workdays_browser.py tests/test_closure_ui_browser.py tests/test_closure_ui_context.py tests/test_remote_driver_approval_unit.py tests/test_driver_live_status.py --junitxml=batch-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

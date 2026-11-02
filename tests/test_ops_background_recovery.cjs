@@ -6,16 +6,17 @@ const fs=require('node:fs');
 const source=fs.readFileSync('public/ops.js','utf8');
 function setup(){
   const nodes={'#content':{innerHTML:'Existing work',setAttribute(){},querySelectorAll(){return [];},contains(){return false;}},'#modal':{open:false}};
-  const ownerDashboardCalls=[];const ownerDashboardController={pause(){ownerDashboardCalls.push('pause');},refresh:async()=>{ownerDashboardCalls.push('refresh');return true;},reset(){ownerDashboardCalls.push('reset');}};
+  const ownerDashboardCalls=[],productSalesCalls=[];const ownerDashboardController={pause(){ownerDashboardCalls.push('pause');},refresh:async()=>{ownerDashboardCalls.push('refresh');return true;},reset(){ownerDashboardCalls.push('reset');}};
+  const productSalesController={pause(){productSalesCalls.push('pause');},refresh:async()=>{productSalesCalls.push('refresh');return true;},reset(){productSalesCalls.push('reset');}};
   const events={};const state={user:{id:'driver-1',role:'driver',brand_id:'kps',branch_ids:['b1'],effective_permissions:['tasks_view']},page:'tasks',busy:new Set()};
-  const context={state,ownerDashboardController,window:{scrollX:0,scrollY:240,scrollTo(x,y){this.scrollX=x;this.scrollY=y;}},document:{documentElement:{hasAttribute(){return false;}},body:{classList:{toggle(){}}},addEventListener(name,cb){events[name]=cb;}},$:(selector)=>nodes[selector],trialMode:false,trackingController:null,navigation(){},driverLocation:{refresh(){}},hideUnavailableActions(){},tr:(ar,en)=>en,esc:String,notice:String,filterForm:()=>'',dispatchWorkspaceStatus:()=>false,setStatus(message,error){context.status={message,error};},Promise,JSON,Error,console};
-  const names=['employeeActivity','staffCatalog','ownerDashboard','interventionInbox','employeeTickets','recovery','tracking','timing','fleet','accounting','support','printers','dashboard','orders','customers','tasks','shifts','custody','chat','reports','drivers','admin','maintenance','restricted'];
+  const context={state,ownerDashboardController,productSalesController,window:{scrollX:0,scrollY:240,scrollTo(x,y){this.scrollX=x;this.scrollY=y;}},document:{documentElement:{hasAttribute(){return false;}},body:{classList:{toggle(){}}},addEventListener(name,cb){events[name]=cb;}},$:(selector)=>nodes[selector],trialMode:false,trackingController:null,navigation(){},driverLocation:{refresh(){}},hideUnavailableActions(){},tr:(ar,en)=>en,esc:String,notice:String,filterForm:()=>'',dispatchWorkspaceStatus:()=>false,setStatus(message,error){context.status={message,error};},Promise,JSON,Error,console};
+  const names=['productSales','driverFuel','employeeActivity','staffCatalog','ownerDashboard','interventionInbox','employeeTickets','recovery','tracking','timing','fleet','accounting','support','printers','dashboard','orders','customers','tasks','shifts','custody','chat','reports','drivers','admin','maintenance','restricted'];
   for(const name of names)context[name]=async()=>{nodes['#content'].innerHTML=name;};
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('  let activePageLoad=null'),source.indexOf('  function filterForm()')),context);
   context.centralOperations={request:async(path)=>{if(path==='/api/session')return {user:state.user};return context.response;}};context.scopedApi=()=>{};
   vm.runInContext(source.slice(source.indexOf('  async function api('),source.indexOf('  async function scopedApi(')),context);
-  return {context,nodes,state,events,ownerDashboardCalls,run:(code)=>vm.runInContext(code,context)};
+  return {context,nodes,state,events,ownerDashboardCalls,productSalesCalls,run:(code)=>vm.runInContext(code,context)};
 }
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 test('reproduces original failure: silent refresh overwrites existing work',async()=>{
@@ -41,6 +42,7 @@ test('delayed result cannot render after queued navigation',async()=>{
   const first=t.context.loadPage(true);t.state.pendingPage='orders';d.resolve({tasks:[]});await first;
   assert.equal(t.state.page,'orders');assert.equal(t.nodes['#content'].innerHTML,'orders');
   assert.deepEqual(t.ownerDashboardCalls,['pause','pause'],'Owner reads must stop before each non-owner-page render');
+  assert.deepEqual(t.productSalesCalls,t.ownerDashboardCalls,'Product report must follow the same verified access lifecycle');
 });
 test('editing while request is outstanding discards its data without overwriting input',async()=>{
   const t=setup(),d=deferred();t.context.response=d.promise;
