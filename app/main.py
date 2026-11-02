@@ -338,3 +338,6 @@ app.include_router(preparation_routing.router)
 
 from . import owner_employee_activity
 app.include_router(owner_employee_activity.router)
+
+from . import owner_driver_intervention
+app.include_router(owner_driver_intervention.router)
