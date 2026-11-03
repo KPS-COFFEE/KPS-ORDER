@@ -308,9 +308,14 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
         deadline['overdue']=bool((finished or datetime.now(TZ))>=deadline['due_at'])
         deadline['can_extend']=deadline['deadline_policy']=='external_72h' and not deadline['extension'] and not finished
         group=groups.setdefault(r['manager_shift_id'],dict(id=r['manager_shift_id'],manager_name=r['manager_name'],day=r['day'],drivers=[],approved_day=approved.get(r['manager_shift_id']),due_on=None))
-        tickets=cash_correction_requests(c,user,r['id'])
-        may_request=can_request_cash_correction(c,user,r['id'])
-        group['drivers'].append(dict(id=r['id'],shift_id=r['shift_id'],completed_orders=(r['snapshot'].get('summary') or {}).get('completed_orders',0),user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,cash_correction_requests=tickets,can_request_cash_correction=may_request,**v,**deadline))
+        # A late parent is visible for follow-up, but settlement/correction
+        # actions still require its operational completion. Their scope guard
+        # must not turn this read-only card into a failing mutation precheck.
+        actions_available=group.get('operationally_closed',True)
+        tickets=cash_correction_requests(c,user,r['id']) if actions_available else []
+        may_request=can_request_cash_correction(c,user,r['id']) if actions_available else False
+        deadline['can_extend']=deadline['can_extend'] and actions_available
+        group['drivers'].append(dict(id=r['id'],shift_id=r['shift_id'],completed_orders=(r['snapshot'].get('summary') or {}).get('completed_orders',0),user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,cash_correction_requests=tickets,can_request_cash_correction=may_request,accounting_actions_available=actions_available,**v,**deadline))
     # Show the precise missing driver record and its owner, rather than an
     # unexplained disabled day-approval button. Match by manager id, never clock date.
     children=defaultdict(list)

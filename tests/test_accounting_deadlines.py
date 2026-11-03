@@ -119,10 +119,16 @@ def test_overdue_open_manager_does_not_hide_existing_child_report(ops):
         for event in snapshot['custody_events']:event['shift_id']=sid
         c.execute("""INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot)
           VALUES('test-open-parent-report',%s,'driver','ops-brand','["ops-branch"]','ops-driver',%s)""",(sid,db.json(snapshot)))
-    card=next(r for r in actor('accountant').get('/api/accounting/manager-cards').json()['cards'] if r['id']=='test-manager-open-with-report')
+    response=actor('accountant').get('/api/accounting/manager-cards')
+    assert response.status_code==200,response.text
+    card=next(r for r in response.json()['cards'] if r['id']=='test-manager-open-with-report')
     assert not card['operationally_closed'] and not card['ready']
     assert [r['id'] for r in card['drivers']]==['test-open-parent-report']
     assert not card['pending_drivers']
     assert card['drivers'][0]['system_total_halalas']==15000
+    assert not card['drivers'][0]['accounting_actions_available']
+    assert not card['drivers'][0]['can_request_cash_correction']
+    assert not card['drivers'][0]['can_extend']
+    assert not card['drivers'][0]['cash_correction_requests']
     with db.tx() as c:
         assert c.execute("SELECT snapshot FROM closure_reports WHERE id='test-open-parent-report'").fetchone()['snapshot']==snapshot

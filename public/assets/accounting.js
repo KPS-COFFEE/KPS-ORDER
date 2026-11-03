@@ -237,7 +237,7 @@ window.KPSAccounting={async open(ctx){
     const total=complete?actual:r.bank_halalas+r.cash_due_halalas;
     const system=r.system_total_halalas??(r.system_bank_halalas+r.system_cash_halalas);
     const net=r.net_difference_halalas??(r.surplus_halalas-r.shortage_halalas);
-    const editable=options.can_review&&r.user_id!==user.id;
+    const editable=options.can_review&&r.user_id!==user.id&&r.accounting_actions_available!==false;
     const mayAmend=editable&&(r.stage!=='cash_received'||r.variance_pending);
     const state=r.variance_pending?'difference':complete?'confirmed':'pending';
     const label=r.financial_state==='review_approved_outstanding'?tr('المراجعة معتمدة — مبلغ مستحق تحت المتابعة','Review approved — outstanding amount under follow-up'):r.variance_pending?tr('فرق تحت المراجعة — يتطلب معالجة موثقة','Difference under review — documented treatment required'):states[r.stage];
@@ -262,7 +262,7 @@ window.KPSAccounting={async open(ctx){
         ${r.outstanding_receivable_halalas>0?`<p class="ac-note">${text('مبلغ لنا مستحق تحت المتابعة','Receivable under follow-up')}: <bdi>${esc(money(r.outstanding_receivable_halalas))}</bdi></p>`:''}${r.outstanding_payable_halalas>0?`<p class="ac-note">${text('مبلغ علينا تحت المتابعة','Payable under follow-up')}: <bdi>${esc(money(r.outstanding_payable_halalas))}</bdi></p>`:''}
         ${r.bank_matching?`<p class="ac-note">${text('حالة الشبكة والبنك','Card and bank state')}: ${esc(({unconfigured:tr('غير مفعلة تشغيليًا — المطابقة البنكية غير موثقة','Not operationally enabled — bank matching undocumented'),matched:tr('مطابقة موثقة','Documented match'),pending:tr('المحاسبة: استكمل مطابقة دفعة الشبكة ووصول البنك','Accounting: complete batch and actual bank matching'),undocumented:tr('غير موثقة — يلزم استكمال مصادر الشبكة','Undocumented — card source evidence required'),no_card_operations:tr('لا توجد عمليات شبكة موثقة في هذه التقفيلة','No recorded card operations in this closure')})[r.bank_matching.state]||tr('غير موثقة','Undocumented'))}</p>`:''}
         ${cashCorrectionTickets(r)}
-        <div class="ac-settlement-links"><button type="button" class="ac-secondary" data-driver-history="${esc(r.id)}">${text('الأصل والتعديلات','Original and changes')}</button><a href="/api/accounting/driver-settlements/${encodeURIComponent(r.id)}/print" target="_blank" rel="noopener">${text('التقفيلة الأصلية','Original closure')}</a>${editable&&r.can_extend?`<button type="button" class="ac-secondary" data-deadline-extend="${esc(r.id)}">${text('تمديد 48 ساعة','Extend 48 hours')}</button>`:''}</div>
+        <div class="ac-settlement-links"><button type="button" class="ac-secondary" data-driver-history="${esc(r.id)}">${text('الأصل والتعديلات','Original and changes')}</button>${r.accounting_actions_available!==false?`<a href="/api/accounting/driver-settlements/${encodeURIComponent(r.id)}/print" target="_blank" rel="noopener">${text('التقفيلة الأصلية','Original closure')}</a>`:''}${editable&&r.can_extend?`<button type="button" class="ac-secondary" data-deadline-extend="${esc(r.id)}">${text('تمديد 48 ساعة','Extend 48 hours')}</button>`:''}</div>
       </td></tr>`;
   }
   function cashCorrectionTickets(r){

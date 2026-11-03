@@ -27,6 +27,13 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
  assert.match(context.managerCardBlockers({blockers:[{reason:'manager_shift_open',responsible:'delivery_manager'}]}),/Complete the overdue manager shift[^<]+Responsible: delivery manager/);
  const pendingDeadline=context.managerCardDrivers({id:'missing-report',drivers:[],pending_drivers:[{id:'driver-old',driver_name:'OVERDUE DRIVER',responsible:'accounting',due_at:'2026-01-02T16:00:00+03:00',overdue:true}]});
  assert.match(pendingDeadline,/OVERDUE DRIVER/);assert.match(pendingDeadline,/Due: 2026-01-02T16:00:00\+03:00 · Overdue/);
+ // An overdue open parent exposes child evidence without offering settlement
+ // mutations that still require the manager to end its duty.
+ context.cashCorrectionTickets=()=>'';
+ vm.runInContext(source.slice(source.indexOf('  function settlementDriverRow('),source.indexOf('  function cashCorrectionTickets(')),context);
+ const blocked=context.settlementDriverRow({id:'report-open-parent',user_id:'driver',accounting_actions_available:false,stage:'pending_balance',history:[],bank_halalas:5000,cash_due_halalas:10000,can_extend:true,due_at:'2026-01-02T16:00:00+03:00'},{});
+ assert(!blocked.includes('data-driver-balance=')&&!blocked.includes('data-driver-receipt=')&&!blocked.includes('data-deadline-extend=')&&!blocked.includes('/print'));
+ assert(blocked.includes('data-driver-history='));
  assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:0,balance_completed:1}),/actually received cash/);
  assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:1,balance_completed:1,review_needed_count:1}),/independent approval/);
  assert.match(context.managerCardNext({financial_ledger_closed:true,total:1,cash_completed:1,balance_completed:1,ready:true}),/issue the report/);
