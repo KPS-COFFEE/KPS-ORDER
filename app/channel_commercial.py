@@ -43,11 +43,18 @@ def capture(config, branch_id, quote, actor):
 def amounts(snapshot, quote):
     """Recalculate only within an already authorized order amendment/new order."""
     result = deepcopy(snapshot)
-    subtotal, delivery, total = (int(quote[k]) for k in ('subtotal_halalas','delivery_fee_halalas','total_halalas'))
-    if min(subtotal, delivery, total) < 0 or subtotal + delivery != total:
+    subtotal, delivery, total = (quote[k] for k in ('subtotal_halalas','delivery_fee_halalas','total_halalas'))
+    discount = quote.get('discount_halalas', 0)
+    if (any(type(value) is not int for value in (subtotal, delivery, total, discount))
+            or min(subtotal, delivery, total, discount) < 0 or discount > subtotal
+            or subtotal - discount + delivery != total):
         raise db.error(409, 'SETTLEMENT_TOTAL_MISMATCH', 'راجع مبالغ الطلب قبل التسوية.')
     vat = int((Decimal(total)*15/115).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    # The approved basis remains gross items, pending settlement review. A
+    # customer promotion is not authority to reduce the branch's entitlement or
+    # assign its cost. Keep the discount explicit alongside net customer funds.
     result.update(settlement_amount_halalas=subtotal, delivery_fee_halalas=delivery,
+                  discount_halalas=discount,
                   tax_halalas=vat, tax_basis='inclusive_15_percent_channel_sales',
                   tax_document_issued=False, total_halalas=total)
     return result

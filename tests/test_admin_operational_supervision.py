@@ -133,7 +133,7 @@ def test_supervisory_reads_cannot_issue_collect_refund_cancel_or_change_preparat
     assert response.json()['detail']['code']=='FISCAL_READ_ONLY'
     assert post('/api/orders/'+oid+'/preparation',{'version':1,'status':'preparing'}).status_code==403
     assert post('/api/orders/'+oid+'/collect',{'method':'cash','amount_halalas':1000,'tendered_halalas':1000}).status_code==403
-    assert post('/api/orders/'+oid+'/refund',{'method':'cash','amount_halalas':1000,'reason':'Synthetic forbidden refund'}).status_code==403
+    assert post('/api/orders/'+oid+'/refund',{'method':'cash','amount_halalas':1000,'reason':'Synthetic forbidden refund','evidence_reference':'SYNTHETIC-AUTHORITY-PROBE','executed_confirmed':True}).status_code==403
     assert post('/api/order-financial-cases/orders/'+oid+'/cancel',{'version':1,'reason':'Synthetic forbidden cancellation'}).status_code==403
     with db.tx() as c:
         assert not c.execute('SELECT 1 FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()

@@ -24,6 +24,7 @@ on:
       - tests/test_central_handovers.py
       - tests/test_central_dashboard.py
       - tests/test_central_driver_overview.py
+      - tests/test_central_destination_locking.py
       - tests/test_central_shift_history.py
       - tests/test_central_activation_preflight.py
       - tests/test_central_workdays_browser.py
@@ -73,7 +74,7 @@ jobs:
       - run: node --test tests/test_intervention_reachability.cjs tests/test_alert_permission_poll.cjs
       - run: node --test tests/test_driver_destination_routing.cjs
       - run: node --check public/ops.js
-      - run: python tools/enbishan_test.py tests/test_central_operations.py tests/test_order_interventions.py tests/test_central_workdays.py tests/test_central_handovers.py tests/test_central_dashboard.py tests/test_central_driver_overview.py tests/test_central_shift_history.py tests/test_central_activation_preflight.py tests/test_enbishan_dual_brand.py tests/test_multibrand_final_boundary.py
+      - run: python tools/enbishan_test.py tests/test_central_operations.py tests/test_order_interventions.py tests/test_central_workdays.py tests/test_central_handovers.py tests/test_central_dashboard.py tests/test_central_driver_overview.py tests/test_central_destination_locking.py tests/test_central_shift_history.py tests/test_central_activation_preflight.py tests/test_enbishan_dual_brand.py tests/test_multibrand_final_boundary.py
 
       - name: Bound Ubuntu dependency downloads on the ephemeral runner
         shell: bash

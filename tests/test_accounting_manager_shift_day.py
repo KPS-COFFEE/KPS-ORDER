@@ -143,6 +143,9 @@ def test_all_manager_duties_remain_visible_before_financial_allocation(ops):
         duty(c,'ahmed','2026-10-28',morning=True)
         duty(c,'ali','2026-10-28',manager_user='test-ali')
         duty(c,'open','2026-10-29',manager_user='test-open-manager',manager_status='open')
+        # A not-yet-due open duty stays outside the historical follow-up inbox.
+        # Overdue open duties are exercised by the dedicated deadline regressions.
+        c.execute("UPDATE shifts SET scheduled_end_at=now()+interval '1 day' WHERE id='test-manager-open'")
     r=actor('accountant').get('/api/accounting/manager-cards')
     assert r.status_code==200,r.text
     cards={c['manager_name']:c for c in r.json()['cards']}

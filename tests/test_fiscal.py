@@ -403,7 +403,7 @@ def test_issued_refund_spans_multiple_collections_without_decimal_loss(fiscal_sa
     issued=client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'multi-issue'})
     assert issued.status_code==200,issued.text
     original=issued.json()['document']
-    body={'amount_halalas':3950,'method':'card','reason':'Full refund across two collections','line_quantities':{'synthetic-brownie':1,'synthetic-brownie-box':1}}
+    body={'amount_halalas':3950,'method':'card','reason':'Full refund across two collections','evidence_reference':'Synthetic terminal refund slip','executed_confirmed':True,'line_quantities':{'synthetic-brownie':1,'synthetic-brownie-box':1}}
     result=client.post(f'/api/orders/{oid}/refund',json=body,headers={'Idempotency-Key':'multi-refund'})
     assert result.status_code==200,result.text
     assert client.post(f'/api/orders/{oid}/refund',json=body,headers={'Idempotency-Key':'multi-refund'}).json()==result.json()

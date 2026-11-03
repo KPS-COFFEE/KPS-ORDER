@@ -7,6 +7,7 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter,Depends,Response,Request
 from . import auth,db
+from .report_filenames import closure_filename, disposition as report_disposition
 from .complimentary import operational_view,contains_complimentary
 from .operations import uid,safe,fail,roles,mutate,day_start
 
@@ -585,11 +586,11 @@ def download_pdf(rid:str,user=Depends(auth.current_user)):
         r=report(c,user,rid)
         projected=corrected_snapshot(c,r['snapshot'])
         if projected.get('operational_date_correction'):
-            return Response(make_v5_pdf(projected),media_type='application/pdf',headers={'Cache-Control':'private, no-store'})
+            return Response(make_v5_pdf(projected),media_type='application/pdf',headers={'Content-Disposition':report_disposition(closure_filename(projected)),'Cache-Control':'private, no-store'})
         if contains_complimentary(r['snapshot']) and user['role']!='owner':
-            return Response(make_v5_pdf(r['snapshot']),media_type='application/pdf',headers={'Cache-Control':'private, no-store'})
+            return Response(make_v5_pdf(r['snapshot']),media_type='application/pdf',headers={'Content-Disposition':report_disposition(closure_filename(r['snapshot'])),'Cache-Control':'private, no-store'})
         if r['pdf_status']!='ready' or not r['pdf_data']:fail(409,'ملف PDF غير جاهز؛ راجع حالة التوليد وأعد المحاولة')
-        return Response(bytes(r['pdf_data']),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="KPS-closure-{rid}.pdf"','Cache-Control':'private, no-store'})
+        return Response(bytes(r['pdf_data']),media_type='application/pdf',headers={'Content-Disposition':report_disposition(closure_filename(projected)),'Cache-Control':'private, no-store'})
 
 @router.get('/{rid}/csv')
 def download_csv(rid:str,user=Depends(auth.current_user)):
@@ -1136,9 +1137,9 @@ def original_pdf(rid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         r=report(c,user,rid)
         if contains_complimentary(r['snapshot']) and user['role']!='owner':
-            return Response(make_v5_pdf(r['snapshot']),media_type='application/pdf',headers={'Cache-Control':'private, no-store'})
+            return Response(make_v5_pdf(r['snapshot']),media_type='application/pdf',headers={'Content-Disposition':report_disposition(closure_filename(r['snapshot'])),'Cache-Control':'private, no-store'})
         if r['pdf_status']!='ready' or not r['pdf_data']:fail(409,'النسخة الأصلية قيد التوليد')
-        return Response(bytes(r['pdf_data']),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="KPS-original-{rid}.pdf"','Cache-Control':'private, no-store'})
+        return Response(bytes(r['pdf_data']),media_type='application/pdf',headers={'Content-Disposition':report_disposition(closure_filename(r['snapshot'])),'Cache-Control':'private, no-store'})
 
 @router.get('/{rid}/formatted/{format}')
 def formatted_download(rid:str,format:str,view:str='compact',part:str='main',user=Depends(auth.current_user)):
@@ -1151,7 +1152,7 @@ def formatted_download(rid:str,format:str,view:str='compact',part:str='main',use
         r['snapshot']=corrected_snapshot(c,r['snapshot'])
     data=make_v5_print_html(r['snapshot'],variant,rid,part) if format=='print' else make_v5_pdf(r['snapshot'],variant,part)
     headers={'Cache-Control':'private, no-store'}
-    if format=='pdf':headers['Content-Disposition']=f'attachment; filename="KPS-formatted-{rid}.pdf"'
+    if format=='pdf':headers['Content-Disposition']=report_disposition(closure_filename(r['snapshot']))
     return Response(data,media_type='text/html' if format=='print' else 'application/pdf',headers=headers)
 
 @router.get('/{rid}/renderings/v5/{format}')
@@ -1162,7 +1163,7 @@ def v5_download(rid:str,format:str,user=Depends(auth.current_user)):
         r['snapshot']=corrected_snapshot(c,r['snapshot'])
     if r['snapshot'].get('operational_date_correction') or contains_complimentary(r['snapshot']):
         value=make_v5_print_html(r['snapshot'],variant,rid) if format=='print' else make_v5_pdf(r['snapshot'],variant) if format=='pdf' else make_v5_csv(r['snapshot'],variant)
-        return Response(value,media_type={'print':'text/html','pdf':'application/pdf','csv':'text/csv; charset=utf-8'}[format],headers={'Cache-Control':'private, no-store'})
+        return Response(value,media_type={'print':'text/html','pdf':'application/pdf','csv':'text/csv; charset=utf-8'}[format],headers={'Cache-Control':'private, no-store',**({'Content-Disposition':report_disposition(closure_filename(r['snapshot'],format))} if format!='print' else {})})
     if not row or row['status']!='ready':
         generate_v5_files(rid,variant)
         with db.tx() as c:r,row,variant=saved_rendering(c,user,rid)
@@ -1170,7 +1171,7 @@ def v5_download(rid:str,format:str,user=Depends(auth.current_user)):
     data=row['html_data'] if format=='print' else bytes(row[format+'_data'])
     media={'print':'text/html','pdf':'application/pdf','csv':'text/csv; charset=utf-8'}[format]
     headers={'Cache-Control':'private, no-store'}
-    if format!='print':headers['Content-Disposition']=f'attachment; filename="KPS-{variant}-v5-{rid}.{format}"'
+    if format!='print':headers['Content-Disposition']=report_disposition(closure_filename(r['snapshot'],format))
     return Response(data,media_type=media,headers=headers)
 
 @router.post('/{rid}/renderings/v5/retry')

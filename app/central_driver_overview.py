@@ -10,7 +10,7 @@ from . import operations as ops
 router = APIRouter(tags=['central-driver-overview'])
 
 
-def own_legs(c, user):
+def own_legs(c, user, *, lock=True):
     if user['role'] != 'driver' or user.get('_morning_manager_context'):
         raise db.error(403, 'CENTRAL_DRIVER_REQUIRED', 'هذه الشاشة للسائق فقط.')
     row = c.execute("SELECT s.id FROM shifts s JOIN central_workday_legs l ON l.shift_id=s.id "
@@ -18,7 +18,7 @@ def own_legs(c, user):
     if not row:
         raise db.error(409, 'CENTRAL_DRIVER_SHIFT_REQUIRED', 'يلزم فتح الوردية المشتركة.')
     days.require_enabled(user, 'shifts_view', existing_sid=row['id'])
-    day, legs = days.authorized(c, user, row['id'])
+    day, legs = days.authorized(c, user, row['id'], lock=lock)
     if any(s['status'] != 'open' for _, s in legs):
         raise db.error(409, 'CENTRAL_WORKDAY_CLOSED', 'الوردية لا تستقبل وجهة جديدة.')
     return day, legs
@@ -58,7 +58,9 @@ def destination_view(c, user, legs):
 @router.get('/driver-destination')
 def own_destination(user=Depends(auth.current_user)):
     with db.tx() as c:
-        _, legs = own_legs(c, user)
+        # Polling observes current grants and intent. It must not lock both
+        # brand shifts while GPS station writes hold the same rows.
+        _, legs = own_legs(c, user, lock=False)
         return ops.safe(destination_view(c, user, legs))
 
 

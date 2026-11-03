@@ -66,8 +66,14 @@ def authorized(c, user, sid, *, manager=False, capability=None, lock=True, histo
     day = association(c, sid)
     if not day:
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة.')
+    # Every multi-shift writer (including tracking station actions) locks by
+    # the canonical row ID, never brand order. A physical day can have the
+    # opposite ID/brand ordering and otherwise creates an inverse lock cycle.
     legs = c.execute('SELECT s.* FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id '
-                     'WHERE l.workday_id=%s ORDER BY s.brand_id' + (' FOR UPDATE OF s' if lock else ''), (day['id'],)).fetchall()
+                     'WHERE l.workday_id=%s ORDER BY s.id' + (' FOR UPDATE OF s' if lock else ''), (day['id'],)).fetchall()
+    # Preserve the established presentation/processing order after acquisition;
+    # changing the row-lock order must not change brand ledger semantics.
+    legs.sort(key=lambda shift: shift['brand_id'])
     if (not legs or day['anchor_shift_id'] not in {s['id'] for s in legs}
             or any(s['user_id'] != day['user_id'] or s['kind'] != day['kind'] for s in legs)):
         raise db.error(409, 'CENTRAL_WORKDAY_INTEGRITY', 'تحتاج سجلات الوردية مراجعة المالك.')
