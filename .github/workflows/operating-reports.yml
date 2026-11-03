@@ -4,6 +4,9 @@ on:
     branches: [agent/kps-order-emergency-v4]
     paths:
       - app/operating_reports.py
+      - app/reporting.py
+      - app/report_filenames.py
+      - tests/test_report_download_names.py
       - app/accounting_statements.py
       - app/morning_manager_context.py
       - app/employee_permissions.py
@@ -42,7 +45,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/assets/operating-reports.js
-      - run: python -m pytest -q --basetemp=qa-operating-reports tests/test_operating_reports.py tests/test_operating_reports_browser.py tests/test_accounting_deadlines.py tests/test_shift_reconciliation.py tests/test_delivery_manager_operations_only.py
+      - run: python -m pytest -q --basetemp=qa-operating-reports tests/test_operating_reports.py tests/test_report_download_names.py tests/test_operating_reports_browser.py tests/test_accounting_deadlines.py tests/test_shift_reconciliation.py tests/test_delivery_manager_operations_only.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

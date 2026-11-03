@@ -53,23 +53,18 @@ def test_external_extension_once_scoped_and_audited(ops):
 
 
 @pytest.mark.postgres
-def test_cash_receipt_does_not_stop_unresolved_variance_deadline(ops,monkeypatch):
-    from app import accounting_statements
-    actor,post,_,_=ops
-    accountant();make_report()
-    end=datetime.now(TZ)+timedelta(days=1)
+def test_cash_receipt_does_not_stop_unresolved_variance_deadline(ops):
+    actor,_,_,_=ops
+    accountant();_,opened=make_report()
     with db.tx() as c:
-        c.execute("UPDATE branches SET city='الرياض' WHERE id='ops-branch'")
-        c.execute("UPDATE shifts SET scheduled_end_at=%s WHERE id='settlement-shift'",(end,))
-    post('accountant','/api/accounting/driver-settlements/settlement-report/approve-balance',{
-        'expected_revision':0,'bank_halalas':4900,'cash_due_halalas':10000,'note':'TEST unresolved card shortage'})
-    post('accountant','/api/accounting/driver-settlements/settlement-report/receive-cash',{
-        'expected_revision':1,'cash_received_halalas':10000,'received_on':datetime.now(TZ).date().isoformat(),
-        'receipt_reference':'TEST witnessed cash receipt','note':'TEST cash arrived'})
-    class Later(datetime):
-        @classmethod
-        def now(cls,tz=None):return (end+timedelta(days=5)).astimezone(tz or TZ)
-    monkeypatch.setattr(accounting_statements,'datetime',Later)
+        # Insert historical receipt evidence at fixture creation. Final shifts
+        # and settlement events remain immutable throughout the regression.
+        c.execute("""INSERT INTO driver_accounting_settlements
+          (id,report_id,brand_id,revision,stage,balance_approved,bank_halalas,cash_due_halalas,
+           cash_received_halalas,received_on,receipt_reference,note,actor_id,created_at)
+          VALUES('test-early-cash','settlement-report','ops-brand',1,'cash_received',true,4900,10000,
+           10000,%s,'TEST witnessed receipt','TEST unresolved card shortage','ops-accountant',%s)""",
+          (opened.date(),opened+timedelta(hours=5)))
     card=actor('accountant').get('/api/accounting/manager-cards').json()['cards'][0]
     row=card['drivers'][0]
     assert row['stage']=='cash_received' and row['variance_pending']
@@ -81,7 +76,10 @@ def test_cash_receipt_does_not_stop_unresolved_variance_deadline(ops,monkeypatch
 def test_missing_driver_report_keeps_deadline_and_accounting_responsibility(ops):
     actor,_,_,_=ops;accountant()
     with db.tx() as c:
-        sid=duty(c,'missing-deadline','2026-01-01')
+        # Same optional-column fixture used by manager-shift-day tests. Its
+        # production column lives in the central multibrand migration set.
+        c.execute('ALTER TABLE shifts ADD COLUMN IF NOT EXISTS staffing_ended_at timestamptz')
+        sid=duty(c,'missing-deadline','2026-01-01',driver_status='submitted')
         c.execute("UPDATE shifts SET staffing_ended_at=closed_at WHERE id=%s",(sid,))
     cards=actor('accountant').get('/api/accounting/manager-cards').json()['cards']
     card=next(r for r in cards if r['id']=='test-manager-missing-deadline')
@@ -115,11 +113,16 @@ def test_overdue_open_manager_is_visible_without_ending_or_approving_it(ops):
 def test_overdue_open_manager_does_not_hide_existing_child_report(ops):
     actor,_,_,_=ops;accountant();snapshot,_=make_report()
     with db.tx() as c:
-        c.execute("UPDATE shifts SET status='open',closed_at=NULL,scheduled_end_at=now()-interval '1 day' WHERE id='settlement-manager'")
-    card=next(r for r in actor('accountant').get('/api/accounting/manager-cards').json()['cards'] if r['id']=='settlement-manager')
+        sid=duty(c,'open-with-report','2026-01-01',manager_status='open')
+        c.execute("UPDATE shifts SET closed_at=NULL,scheduled_end_at=now()-interval '1 day' WHERE id='test-manager-open-with-report'")
+        snapshot['shift']['id']=sid
+        for event in snapshot['custody_events']:event['shift_id']=sid
+        c.execute("""INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot)
+          VALUES('test-open-parent-report',%s,'driver','ops-brand','["ops-branch"]','ops-driver',%s)""",(sid,db.json(snapshot)))
+    card=next(r for r in actor('accountant').get('/api/accounting/manager-cards').json()['cards'] if r['id']=='test-manager-open-with-report')
     assert not card['operationally_closed'] and not card['ready']
-    assert [r['id'] for r in card['drivers']]==['settlement-report']
+    assert [r['id'] for r in card['drivers']]==['test-open-parent-report']
     assert not card['pending_drivers']
     assert card['drivers'][0]['system_total_halalas']==15000
     with db.tx() as c:
-        assert c.execute("SELECT snapshot FROM closure_reports WHERE id='settlement-report'").fetchone()['snapshot']==snapshot
+        assert c.execute("SELECT snapshot FROM closure_reports WHERE id='test-open-parent-report'").fetchone()['snapshot']==snapshot

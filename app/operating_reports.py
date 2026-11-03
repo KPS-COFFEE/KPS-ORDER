@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Response
 from . import auth, db, multibrand, operations as ops, service_hours
 from .employee_permissions import reports_supervisor
+from .report_filenames import dated_filename, disposition as report_disposition
 
 router = APIRouter(prefix='/api/operating-reports', tags=['operating-reports'])
 TZ = ZoneInfo('Asia/Riyadh')
@@ -23,11 +24,11 @@ BRANDS = {'kps': 'كبز', 'enbishan': 'عنبيشن'}
 
 def filename(day, scope):
     day = date.fromisoformat(str(day))
-    return f"تشغيلي {DAYS[day.weekday()]} {day:%d-%m-%Y}.pdf"
+    return dated_filename(day)
 
 
 def disposition(name):
-    return 'attachment; filename="operating-report.pdf"; filename*=UTF-8\'\'' + quote(name, safe='')
+    return report_disposition(name)
 
 
 def allowed_manager(user, shift, scope):
