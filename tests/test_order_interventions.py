@@ -159,28 +159,36 @@ def test_explicit_activation_covers_both_shift_actions_without_rewriting_snapsho
     assert controlled({'service':'delivery','snapshot':{'delivery_period':'morning'}})
 
 
-def test_delegated_shift_authority_is_only_the_exact_order_task():
+@pytest.mark.parametrize('role',['admin','delivery_manager'])
+def test_delegated_shift_authority_is_only_the_exact_order_task(role):
     from app.order_interventions import delegated_cancel_shift_access
-    user={'id':'gm','role':'admin','brand_id':'brand','branch_ids':['branch'],'extra_permissions':['orders_cancel_after_print']}
+    user={'id':'gm','role':role,'brand_id':'brand','branch_ids':['branch'],'extra_permissions':['orders_cancel_after_print']}
     order={'id':'order','brand_id':'brand','branch_id':'branch','service':'delivery','snapshot':{'journey_controls_version':1}}
     shift={'id':'shift','kind':'driver','brand_id':'brand','branch_ids':['branch','another'],'user_id':'driver'}
     task={'order_id':'order','shift_id':'shift','driver_id':'driver'}
     assert delegated_cancel_shift_access(user,order,shift,[task])
+    assert not delegated_cancel_shift_access({**user,'extra_permissions':[]},order,shift,[task])
+    assert not delegated_cancel_shift_access({**user,'permission_denials':['orders_cancel_after_print']},order,shift,[task])
+    for altered in ({**order,'brand_id':'other'},{**order,'branch_id':'outside'}):
+        with pytest.raises(HTTPException):delegated_cancel_shift_access(user,altered,shift,[task])
+    with pytest.raises(HTTPException):delegated_cancel_shift_access(user,order,shift,[{**task,'driver_id':'another'}])
     with pytest.raises(HTTPException):delegated_cancel_shift_access(user,order,shift,[{**task,'order_id':'another'}])
     with pytest.raises(HTTPException):delegated_cancel_shift_access(user,order,{**shift,'brand_id':'other'},[task])
 
 
 @pytest.mark.postgres
 @pytest.mark.parametrize('picked_up',[False,True])
-def test_delegated_admin_can_cancel_assigned_task_but_has_no_general_shift_grant(ops,picked_up):
+@pytest.mark.parametrize('role',['admin','delivery_manager'])
+@pytest.mark.parametrize('printed',[False,True])
+def test_delegated_staff_can_cancel_exact_assigned_task_without_general_shift_authority(ops,picked_up,role,printed):
     actor,post,order,shifts=ops;_,sid=shifts();oid=controlled_order()
     post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':sid})
     with db.tx() as c:
-        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,extra_permissions) VALUES('ops-delegate','TEST GM','admin','ops-brand',%s,%s)",(db.json(['ops-branch']),db.json(['orders_cancel_after_print'])))
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,extra_permissions) VALUES('ops-delegate','TEST GM',%s,'ops-brand',%s,%s)",(role,db.json(['ops-branch']),db.json(['orders_cancel_after_print'])))
     if picked_up:
         with db.tx() as c:
             c.execute("UPDATE driver_tasks SET status='picked_up',picked_up_at=now() WHERE order_id=%s",(oid,))
-    print_job(oid)
+    if printed:print_job(oid)
     # Assignment incremented order version; request/approval use the live version.
     rid=customer_request(post,oid)
     iid=post('manager',f'/api/order-interventions/orders/{oid}',{'kind':'cancel','reason_code':'customer_cancel','customer_request_id':rid,'version':2})['id']
@@ -195,7 +203,10 @@ def test_delegated_admin_can_cancel_assigned_task_but_has_no_general_shift_grant
         assert c.execute('SELECT status FROM driver_tasks WHERE order_id=%s',(oid,)).fetchone()['status']=='cancelled'
         u=c.execute("SELECT * FROM users WHERE id='ops-delegate'").fetchone()
         from app import auth
-        assert not auth.has_permission(u,'shifts_view')
+        if role=='admin':assert not auth.has_permission(u,'shifts_view')
+        # Cancellation delegation must not expose another manager's complete ledger.
+        client=actor('delegate')
+        assert client.get('/api/shifts/'+sid).status_code==403
 
 
 @pytest.mark.postgres
