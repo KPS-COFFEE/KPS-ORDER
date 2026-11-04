@@ -1,0 +1,98 @@
+{
+  "repository": "KPS-COFFEE/KPS-ORDER",
+  "run_id": 39416691319,
+  "run_url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39416691319",
+  "candidate_sha": "82204fb73794c26153bf7ea9920ec63e703816a9",
+  "status": "completed",
+  "conclusion": "success",
+  "completed_at_utc": "2026-10-20T11:56:15Z",
+  "completed_at_riyadh": "2026-10-20T14:56:15+03:00",
+  "postgresql_version": "18.6",
+  "host": {
+    "job_id": 118607328769,
+    "provider_boundary": {
+      "passed": 31
+    },
+    "focused": {
+      "passed": 1352,
+      "subtests_passed": 7,
+      "skipped": 5
+    },
+    "policy_browser": {
+      "passed": 2,
+      "deselected": 30
+    },
+    "operational_staff_printer_browser": {
+      "passed": 49
+    },
+    "skipped_explanation": "Five browser cases skip in the non-browser focused invocation. Two policy cases and the owner/staff cases run in subsequent TEST_BROWSER=1 invocations."
+  },
+  "images": [
+    {
+      "role": "candidate",
+      "dockerfile_target": "runtime",
+      "job_id": 118607398718,
+      "image_id": "sha256:d605ac2b7bd5d0fea6c3d8fbc3d67b3087306228518ec78219550a71d914bbd5",
+      "conclusion": "success",
+      "focused": {
+        "passed": 1352,
+        "subtests_passed": 7,
+        "deselected": 5
+      },
+      "mandatory_chromium": {
+        "passed": 3
+      },
+      "health_ready": {
+        "passed": true,
+        "revision_matches": true
+      },
+      "trivy": {
+        "version": "0.76.0",
+        "high_critical_gate": "PASS",
+        "high_critical_findings": 0,
+        "all_secrets_gate": "PASS",
+        "secrets_detected": 0
+      },
+      "sbom": "Syft 1.54.1 CycloneDX generated",
+      "scan_evidence_basis": "Completed successful workflow steps with --exit-code 1 --severity HIGH,CRITICAL and an explicit assertion rejecting every detected secret. Raw JSON scanner artifacts retained in GitHub run; lower-severity findings are not claimed zero."
+    },
+    {
+      "role": "rollback",
+      "dockerfile_target": "rollback",
+      "job_id": 118607398610,
+      "image_id": "sha256:f27659f5c65a813b3bccb6714ec64a41ed30ca2b64aa34eb1be6645afaceb6b7",
+      "conclusion": "success",
+      "focused": {
+        "passed": 1352,
+        "subtests_passed": 7,
+        "deselected": 5
+      },
+      "mandatory_chromium": {
+        "passed": 3
+      },
+      "health_ready": {
+        "passed": true,
+        "revision_matches": true
+      },
+      "trivy": {
+        "version": "0.76.0",
+        "high_critical_gate": "PASS",
+        "high_critical_findings": 0,
+        "all_secrets_gate": "PASS",
+        "secrets_detected": 0
+      },
+      "sbom": "Syft 1.54.1 CycloneDX generated",
+      "scan_evidence_basis": "Completed successful workflow steps with --exit-code 1 --severity HIGH,CRITICAL and an explicit assertion rejecting every detected secret. Raw JSON scanner artifacts retained in GitHub run; lower-severity findings are not claimed zero."
+    }
+  ],
+  "historical_final_three_browser": {
+    "status": "skipped",
+    "reason": "verification-scope selected fresh exact-image certification; the current source differs from historical6b0739678fefb62c45baa792a7de6d9e107cb0a5. Mandatory three browser cases executed separately for each image."
+  },
+  "limits": [
+    "Repeated suites across host and images are not unique tests and must not be summed as distinct coverage.",
+    "Rollback target uses the same candidate source revision; it does not certify reverting a production deployment to an older application revision.",
+    "Printer verification covers software/browser flows; no physical printer hardware was exercised.",
+    "No production deployment, DNS change, Render change or real provider message/payment was performed by this certification."
+  ]
+}

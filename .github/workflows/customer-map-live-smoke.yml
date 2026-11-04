@@ -1,0 +1,45 @@
+name: Customer map live rendering smoke
+on:
+  push:
+    branches: [agent/customer-open-menu-map-20261021]
+permissions:
+  contents: read
+jobs:
+  map-render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright
+      - run: python -m playwright install --with-deps chromium
+      - name: Verify public Mapbox rendering without login or order
+        run: |
+          python -u - <<'PY'
+          import re
+          from playwright.sync_api import sync_playwright, expect
+          def redact(text):
+              return re.sub(r'(?i)(access_token=)[^&\s"\)]+',r'\1REDACTED',text)
+          with sync_playwright() as p:
+              browser=p.chromium.launch(args=['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
+              page=browser.new_page(viewport={'width':390,'height':844})
+              page.on('console',lambda msg:print(redact(msg.text)) if msg.type=='error' else None)
+              page.goto('https://order.kps.sa/',wait_until='networkidle')
+              expect(page.locator('#menu')).to_be_visible()
+              page.get_by_role('button',name='حدد موقعك على الخريطة',exact=True).click()
+              try:
+                  expect(page.locator('.map-actions button').first).to_be_enabled(timeout=25000)
+                  expect(page.locator('.mapboxgl-canvas')).to_be_visible()
+                  assert page.evaluate('window.mapboxgl.supported()')
+                  print('LIVE MAP RENDER PASS; menu public; no registration, location permission, order or payment submitted')
+              finally:
+                  print('Map status:',page.locator('.map-status').inner_text())
+                  page.screenshot(path='customer-map-live.png')
+                  browser.close()
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-map-live
+          path: customer-map-live.png

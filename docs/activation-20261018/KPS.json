@@ -1,0 +1,429 @@
+{
+  "status": "NOT_READY",
+  "completion_percentage": null,
+  "percentage_reason": "No completed, evidence-backed inventory of the full owner scope; no invented estimate.",
+  "candidate_sha": "dc77cb560d5061e7a6ca33ef71fcb062b5c67a22",
+  "branch": "agent/enbishan-isolated-development-20261017",
+  "production_changes": false,
+  "activation_authorized": false,
+  "evidence": {
+    "local_source_tests": {
+      "passed": 1011,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 9,
+      "deselected": 950,
+      "subtests_passed": 197,
+      "scope": "Available source regression only; eight DB/browser-unavailable modules excluded. All required runtime suites remain mandatory.",
+      "junit": "../engagement-source-20261018.xml",
+      "details": "../engagement-closure-20261018.md"
+    },
+    "integration_ci": {
+      "run": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39098204910",
+      "sha": "dc77cb560d5061e7a6ca33ef71fcb062b5c67a22",
+      "steps_executed": 0,
+      "runner": "",
+      "classification": "INFRASTRUCTURE_BLOCKED",
+      "reason": "The job was not started because your account is locked due to a billing issue."
+    },
+    "security_stream": {
+      "sha": "6b0739678fefb62c45baa792a7de6d9e107cb0a5",
+      "run": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39084485147",
+      "conclusion": "success",
+      "limitation": "Separate security-stream evidence; does NOT certify the combined candidate image."
+    },
+    "combined_security_ci": {
+      "run": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39098204783",
+      "sha": "dc77cb560d5061e7a6ca33ef71fcb062b5c67a22",
+      "jobs": 3,
+      "steps_executed": 0,
+      "runner": "",
+      "classification": "INFRASTRUCTURE_BLOCKED",
+      "note": "No scan, container build or rollback test executed. Prior security-stream success cannot certify this code."
+    }
+  },
+  "database": {
+    "production_migrations_executed": false,
+    "isolated_migration_checksums": [
+      {
+        "version": "001_core.sql",
+        "sha256": "d2167643459ea764c1c2b623affd4fa8a3ab2a402123a718796f8e49a5561156"
+      },
+      {
+        "version": "001_enbishan_isolated.sql",
+        "sha256": "9f207e23ac7efa76b1877b5f3338cb89e65ac68b7a1e788c91e469dccd81b690"
+      },
+      {
+        "version": "002_operations.sql",
+        "sha256": "9ac6ff2a2b8e2de70320939447f3205fe52753ccb71792b2165225ab1bec374b"
+      },
+      {
+        "version": "003_admin.sql",
+        "sha256": "a7e80508fd8744e2525aa6ad948b2a4a1e280ac8c6e855bbbef09025a285fe0e"
+      },
+      {
+        "version": "004_recovery.sql",
+        "sha256": "6e7d8ea87a927b73fe380546788ae10ec829642f9d76ce4c2ef4555f1f849199"
+      },
+      {
+        "version": "005_chat_context.sql",
+        "sha256": "7f562d0ec03b4836b7f47a968125a39411092e752849bf7b2b8c0fd57847463e"
+      },
+      {
+        "version": "006_identity.sql",
+        "sha256": "dd11863cb5773c6f1dad8c5f186b3bbf34d4e25fb7a41408ce41ca8bb74d6785"
+      },
+      {
+        "version": "007_operations_v5.sql",
+        "sha256": "c2ff474491b2c8e18715465ce497bfa1f2c30505ff7844503b608a9a38250fcb"
+      },
+      {
+        "version": "008_report_notifications.sql",
+        "sha256": "1e31a5d4b7e5ec5b2c5e2a6d85e359fbe7e14f4d493ecd63ea0609192f259a3a"
+      },
+      {
+        "version": "009_otp_channel.sql",
+        "sha256": "6c7aac6b4c7c4f8031f2ed0b83aab40c0ba2e518c523cb3bbc35827308168cb9"
+      },
+      {
+        "version": "010_staff_codes.sql",
+        "sha256": "c6c08423e460e8a0c693932c87a9f91587b67d0f9126c430fb7e8e07df0bb2e8"
+      },
+      {
+        "version": "011_catalog_approval_variants.sql",
+        "sha256": "154371d273d4a971e7e262bb95125568dcb9f331e437b6c5c5d026adcf22aabf"
+      },
+      {
+        "version": "012_branch_and_shift_labels.sql",
+        "sha256": "d04c0540ab499695e37722d9e54749ff5c15470b9a2689cb01640e2946909895"
+      },
+      {
+        "version": "013_launch_presentation_access.sql",
+        "sha256": "4117a289564a94c1f8e610398924e091beb68e348ee1defe0089d901c9e24985"
+      },
+      {
+        "version": "014_delivery_operating_hours.sql",
+        "sha256": "86dd88a231b7ae055fe25194c079cc688af63d4169fde37abb9848617ed8c8a4"
+      },
+      {
+        "version": "015_pause_promotional_strip.sql",
+        "sha256": "848754c506bf0aa1c3ccdba3ed10ab884cc53c6478a7ab99e209ad4a47efec45"
+      },
+      {
+        "version": "016_kps_branch_opening_hours.sql",
+        "sha256": "179c4f91a711f0bec4aa3ee276268165001171ad472651c276f2ae752e1d8de5"
+      },
+      {
+        "version": "017_workbook_branch_locations.sql",
+        "sha256": "48720220a099473f9d0b8ce1a2c350c5fab278c94d30e9f111b3a37b9b818ebf"
+      },
+      {
+        "version": "019_recovery_monitoring.sql",
+        "sha256": "19178e462d619809444760182126adb74805aa3061f4045b863928521b5b2408"
+      },
+      {
+        "version": "020_vehicle_maintenance.sql",
+        "sha256": "9f9f32c483d2cc73d06b9df490d1a4b6f5ae0d4389a8cce3422469f58ae75717"
+      },
+      {
+        "version": "021_split_payment.sql",
+        "sha256": "e7ad20fac4add8b2fbd8acd28f3ba8af36556ad7b44c22abf1783f2752310387"
+      },
+      {
+        "version": "022_delivery_workflow_numbering.sql",
+        "sha256": "5fe49dcdd8daafd9d7a4dd25a0016b182b6a5b54f62ebd1766bf734fe8553eba"
+      },
+      {
+        "version": "023_continuous_order_numbering.sql",
+        "sha256": "c3dfbfbad376c73b4e42751fbba3cb8ef2281de1bc6010e39ef81a8dfebe22f7"
+      },
+      {
+        "version": "024_branch_printing.sql",
+        "sha256": "0396250dbad7dff7df57cfd0150a09ae1f1a88c83a77831109e0af7fd65be3ba"
+      },
+      {
+        "version": "025_printer_acceptance.sql",
+        "sha256": "13cf23d7cafd73eeaf7393968c861d4b0cd48856043332814d4c7061a489a408"
+      },
+      {
+        "version": "026_shift_vehicle_log.sql",
+        "sha256": "ccbab4c8a8a5bd96029665d39ddb197aa806dc85f376da904e3a9223af73c04a"
+      },
+      {
+        "version": "027_driver_cash_handover.sql",
+        "sha256": "b5f6004bc75137730a9232ec24a5b7aa13760cc62f95dc458865313c2ca54e7c"
+      },
+      {
+        "version": "028_order_support.sql",
+        "sha256": "1e38cc967a3deca58732f15a3585f3675142abc396934a62055333192cad37ac"
+      },
+      {
+        "version": "029_accounting_workspace.sql",
+        "sha256": "bc0923547fb73acd0082706ab6ae426f5dcb0699602289d5f1008bff6d4c697f"
+      },
+      {
+        "version": "030_portable_recovery_alerts.sql",
+        "sha256": "d907cc0429247864d8fd685f417477b027f8904970ce09474f146a98cbb678df"
+      },
+      {
+        "version": "040_daily_vehicle_operating_log.sql",
+        "sha256": "8861912f4fe146ab058916b39d693ca73bdcd2c467c22f8a43bd497eefdfdf42"
+      },
+      {
+        "version": "041_runtime_worker_observations.sql",
+        "sha256": "e259d2c024dbdf30cbc87032242927bfd1cfbc918c7cb10bc59be6f2cdb01b20"
+      },
+      {
+        "version": "042_employee_permissions.sql",
+        "sha256": "f2d8433bb66088eb95ad0ca9a5b1d6f7b0b52ce15a2c299b9d31f1503f1fbb3c"
+      },
+      {
+        "version": "043_driver_incentive_decisions.sql",
+        "sha256": "c8c3a17d944168676075e53450355ed804497e84e80d633ec3bc607b6767b225"
+      },
+      {
+        "version": "044_sms_verification_provider.sql",
+        "sha256": "23063da21e82dcec91e0f2f26257d6b124e6e94a86c68db4d2e49fefbc103c6e"
+      },
+      {
+        "version": "046_customer_experience.sql",
+        "sha256": "05d8408df88b18d06d2cf28e7b083f231c819432317e84afede15085968bd1c1"
+      },
+      {
+        "version": "047_vehicle_profiles.sql",
+        "sha256": "b6bbb5a003be8a7fdb99a6a0da50e37432b61d1190db53d251640fd529cfbd9b"
+      },
+      {
+        "version": "048_fleet_google_readings.sql",
+        "sha256": "588dd8353faeb92b364a492551d4f1f36194510fe94eae82be8325f4050f9bf9"
+      },
+      {
+        "version": "049_driver_customer_chat.sql",
+        "sha256": "b1c812f8a89ba9ab85508814db7387f1e9834198ff86a77702db7e4a6cbf7920"
+      },
+      {
+        "version": "050_manager_financial_matching.sql",
+        "sha256": "a92c503923d31d409e864522522779e4b8e40e6129a6c2a200e85313d4bd83a6"
+      },
+      {
+        "version": "051_order_amendments.sql",
+        "sha256": "5d46d9c5290a349b3ee28be6d559148601e79ac07adea479d14fe1a13d5a8ca0"
+      },
+      {
+        "version": "052_recent_contact_order_index.sql",
+        "sha256": "65932281a0730d9083d3bee3ae54bba1e0cb923b2832eada1d91b2ad0b86f124"
+      },
+      {
+        "version": "053_channel_allocations.sql",
+        "sha256": "870273d3ddc7cce237f2d531e550d927bb856040848323dc5b56d37326835873"
+      },
+      {
+        "version": "054_driver_permanent_float.sql",
+        "sha256": "b51bd23c82a076ad0394c89f2d29faa547eff14f81148f5cc627b06df2b2d2c4"
+      },
+      {
+        "version": "055_smart_dispatch_foundation.sql",
+        "sha256": "a9acc4ad8562222183580df79837df12a419fae8b669cd52aceb11ee43c4d51b"
+      },
+      {
+        "version": "056_driver_breaks.sql",
+        "sha256": "77ec7d69750a663e8d0ca26da29385ce902dc748867ec51b4a83cba844201314"
+      },
+      {
+        "version": "057_driver_evidence.sql",
+        "sha256": "76fe90cdcce8691515e47ac7ff25d7db5a00dff165c815ee6ad846463d8494fb"
+      },
+      {
+        "version": "058_fuel_exceptions.sql",
+        "sha256": "3c36570459cf48d1d35382985867a8f6cc5ef89e6896fd4b5012f6091ccc3e42"
+      },
+      {
+        "version": "059_fuel_readiness.sql",
+        "sha256": "97951701287e8e3bd7bf88eb1a5ff681e74d452bfe6b57ada6a89549a3a7656f"
+      },
+      {
+        "version": "060_fiscal_previews.sql",
+        "sha256": "7d12d67d6b7a563760ffca15da5716b5f94ec236ec8e9cc5520113061fa44aaf"
+      },
+      {
+        "version": "061_fiscal_issuance.sql",
+        "sha256": "a0001323a7ce90fafeceb64d5626a772f6ec42890958172bc4dd6f941f15f5b2"
+      },
+      {
+        "version": "062_invoice_at_print.sql",
+        "sha256": "569279b3070fc1a707a278de28cd85e815b622bd3c75edc01e5e646e7e495d87"
+      },
+      {
+        "version": "063_branch_online_payment.sql",
+        "sha256": "72af3f999e402f81345f990639cdd6930798648f895c2f9c9a831e03f94111ae"
+      },
+      {
+        "version": "064_branch_checkout_sessions.sql",
+        "sha256": "e6247c9489b16395a08a445a611e3ccadcdfe874393e86ae931e67111ec0cfec"
+      },
+      {
+        "version": "065_branch_payment_webhooks.sql",
+        "sha256": "db7486d75f8ad1cc184f7aff0fd03812cb143f57606a679953573c8059df1ec0"
+      },
+      {
+        "version": "066_branch_online_refunds.sql",
+        "sha256": "9437e0edf947c9591fd28f5b28d7cceafb7599c1cc8b2fc76510f2950c5d51eb"
+      },
+      {
+        "version": "067_branch_payment_reconciliation.sql",
+        "sha256": "5c48a5a9729ac819c57047f65d0e599f80eff69b38b8170b945646c3a3821359"
+      },
+      {
+        "version": "068_branch_payment_renewal.sql",
+        "sha256": "4ee6b11bf8a3841fa4637556d3be26b669ddb58673aa8c60c819cb1ba8c85ffe"
+      },
+      {
+        "version": "069_branch_refund_reconciliation.sql",
+        "sha256": "4119d1a9ca6c3a6552a8341f4b2096b87d02d5d5e329a3391e22812b5029778f"
+      },
+      {
+        "version": "070_branch_payment_modes.sql",
+        "sha256": "dd2457a59b28725c9e576ce0c49f7e691399498a9bba75d9832bee2160301007"
+      },
+      {
+        "version": "071_late_branch_payment_receipts.sql",
+        "sha256": "d34b62f6a0049584c039a71dd21452451b706979908a4d483d04a11ad3ada68b"
+      },
+      {
+        "version": "072_driver_closure_authorization.sql",
+        "sha256": "44108754f44e9a800386aef271837b2cff44fc45189b8de4ab9b5d59f6819c77"
+      },
+      {
+        "version": "073_owner_sms_session.sql",
+        "sha256": "7dbd610b6fed2468a2196a2a68c616e6830b6cd244bd8a628976d7b963430ea8"
+      },
+      {
+        "version": "074_owner_phone_link.sql",
+        "sha256": "0800c2029b46e030b2d689d17473f7859c2f915c3f9be76d2ecc0364c57b2e48"
+      },
+      {
+        "version": "075_test_carryover_archive.sql",
+        "sha256": "e57c68cf1bdd7cbb78031e700525bfb8540b43b3ccde31551a7a02ca94e98746"
+      },
+      {
+        "version": "076_vehicle_handover.sql",
+        "sha256": "033d59c04ee403fd5a766667f56b86088600a412d34a6616990fb1cbca75604c"
+      },
+      {
+        "version": "077_driver_check_requests.sql",
+        "sha256": "147602ccf415dee133589ea47e99b0c2a518736a129f5c2fe456453bf54fcc80"
+      },
+      {
+        "version": "078_map_resolution_guards.sql",
+        "sha256": "e45b396dc85337d34d7b6c08bcfa7db57d968ac890767b877e7f2518b5217a91"
+      },
+      {
+        "version": "079_customer_engagement.sql",
+        "sha256": "a1922ff24784472d68ccacf346116d64c8cd29aed4f43873ca08f086ba41118f"
+      }
+    ],
+    "status": "PG18_EXECUTION_REQUIRED",
+    "data_mutation_authorized": false,
+    "parser_status": "PostgreSQL18.6 SQL/PLpgSQL syntax parsed; actual PG18 migration and transaction execution required."
+  },
+  "rollback": {
+    "status": "NOT_CERTIFIED_FOR_COMBINED_CANDIDATE",
+    "procedure": [
+      "Retain the existing running image and operational database without changes.",
+      "Build and certify a distinct rollback image with current schema compatibility and mandatory SMS/security intact.",
+      "Prove candidate and rollback against isolated PG18 and restored synthetic archives.",
+      "After later owner-approved activation only, switch to the exact certified rollback image if necessary; never reset/drop the operational database or reverse financial history."
+    ]
+  },
+  "environment_checklist": {
+    "APP_ENV": "Existing isolated path remains testing-only; approved runtime path supports production/staging/testing only after exact-SHA gates and explicit DB/host binding.",
+    "DATABASE_URL": "PG18.6; isolated tests require test_* DB. Approved runtime requires exact KPS_MULTIBRAND_DATABASE_HOST and KPS_MULTIBRAND_DATABASE_NAME binding. Never use operational data in tests.",
+    "ENBISHAN_ISOLATED_ENABLED": "Development only; OFF in production.",
+    "PUBLIC_BASE_URL": "Owner-approved binding and allowed-host validation; no DNS edits performed.",
+    "KPS_BRANCH_PAYMENT_LIVE_ENABLED": "DEFAULT OFF",
+    "KPS_BRANCH_PAYMENT_LIVE_ACCEPTANCE_SHA": "Unset until independently accepted exact release.",
+    "KPS_BRANCH_PAYMENT_LIVE_OWNER_APPROVAL_SHA": "Unset until explicit owner activation approval.",
+    "provider_secrets": "Use existing secure configuration channels; no values copied into reports or repository.",
+    "KPS_MULTIBRAND": "DEFAULT OFF; ENABLED, ACCEPTANCE_SHA, OWNER_APPROVAL_SHA required for exact candidate, independently of feature flags.",
+    "KPS_STOREFRONT_HOST_BRANDS": "Explicit JSON mapping of actual approved storefront hosts to kps/enbishan; both brands required, APP_ALLOWED_HOSTS must explicitly allow them.",
+    "customer_benefits_prefix": "KPS_CUSTOMER_BENEFITS_KPS",
+    "gift_orders_prefix": "KPS_GIFT_ORDERS_KPS",
+    "feature_activation": "Each brand feature defaults OFF; ENABLED=true plus ACCEPTANCE_SHA and OWNER_APPROVAL_SHA equal exact accepted RUNTIME_REVISION/RENDER_GIT_COMMIT. No owner approval supplied or configuration changed.",
+    "marketing_notice": "Owner-versioned Arabic/English notice required before opt-in; registration never grants marketing consent."
+  },
+  "domain_dns_checklist": {
+    "status": "NO_CHANGE",
+    "items": [
+      "Verify approved storefront hostname, certificate and brand binding only during authorized activation.",
+      "Reject spoofed host, forwarded-host and foreign brand selectors."
+    ]
+  },
+  "sms_whatsapp_checklist": {
+    "status": "NO_PRODUCTION_BEHAVIOR_CHANGE",
+    "items": [
+      "Preserve four-digit work SMS and separate customer/work sessions.",
+      "Keep sensitive owner challenges distinct and home-identity scoped.",
+      "Verify existing authorized provider configuration per brand without unsolicited sends.",
+      "Real-message smoke test needs separate approved activation or test scope."
+    ]
+  },
+  "payment_checklist": {
+    "live_default": "OFF",
+    "external_provider_dependencies": [
+      "consumed/declined intent safe renewal contract",
+      "uncertain refund safe resubmission contract"
+    ],
+    "items": [
+      "Exact-SHA checkout/callback/late-success/refund/idempotency/isolation tests required.",
+      "Seller-owned test/live credentials and merchant ownership evidence are external inputs.",
+      "Never blindly retry a possibly completed charge or refund."
+    ]
+  },
+  "printer_checklist": {
+    "status": "EXACT_CANDIDATE_AND_PHYSICAL_ACCEPTANCE_PENDING",
+    "items": [
+      "Manager scope, branch pairing, print/reprint and duplicate guard.",
+      "Approved branch printer pairing and physical paper witness; no operational printer change performed."
+    ]
+  },
+  "fiscal_checklist": {
+    "status": "EXACT_CANDIDATE_ACCEPTANCE_PENDING",
+    "items": [
+      "Approved seller, VAT state, addresses and immutable historical snapshots.",
+      "Separate brand numbering, credit notes, reports and exports.",
+      "Do not invent VAT, legal identity or EGS status."
+    ]
+  },
+  "security_status": "COMBINED_IMAGE_NOT_CERTIFIED",
+  "monitoring_status": "COMBINED_CANDIDATE_HEALTH_READY_AND_RESTART_PENDING",
+  "backup_restore_status": "DUAL_BRAND_RESTORE_FIX_IMPLEMENTED_PG18_TEST_NOT_EXECUTED",
+  "performance": {
+    "status": "FINAL_CANDIDATE_NOT_CERTIFIED",
+    "minimum_passing_resource_profile": null,
+    "note": "Historical app 2CPU/4GiB + DB1CPU/2GiB evidence is proposal-only for a different SHA; no Render resources changed."
+  },
+  "remaining_programming": [
+    "Run full PG18/shared KPS+Enbishan/mobile+desktop AR/EN acceptance, restore/restart/concurrency/revocation, current image/security gates and appropriate final-candidate performance gates; fix any defects found before readiness.",
+    "Complete and sign off the full owner-scope acceptance inventory. No promise of zero further code changes until execution passes."
+  ],
+  "can_activate_without_new_development": false,
+  "brand_id": "kps",
+  "brand_name": "KPS COFFEE",
+  "data_readiness": {
+    "status": "NOT_CERTIFIED_ON_COMBINED_CANDIDATE",
+    "source": "Existing approved KPS catalog and historical operational configuration; no real rows changed."
+  },
+  "external_input_required": [
+    "Resolve the GitHub Actions account billing lock; no billing change was attempted.",
+    "Provider contract confirmations for the two fail-closed Moyasar cases.",
+    "Authorized merchant credentials/provider acceptance and physical-printer witness where applicable.",
+    "Explicit owner-approved benefit terms, rates, segments, limits and accounting contract. Current implemented contract is non-expiring promotional discount credit with proportional confirmed-refund reversal; no prior policy was invented.",
+    "Explicit owner feature activation approval after acceptance, exact host/DB binding and normal authorized deployment credentials."
+  ],
+  "implemented_pending_acceptance": [
+    "CRM follow-ups, wallet/benefit/consent histories, pagination and management/customer UI integration.",
+    "Versioned scoped offers, transactional redemption and reward ledger, refunds/cancellation reconciliation and use-limit locking.",
+    "Verified purchaser/recipient gift flow and frozen invoice purchaser identity.",
+    "Independent default-OFF exact-SHA brand feature gates and explicit bound multibrand runtime."
+  ]
+}

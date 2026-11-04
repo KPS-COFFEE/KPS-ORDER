@@ -1,0 +1,1 @@
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS external_enbishan JSONB NOT NULL DEFAULT '{}';

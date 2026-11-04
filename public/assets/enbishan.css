@@ -1,0 +1,109 @@
+/* Enbishan identity. Served only for this brand; shared KPS layout and controls. */
+
+:root{--accent:#267481;--accent-dark:#1c626e;--accent-soft:#e4f2f1;--accent-ink:#fff;--bg:#f4f9f8;--surface-alt:#edf5f3;--ink:#183e43;--muted:#526b6d;--line:#d5e6e3;--shadow:0 8px 28px rgb(25 77 83 / 6%)}
+body{background:var(--bg)}
+#preview-banner{background:#fff7d8;color:#3e4b3e;border-color:#efdf9e}
+#preview-banner button{border-color:#d3c88f}
+.site-header{background:#32818c;border-bottom:0;color:#fff}.brand-logo{width:96px;height:96px;object-fit:contain;border-radius:0}.brand-text small{color:#fff}.site-header .language-switch{color:#fff}.site-header .language-switch:hover{background:#286e78;color:#fff}.cart-header{background:#ffd016;color:#193d43;border-color:#ffd016}.cart-header .count{background:#fff4b7;color:#183e43}
+.intro-banner{background:#32818c;border:0;color:#fff;min-height:200px;position:relative;padding:32px}.intro-banner:after{content:"";display:block;width:170px;height:170px;flex:0 0 170px;background:url('/assets/enbishan-original.jpeg') center/contain no-repeat}.intro-banner p{color:#fff}.intro-banner .eyebrow{color:#ffd016}.intro-banner h1{font-weight:700}.intro-banner .hero-quote{border-color:#ffd016}
+.product-card{border-color:#d8e8e5;box-shadow:0 4px 18px #245e6508}.product-image-button{background:#fff}.product-image-button img{object-fit:contain!important;background:white}.product-add-button{background:#ffd016;color:#173d43;border-color:#ecd05a}.product-add-button:hover{background:#f6c700}.product-card-bottom .money{color:#1c626e}.category-tab[aria-selected=true],.category-tab.active{background:#267481;color:#fff;border-color:#267481}.choice:has(input:checked){background:#e7f3f1;border-color:#68a7ae}.notice:not(.error):not(.success){background:#eef6f3;border-color:#c9e1dc;color:#294e52}.customer-nav-button[aria-current=page]{background:#e3f1ed;color:#205e68}:focus-visible{outline-color:#267481}.button.primary:hover:not(:disabled){background:#1c626e}.site-footer{border-color:#d5e6e3;color:#42686c}.product-detail-image{background:#fff}.mobile-basket{background:#267481!important;color:#fff!important}
+@media(max-width:550px){.header-inner{padding:8px 16px}.brand-logo{width:76px;height:76px}.brand-text{font-size:18px}.brand-text small{font-size:10px}.intro-banner{padding:20px;min-height:170px;gap:8px}.intro-banner:after{width:108px;height:108px;flex-basis:108px}.intro-banner h1{font-size:21px}.intro-banner p{font-size:12px}.intro-banner .eyebrow{font-size:11px}}
+
+/* Approved customer journey: same brand assets and copy, progressive controls. */
+.enbishan-journey .page-shell{max-width:1240px;padding-top:24px}
+.enbishan-journey .enbishan-welcome{display:grid;grid-template-columns:minmax(0,1fr) 350px;align-items:center;gap:28px;background:#e6f2ef;border:1px solid #d4e8e2;border-radius:20px;padding:26px 30px;margin-bottom:28px}
+.enbishan-journey .enbishan-welcome .banner-area{margin:0;min-width:0}
+.enbishan-journey .intro-banner{background:transparent;color:var(--ink);padding:0;border:0;min-height:0;box-shadow:none}
+.enbishan-journey .intro-banner:after{display:none}
+.enbishan-journey .intro-banner h1{font-size:30px;line-height:1.5;margin:8px 0}
+.enbishan-journey .intro-banner p{color:var(--muted);font-size:13px}
+.enbishan-journey .intro-banner .eyebrow{color:var(--accent)}
+.enbishan-service-card{border:1px solid var(--line);background:white;border-radius:16px;padding:8px;min-width:0}
+.enbishan-service-card .service-options{display:flex;gap:4px;background:#edf5f3;padding:4px;border-radius:12px;min-width:0}
+.enbishan-service-card .choice{flex:1;min-width:0;justify-content:center;border:0;min-height:44px;border-radius:9px;padding:9px 8px;background:transparent;text-align:center}
+.enbishan-service-card .choice:has(input:checked){background:var(--accent);color:white}
+.enbishan-service-card .choice input{position:absolute;opacity:0;width:1px;height:1px}
+.enbishan-service-card .choice small{display:none}
+.enbishan-service-card .choice b{font-size:13px}
+.enbishan-service-card #enbishan-location-button{text-align:start;margin-top:6px;line-height:1.7;padding:12px;border-radius:10px;white-space:normal;font-size:13px}
+.enbishan-service-card #enbishan-location-button:after{content:'‹';float:inline-end;font-size:20px}
+.enbishan-journey .store-layout{display:block}
+.enbishan-journey .product-grid{grid-template-columns:repeat(5,minmax(0,1fr));gap:16px}
+.enbishan-journey .product-card{border-radius:16px;overflow:hidden}
+.enbishan-journey .product-content{padding:12px;min-width:0}
+.enbishan-journey .product-content h3{font-size:14px;min-height:44px;line-height:1.6}
+.enbishan-journey .product-image-button{aspect-ratio:1.15}
+.enbishan-journey .product-image-button img{height:100%;object-fit:contain}
+.enbishan-journey .product-card-bottom .money{font-size:14px;white-space:nowrap}
+.enbishan-journey .product-card-controls{gap:4px}
+.enbishan-journey .product-card-controls button{width:34px;min-width:34px;min-height:40px}
+.enbishan-journey .product-card-quantity:empty{display:none}
+.enbishan-journey .product-content>.pill,.enbishan-journey .image-zoom-button{font-size:10px}
+.enbishan-journey .category-tabs{position:sticky;top:0;background:var(--bg);z-index:3;padding-block:10px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.enbishan-journey .category-tab{white-space:nowrap;border-radius:24px;padding:10px 18px;font-size:12px}
+.enbishan-journey-dialog{width:min(560px,calc(100% - 24px));max-height:calc(100dvh - 30px);border-radius:20px}
+.enbishan-journey-dialog .dialog-header h2{font-size:22px}
+.enbishan-journey-dialog .service-panel,.enbishan-journey-dialog #basket{border:0;box-shadow:none;background:transparent;padding:0;position:static;max-height:none;overflow:visible;width:auto}
+.enbishan-journey-dialog .service-form{display:block}
+.enbishan-journey-dialog .branch-picker{display:grid;grid-template-columns:1fr 1fr}
+.enbishan-journey-dialog .branch-picker>p{grid-column:1/-1}
+.enbishan-journey-dialog .service-panel>.section-heading{display:none}
+.enbishan-journey-dialog .branch-location-tools .row{flex-wrap:wrap}
+.enbishan-journey-dialog #enbishan-location-done{margin-top:18px}
+#enbishan-basket-dialog #basket>.section-heading{display:none}
+#enbishan-basket-dialog:not(.enbishan-checkout) .enbishan-checkout-only,#enbishan-basket-dialog:not(.enbishan-checkout) #checkout-button,#enbishan-basket-dialog:not(.enbishan-checkout) #basket-error{display:none!important}
+#enbishan-basket-dialog.enbishan-checkout #cart-lines{display:none}
+#enbishan-basket-dialog #enbishan-checkout-location{margin-bottom:14px;text-align:start;white-space:normal}
+#enbishan-basket-dialog .cart-line{padding:16px 0;border-bottom:1px solid var(--line)}
+#enbishan-basket-dialog .quote-summary{padding:14px;background:#edf5f3;border-radius:12px;margin:20px 0}
+#enbishan-basket-dialog .basket-footnote{font-size:11px;text-align:center}
+.enbishan-journey .mobile-basket{display:flex;position:fixed;inset-inline-start:50%;inset-inline-end:auto;transform:translateX(-50%);width:min(500px,calc(100% - 28px));bottom:20px;border-radius:15px;padding:16px 20px;z-index:22;box-shadow:0 8px 30px #183e4330;justify-content:space-between}
+html[dir=rtl] .enbishan-journey .mobile-basket{transform:translateX(50%)}
+.enbishan-journey .site-footer{margin-bottom:100px}
+.enbishan-journey .customer-option-choices{gap:7px}
+.enbishan-journey .customer-option-choices .button{border-radius:10px;min-height:44px;font-size:12px}
+.enbishan-journey .product-dialog .quantity-row{margin-block:18px}
+@media(max-width:1050px){.enbishan-journey .product-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.enbishan-journey .enbishan-welcome{grid-template-columns:minmax(0,1fr) 310px;padding:22px}}
+@media(max-width:800px){.enbishan-journey .product-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.enbishan-journey .enbishan-welcome{grid-template-columns:1fr;gap:16px;padding:20px}.enbishan-journey .mobile-basket{bottom:calc(84px + env(safe-area-inset-bottom))}.enbishan-journey .site-footer{margin-bottom:170px}}
+@media(max-width:550px){.enbishan-journey .page-shell{padding:16px}.enbishan-journey .enbishan-welcome{gap:12px;padding:15px;border-radius:16px;margin-bottom:22px}.enbishan-journey .intro-banner h1{font-size:23px;margin:4px 0}.enbishan-journey .intro-banner p{font-size:12px}.enbishan-journey .product-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.enbishan-journey .product-content{padding:10px}.enbishan-journey .product-content h3{font-size:13px}.enbishan-journey .product-card-bottom{flex-wrap:wrap;gap:8px}.enbishan-journey .product-card-bottom .money{font-size:13px}.enbishan-journey .category-tab{padding:8px 15px;font-size:11px}.enbishan-journey .menu-heading{gap:14px}.enbishan-journey-dialog .dialog-scroll{padding:18px}.enbishan-journey .header-inner{padding-block:8px}.enbishan-journey .brand-logo{width:54px;height:54px}}
+/* The approved layout keeps a basket entry available even before the first item. */
+.enbishan-journey .cart-header{display:inline-flex;flex:0 0 auto}
+@media(max-width:550px){.enbishan-journey .header-actions .button{padding-inline:9px;font-size:12px}.enbishan-journey .header-actions{gap:4px}}
+
+/* Readable size contents and larger mobile menu photography. */
+.enbishan-journey .enbishan-size-summary{font-size:13px;line-height:1.8;color:#315c62;margin:0 0 12px;white-space:normal}
+.enbishan-journey #product-description{font-size:16px;line-height:1.9;color:#204b52;white-space:normal}
+.enbishan-journey .customer-option-choices .button{font-size:15px;min-height:50px;white-space:normal;line-height:1.7;padding:12px}
+@media(max-width:550px){.enbishan-journey .product-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.enbishan-journey .product-image-button{aspect-ratio:1.1}.enbishan-journey .product-content{padding:10px}.enbishan-journey .product-content h3{font-size:14px;min-height:0}.enbishan-journey .product-card-bottom .money{font-size:14px}.enbishan-journey .enbishan-size-summary{font-size:12px}.enbishan-journey .customer-option-choices{display:grid;grid-template-columns:1fr 1fr}}
+
+.enbishan-journey .enbishan-size-price{display:block;font-weight:700;font-size:14px}.enbishan-journey .enbishan-size-price del{font-size:12px;font-weight:400;opacity:.7}
+
+.enbishan-journey .customer-option-choices .button:has(.enbishan-size-price){display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+.enbishan-journey .enbishan-size-price{width:100%;white-space:nowrap}
+
+@media(max-width:550px){.enbishan-journey .customer-option-choices:has(.enbishan-size-price){grid-template-columns:minmax(0,1fr)}}
+
+.grape-flavour-field{margin:0;padding:0;border:0;min-width:0}.grape-flavour-field legend{font-weight:700;margin-bottom:8px}.grape-flavour-field .small{margin:0 0 10px}.grape-flavour-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+/* Match the visible can height to the existing 7Up photograph, retaining each product image. */
+.product-image-button img[src$="/citrus-can.jpg"]{transform:scale(1.02);object-position:center 43%}
+
+/* Compact flavour checkboxes: the whole label remains an easy tap target. */
+.grape-flavour-choices .button{display:flex;align-items:center;justify-content:flex-start!important;gap:9px;min-height:44px!important;padding:4px 0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;color:var(--ink);text-align:start;font-weight:500;position:relative}
+.grape-flavour-choices .button::before{content:"";display:block;width:20px;height:20px;box-sizing:border-box;flex:0 0 20px;border:1px solid #9aafad;border-radius:3px;background:white}
+.grape-flavour-choices .button[aria-pressed=true]::after{content:"";position:absolute;inset-inline-start:7px;top:calc(50% - 7px);width:5px;height:10px;border:solid #dba900;border-width:0 3px 3px 0;transform:rotate(45deg)}
+.grape-flavour-choices .button:disabled{opacity:.4}
+.grape-flavour-choices .button:focus-visible{outline:2px solid #267481;outline-offset:3px}
+.enbishan-cart-image{float:inline-start;width:68px;height:68px;object-fit:contain;background:white;border:1px solid #d8e8e5;border-radius:8px;margin-inline-end:12px;margin-bottom:8px}
+.cart-line:has(.enbishan-cart-image)::after{content:"";display:block;clear:both}
+
+.grape-flavour-choices .button[aria-pressed=true]{outline:0;font-weight:500}.grape-flavour-choices .button:focus-visible{outline:2px solid #267481}
+
+/* Consistent catalog cards with readable selected category state. */
+.enbishan-journey .category-tab[aria-current=true]{background:#267481;color:#fff;border-color:#267481}
+.enbishan-journey .product-content{display:flex;flex-direction:column;flex:1}
+.enbishan-journey .product-content h3{min-height:3em;line-height:1.5}
+.enbishan-journey .product-card-bottom{margin-top:auto}
+.enbishan-journey .enbishan-size-summary{min-height:2.8em;line-height:1.4;margin-bottom:10px}
+@media(max-width:550px){.enbishan-journey .product-content h3{min-height:0}}
+.enbishan-journey .product-detail-image{display:block;width:100%;height:280px;max-width:100%;object-fit:contain;margin:0 auto 12px;border-radius:12px}
+@media(max-width:550px){.enbishan-journey .product-detail-image{height:260px}}

@@ -1,0 +1,23 @@
+{
+  "decision_id": "owner-final-20261022",
+  "source_sha256": "ca574c39384e250535397f4bac40dfabc234487ffee8fa1d623344e085402a1e",
+  "source_rows_digest": "5eff5cc9b27f3776e642657c3bec195d68dad40615abf67a86e4ce34bccbd9c7",
+  "catalog_digest": "51e6d7044538f420f21b5aecb735e87734dddb5f5776c965f4e1967742ac580c",
+  "retained_cards": 31,
+  "review_visible_cards": 28,
+  "draft_only": true,
+  "live_import_performed": false,
+  "hidden_source_ids": [
+    "enb-078a4053bf0eef33bfe3557f",
+    "enb-b668a68a8f8104f89fdc8567",
+    "enb-d1dbec7c9b6807c2ac279729"
+  ],
+  "photo_files": [
+    "crispy-small.jpeg",
+    "mojito-fattah.jpeg",
+    "mojito-grape.jpeg",
+    "mojito-mahashi.jpeg",
+    "ramadan-box.jpeg"
+  ],
+  "unchanged_original_reference_sha256": "99dfe8f7d84b1e75254e19d83fe7a4fd052f80993a3ecafad8c52d7655328720"
+}

@@ -1,0 +1,309 @@
+{
+  "schema_version": 2,
+  "brand_name": "KPS COFFEE",
+  "reference": "09c388859b694229b1b5cc337b802846",
+  "kind": "manager",
+  "timezone": "Asia/Riyadh",
+  "operational_date": "2026-10-14",
+  "display_users": {
+    "staff_50ce097b452144bd8cb69eeca9ff3e4c": "سائق اختبار V5 فقط",
+    "browser_test_64c6a4a62ab64d2a8ed71db6ed7481cd": "اختبار متصفح فقط"
+  },
+  "display_branches": {
+    "kps-branch-1": {
+      "city": "حفر الباطن",
+      "name": "حفر الباطن - المروج",
+      "branch_no": 1
+    },
+    "kps-branch-9": {
+      "city": "حفر الباطن",
+      "name": "حفرالباطن - المروج - درايف ثرو",
+      "branch_no": 9
+    }
+  },
+  "closure_label": "M-000001",
+  "prepared_by": "browser_test_64c6a4a62ab64d2a8ed71db6ed7481cd",
+  "approved_by": "browser_test_64c6a4a62ab64d2a8ed71db6ed7481cd",
+  "linked_corrections": [],
+  "retained_carryovers": [],
+  "manager_handovers": [],
+  "conversation_exceptions": [],
+  "support_tickets": [],
+  "test_data": true,
+  "shift": {
+    "id": "09c388859b694229b1b5cc337b802846",
+    "kind": "manager",
+    "status": "closed",
+    "user_id": "browser_test_64c6a4a62ab64d2a8ed71db6ed7481cd",
+    "brand_id": "kps",
+    "branch_ids": [
+      "kps-branch-1",
+      "kps-branch-9"
+    ],
+    "shift_no": 1,
+    "opening_halalas": 0,
+    "opened_at": "2026-10-14T22:39:09.949268+00:00",
+    "closed_at": "2026-10-14T22:39:19.985770+00:00",
+    "submission": {
+      "counted_halalas": 950,
+      "expected_halalas": 950,
+      "handover_halalas": 950,
+      "retained_halalas": 0,
+      "difference_halalas": 0,
+      "operational_approved": true,
+      "terminal_total_halalas": null
+    },
+    "exception_reason": null
+  },
+  "summary": {
+    "submission": {
+      "counted_halalas": 950,
+      "expected_halalas": 950,
+      "handover_halalas": 950,
+      "retained_halalas": 0,
+      "difference_halalas": 0,
+      "operational_approved": true,
+      "terminal_total_halalas": null
+    },
+    "unique_orders": 1,
+    "completed_orders": 1,
+    "card_refunded_halalas": 0,
+    "cash_refunded_halalas": 0,
+    "delivery_fees_halalas": 0,
+    "card_collected_halalas": 0,
+    "cash_collected_halalas": 950,
+    "gross_completed_halalas": 950,
+    "net_collections_halalas": 950
+  },
+  "orders": [
+    {
+      "id": "order_058bcae120b74e6f8b611644a7325ddb",
+      "order_no": 1,
+      "branch_id": "kps-branch-1",
+      "service": "delivery",
+      "preparation_status": "handed_over",
+      "delivery_status": "delivered",
+      "payment_status": "paid",
+      "total_halalas": 950,
+      "subtotal_halalas": 950,
+      "delivery_fee_halalas": 0,
+      "created_at": "2026-10-14T22:39:14.538567+00:00",
+      "completed_at": "2026-10-14T22:39:17.007403+00:00",
+      "fulfilled_in_report": true,
+      "snapshot": {
+        "tax": {
+          "status": "not_configured",
+          "amount_halalas": null
+        },
+        "items": [
+          {
+            "name": "كولد برو",
+            "units": [
+              {
+                "options": {},
+                "price_halalas": 950,
+                "option_snapshot": {}
+              }
+            ],
+            "category": "✨ جديدنا",
+            "quantity": 1,
+            "source_id": "kps-01",
+            "product_id": "kps-01",
+            "line_total_halalas": 950,
+            "unit_price_halalas": 950
+          }
+        ],
+        "service": "delivery",
+        "brand_id": "kps",
+        "currency": "SAR",
+        "branch_id": "kps-branch-1",
+        "branch_no": 1,
+        "priced_at": "2026-10-15T01:39:14.541178+03:00",
+        "branch_city": "حفر الباطن",
+        "branch_name": "حفر الباطن - المروج",
+        "total_halalas": 950,
+        "payment_method": "cash",
+        "branch_location": {
+          "lat": 28.4001,
+          "lng": 45.9001
+        },
+        "order_reference": "HFR1-261014-0001",
+        "receipt_profile": {
+          "address": "أبو بكر الصديق, المروج, حفر الباطن 39913, المملكة العربية السعودية",
+          "entity_id": "reem",
+          "legal_name": "مؤسسة ريم فهاد لافي الحربي لتقديم الوجبات",
+          "vat_number": "311887526600003",
+          "vat_enabled": true,
+          "issuance_status": "not_enabled",
+          "prices_include_vat": true
+        },
+        "discount_halalas": 0,
+        "subtotal_halalas": 950,
+        "delivery_workflow": "branch_fulfillment",
+        "delivery_fee_halalas": 0,
+        "delivery_operating_day": {
+          "date": "2026-10-14",
+          "start": "16:00",
+          "timezone": "Asia/Riyadh"
+        }
+      },
+      "timings": {
+        "total": {
+          "state": "completed",
+          "seconds": 2.468836
+        },
+        "delivery": {
+          "state": "completed",
+          "seconds": 0.380649
+        },
+        "driver_wait": {
+          "state": "completed",
+          "seconds": 0.774021
+        },
+        "preparation": {
+          "state": "completed",
+          "seconds": 0.332428
+        },
+        "acceptance_wait": {
+          "state": "completed",
+          "seconds": 0.981738
+        }
+      },
+      "performance": {
+        "basis": "driver_pickup_to_customer_delivery",
+        "color": "neutral",
+        "label": "المعيار غير محدد",
+        "state": "completed",
+        "seconds": 0.380649,
+        "policy_id": null,
+        "province_id": null,
+        "classification": "unconfigured",
+        "policy_version": null
+      },
+      "performance_snapshot": {
+        "policies": {},
+        "captured_at": "2026-10-14T22:39:14.543810+00:00",
+        "province_id": null,
+        "province_name": null
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "e331b2f4bc054371a97e30d3e6c69baa",
+      "order_id": "order_058bcae120b74e6f8b611644a7325ddb",
+      "shift_id": "a65a0bb471ba4990a0ef29c97241c389",
+      "driver_id": "staff_50ce097b452144bd8cb69eeca9ff3e4c",
+      "status": "delivered",
+      "picked_up_at": "2026-10-14T22:39:16.626754+00:00",
+      "delivered_at": "2026-10-14T22:39:17.007403+00:00",
+      "reason": ""
+    }
+  ],
+  "collections": [
+    {
+      "id": "442e9cf01c5d4ee69b63eddda80f546a",
+      "order_id": "order_058bcae120b74e6f8b611644a7325ddb",
+      "shift_id": "a65a0bb471ba4990a0ef29c97241c389",
+      "collector_id": "staff_50ce097b452144bd8cb69eeca9ff3e4c",
+      "method": "cash",
+      "amount_halalas": 950,
+      "change_halalas": 0,
+      "reference": "",
+      "created_at": "2026-10-14T22:39:16.803295+00:00"
+    }
+  ],
+  "refunds": [],
+  "custody_events": [
+    {
+      "id": "b071bd9c18624bd187bd71f272fa332e",
+      "kind": "collection",
+      "reason": "تحصيل نقدي صافي بعد الباقي",
+      "actor_id": "staff_50ce097b452144bd8cb69eeca9ff3e4c",
+      "shift_id": "a65a0bb471ba4990a0ef29c97241c389",
+      "created_at": "2026-10-14T22:39:16.803295+00:00",
+      "reference_id": "442e9cf01c5d4ee69b63eddda80f546a",
+      "amount_halalas": 950
+    },
+    {
+      "id": "647257e8de1f47c190a16d16661cd0fe",
+      "kind": "transfer_out",
+      "reason": "D-000002",
+      "actor_id": "browser_test_64c6a4a62ab64d2a8ed71db6ed7481cd",
+      "shift_id": "a65a0bb471ba4990a0ef29c97241c389",
+      "created_at": "2026-10-14T22:39:18.457272+00:00",
+      "reference_id": "c95bf310d787474f92699c4046f7d008",
+      "amount_halalas": -950
+    },
+    {
+      "id": "ed72321ccba94fc4961bae221f23c0ad",
+      "kind": "transfer_in",
+      "reason": "D-000002",
+      "actor_id": "browser_test_64c6a4a62ab64d2a8ed71db6ed7481cd",
+      "shift_id": "09c388859b694229b1b5cc337b802846",
+      "created_at": "2026-10-14T22:39:18.457272+00:00",
+      "reference_id": "c95bf310d787474f92699c4046f7d008",
+      "amount_halalas": 950
+    }
+  ],
+  "transfers": [
+    {
+      "id": "c95bf310d787474f92699c4046f7d008",
+      "status": "confirmed",
+      "closure": true,
+      "reference": "D-000002",
+      "created_at": "2026-10-14T22:39:18.204767+00:00",
+      "created_by": "staff_50ce097b452144bd8cb69eeca9ff3e4c",
+      "to_shift_id": "09c388859b694229b1b5cc337b802846",
+      "confirmed_at": "2026-10-14T22:39:18.457272+00:00",
+      "confirmed_by": "browser_test_64c6a4a62ab64d2a8ed71db6ed7481cd",
+      "from_shift_id": "a65a0bb471ba4990a0ef29c97241c389",
+      "amount_halalas": 950,
+      "recipient_user_id": "browser_test_64c6a4a62ab64d2a8ed71db6ed7481cd",
+      "receiving_branch_id": null
+    }
+  ],
+  "driver_reports": [
+    {
+      "id": "dd9bcee45c934c01a9162cc014a4030c",
+      "closure": {
+        "counted_halalas": 950,
+        "expected_halalas": 950,
+        "handover_halalas": 950,
+        "payment_terminal": {},
+        "retained_halalas": 0,
+        "difference_halalas": 0,
+        "expected_card_halalas": 0,
+        "terminal_total_halalas": 0,
+        "card_difference_halalas": 0
+      },
+      "summary": {
+        "submission": {
+          "counted_halalas": 950,
+          "expected_halalas": 950,
+          "handover_halalas": 950,
+          "payment_terminal": {},
+          "retained_halalas": 0,
+          "difference_halalas": 0,
+          "expected_card_halalas": 0,
+          "terminal_total_halalas": 0,
+          "card_difference_halalas": 0
+        },
+        "unique_orders": 1,
+        "completed_orders": 1,
+        "card_refunded_halalas": 0,
+        "cash_refunded_halalas": 0,
+        "delivery_fees_halalas": 0,
+        "card_collected_halalas": 0,
+        "cash_collected_halalas": 950,
+        "gross_completed_halalas": 950,
+        "net_collections_halalas": 950
+      },
+      "user_id": "staff_50ce097b452144bd8cb69eeca9ff3e4c",
+      "version": 1,
+      "shift_id": "a65a0bb471ba4990a0ef29c97241c389",
+      "shift_no": 2,
+      "closure_label": "D-000002"
+    }
+  ]
+}

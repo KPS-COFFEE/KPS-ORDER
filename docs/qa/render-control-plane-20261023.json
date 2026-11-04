@@ -1,0 +1,29 @@
+{
+  "observed_at_utc": "2026-10-23T11:18:52.040591+00:00",
+  "source": "authenticated Render Dashboard visible UI",
+  "workspace": "My Workspace",
+  "workspace_id": "tea-d9ttnf142hec7393049g",
+  "service_id": "srv-db4s1v942hec73epmar0",
+  "production_revision": "4e4d781b4fa82b7459410694ff5c4ac06842e6e7",
+  "custom_domains_observed": [
+    "order.kps.sa"
+  ],
+  "enbishan_domain_associated": false,
+  "database_id": "dpg-db4rjgo473hc738soueg-a",
+  "export_requested_by_this_execution": true,
+  "export_file_path_without_access_token": "/db/dpg-db4rjgo473hc738soueg-a/2026-10-23T11:08Z.dir.tar.gz",
+  "export_display_date": "October 23, 2026 at 4:08 AM",
+  "export_ready_in_provider_ui": true,
+  "total_exports_observed": 3,
+  "backup_content_integrity_verified": false,
+  "isolated_restore_verified": false,
+  "production_registry_verified": false,
+  "fawzi_grants_verified": false,
+  "download_limitation": "Both documented browser download paths were absent after bounded synchronization checks; no archive contents were inspected. Browser policy rejected chrome://downloads/; no bypass attempted.",
+  "shell_limitation": "Current exact production Dockerfile uses a distroless nonroot image with no shell; Render documentation says dashboard Shell/SSH are unsupported for distroless images. No shell diagnostic produced acknowledged output.",
+  "production_business_rows_changed": false,
+  "deployment_triggered": false,
+  "domain_or_email_routing_changed": false,
+  "credentials_exposed_or_created": false,
+  "production_activation_approved": false
+}

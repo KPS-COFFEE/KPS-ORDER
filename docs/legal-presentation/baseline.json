@@ -1,0 +1,10 @@
+{
+  "sha": "c37d2d84764391b63188f1ef6140013f5c9859a5",
+  "sha256": {
+    "app/customer_legal.py": "1c6181f0ed5dd331847086d021e44ee05199a7b09a583111969f247ff95ae16e",
+    "public/customer.css": "4f13513e804da3fcfd8a435f4825c12f2bece4b3336ac95fee63ade33274e19e",
+    "public/customer.js": "e15ca5dcabb7107776a6cb3b892f575ab564c8040c959ecc57fd862e5a5147ca",
+    "public/index.html": "a3fb0f43db7c09be6e276c7a3abb824886072d7709992a794d1270f0f1153aba",
+    "public/style.css": "77904bec3d9aecbff51672b07f3b0de96d3c6a7d6c437086cbcce7c59be3dc0b"
+  }
+}
