@@ -62,7 +62,7 @@
     "app/order_requests.py": "7d71afe94fc53d1467a1f5fab56fb3ae0028c90bf65d1782b6ca98259e562dc3",
     "app/administrative_guidance.py": "fca3434c67ce10b955a0f790fcafcc3f5b730ce14ec3a3ccfbbb1ce777d61548",
     "migrations/135_driver_duty_city.sql": "cd872fecf6cc1fa1e33534546e021543f76443d2cb4a023dca9aa135a3b6ee44",
-    "app/tracking_ingest.py": "5a056da2c87a1369826ca4535ae8d11be0f2b3005bad566234d9fcb18488bd36"
+    "app/tracking_ingest.py": "20630f5c323c6ad908f690b748907ae02a7a83109422cc3707f5343b9c40466e"
   },
   "rollback_feature_policy": {
     "operational_after_feature_use": false,

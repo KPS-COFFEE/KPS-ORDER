@@ -305,7 +305,7 @@ def test_batch_retries_whole_transaction_without_partial_points(tracking_data, m
         return original(c, *args, **kwargs)
 
     monkeypatch.setattr(map_services, 'record_sample', transient_failure)
-    monkeypatch.setattr(tracking_ingest.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(tracking_ingest, 'sleep', lambda _: None)
     body = batch_body(1, 'retry-point')
     response = client.post('/api/operations/driver-location-batch', json=body)
     assert response.status_code == 200, response.text
@@ -330,7 +330,7 @@ def test_batch_retry_is_bounded_and_does_not_retry_other_errors(monkeypatch):
             calls.append(True)
             raise error('isolated failure')
         monkeypatch.setattr(tracking_ingest, '_ingest_once', fail)
-        monkeypatch.setattr(tracking_ingest.time, 'sleep', lambda _: None)
+        monkeypatch.setattr(tracking_ingest, 'sleep', lambda _: None)
         with pytest.raises(error):
             tracking_ingest.ingest(Batch(shift_id='s', points=[point()]), {})
         assert len(calls) == expected
@@ -356,7 +356,7 @@ def test_batch_retry_rechecks_session_shift_and_driver(tracking_data, monkeypatc
             else:
                 c.execute("UPDATE users SET active=false WHERE id='tracking-driver'")
     monkeypatch.setattr(map_services, 'record_sample', fail)
-    monkeypatch.setattr(tracking_ingest.time, 'sleep', revoke)
+    monkeypatch.setattr(tracking_ingest, 'sleep', revoke)
     response = client.post('/api/operations/driver-location-batch', json=batch_body(1, 'revoked'))
     assert response.status_code == expected, response.text
     assert len(sleep_calls) == 1

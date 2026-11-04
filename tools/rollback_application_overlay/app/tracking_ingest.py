@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from math import isfinite
 from uuid import uuid4
 import logging
-import time
+from time import sleep
 from psycopg.errors import DeadlockDetected, SerializationFailure
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -88,7 +88,7 @@ def ingest(body:Batch,user=Depends(auth.require_roles('driver'))):
             if attempt == 2:
                 raise
             logger.warning('tracking_batch_transaction_retry attempt=%s sqlstate=%s',attempt+1,exc.sqlstate)
-            time.sleep(.05 * (2 ** attempt))
+            sleep(.05 * (2 ** attempt))
 
 
 def _ingest_once(body,user):
