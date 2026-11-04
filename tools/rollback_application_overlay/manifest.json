@@ -18,7 +18,8 @@
     "Private manager notification subscriptions and outbox receipts remain exportable and preserved during fallback; prior application does not send manager notices",
     "Shared morning/evening intervention authority, invoice-issuance locks, action-bound attachment exceptions and immutable linked amendment correction notes; prior dispatch and UI remain distinct",
     "Approved routed amendments retain their existing preparation destination through a bound replacement route; generic new-route creation remains disabled in the prior application",
-    "Terminal customer requests preserve their original evidence and formal accounting review linkage; review-only referrals cannot authorize or post refunds, collections or cancellation"
+    "Terminal customer requests preserve their original evidence and formal accounting review linkage; review-only referrals cannot authorize or post refunds, collections or cancellation",
+    "User-before-shift GPS foreign-key locks and bounded full-transaction retries preserve point identity, capture time and current driver/shift/session guards during fallback"
   ],
   "fallbacks": [
     "b528 prior operations UI and original order search/listing remain distinct from the candidate",
@@ -60,7 +61,8 @@
     "app/driver_city_scope.py": "8c9478afe56aaec8da8c2da263626c1131ee122555063d835e2f45672ad45c37",
     "app/order_requests.py": "7d71afe94fc53d1467a1f5fab56fb3ae0028c90bf65d1782b6ca98259e562dc3",
     "app/administrative_guidance.py": "fca3434c67ce10b955a0f790fcafcc3f5b730ce14ec3a3ccfbbb1ce777d61548",
-    "migrations/135_driver_duty_city.sql": "cd872fecf6cc1fa1e33534546e021543f76443d2cb4a023dca9aa135a3b6ee44"
+    "migrations/135_driver_duty_city.sql": "cd872fecf6cc1fa1e33534546e021543f76443d2cb4a023dca9aa135a3b6ee44",
+    "app/tracking_ingest.py": "20630f5c323c6ad908f690b748907ae02a7a83109422cc3707f5343b9c40466e"
   },
   "rollback_feature_policy": {
     "operational_after_feature_use": false,
