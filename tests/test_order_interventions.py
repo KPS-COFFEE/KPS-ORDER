@@ -773,3 +773,81 @@ def test_intervention_create_rechecks_live_role_after_session_dependency(ops):
         json={'kind':'problem','reason_code':'wrong_address','version':1},headers={'Idempotency-Key':uuid4().hex})
     assert response.status_code==403,response.text
     with db.tx() as c:assert not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='intervention.requested'",(oid,)).fetchone()
+
+
+def test_morning_cancellation_delegation_is_explicit_and_order_scoped():
+    from app.order_financial_cases import morning_cancellation_delegate
+    order={'brand_id':'brand','branch_id':'branch','service':'delivery','snapshot':{'delivery_period':'morning'}}
+    user={'role':'delivery_manager','active':True,'brand_id':'brand','branch_ids':['branch'],
+          'extra_permissions':['orders_cancel_after_print']}
+    assert morning_cancellation_delegate(user,order)
+    for change in ({'extra_permissions':[]},{'permission_denials':['orders_cancel_after_print']},
+                   {'active':False},{'brand_id':'other'},{'branch_ids':[]},{'role':'branch_manager'}):
+        assert not morning_cancellation_delegate({**user,**change},order)
+    assert not morning_cancellation_delegate({**user,'extra_permissions':[],
+        '_morning_manager_context':{'shift_id':'morning-duty'}},order)
+    assert not morning_cancellation_delegate({**user,'_morning_manager_context':{'shift_id':'morning-duty'}},order)
+    assert not morning_cancellation_delegate(user,{**order,'service':'pickup'})
+    assert not morning_cancellation_delegate(user,{**order,'snapshot':{'delivery_period':'evening'}})
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('grant',['allowed','revoked','denied','outside','inactive'])
+@pytest.mark.parametrize('collected',[False,True])
+def test_morning_cancellation_delegate_does_not_gain_morning_operations(ops,grant,collected):
+    actor,post,_,_=ops
+    oid=controlled_order(snapshot_overrides={'delivery_period':'morning'})
+    print_job(oid)
+    rid=customer_request(post,oid)
+    iid=manager_request(post,oid,rid)
+    path=f'/api/order-interventions/orders/{oid}/{iid}/decision'
+    body={'action':'approve','reason_code':'customer_cancel','contact_result':'agreed','version':1}
+    permissions=['orders_cancel_after_print']
+    if collected:collection(oid)
+    with db.tx() as c:
+        c.execute("UPDATE users SET extra_permissions=%s WHERE id='ops-manager'",(db.json(permissions),))
+    # An explicit cancellation delegate remains unapproved for normal morning preparation.
+    denied=post('manager',f'/api/orders/{oid}/preparation',{'status':'preparing','version':1},status=403)
+    assert denied['detail']['code']=='MORNING_USER_NOT_APPROVED'
+    if collected:
+        denied=post('manager',path,body,status=403)
+        assert denied['detail']['code']=='COLLECTED_CANCELLATION_AUTHORITY'
+        permissions.append('orders_cancel_collected')
+    with db.tx() as c:
+        c.execute("UPDATE users SET extra_permissions=%s WHERE id='ops-manager'",(db.json(permissions),))
+        if grant=='revoked':c.execute("UPDATE users SET extra_permissions='[]' WHERE id='ops-manager'")
+        if grant=='denied':c.execute("UPDATE users SET permission_denials='[\"orders_cancel_after_print\"]' WHERE id='ops-manager'")
+        if grant=='outside':c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-manager'")
+        if grant=='inactive':c.execute("UPDATE users SET active=false WHERE id='ops-manager'")
+        receipts=c.execute('SELECT * FROM collections WHERE order_id=%s',(oid,)).fetchall()
+    post('manager',path,body,status=200 if grant=='allowed' else 404 if grant=='outside' else 403)
+    with db.tx() as c:
+        assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']==('cancelled' if grant=='allowed' else 'ready')
+        approved=c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='intervention.approved'",(oid,)).fetchone()
+        assert bool(approved)==(grant=='allowed')
+        assert c.execute('SELECT * FROM collections WHERE order_id=%s',(oid,)).fetchall()==receipts
+        assert not c.execute('SELECT 1 FROM refunds WHERE order_id=%s',(oid,)).fetchone()
+
+
+def test_morning_cancellation_scope_uses_current_grants_and_keeps_lane_lock(monkeypatch):
+    from app import order_financial_cases as cases, collected_order_authority, order_amendments, morning_delivery, morning_dispatch
+    order={'brand_id':'kps','branch_id':'branch','service':'delivery','snapshot':{'delivery_period':'morning'}}
+    stale={'id':'manager','role':'delivery_manager','active':True,'brand_id':'kps','branch_ids':['branch'],
+           'extra_permissions':['orders_cancel_after_print']}
+    current=dict(stale)
+    calls=[]
+    monkeypatch.setattr(cases,'scoped',lambda *a:order)
+    monkeypatch.setattr(collected_order_authority,'current_actor',lambda *a:current)
+    monkeypatch.setattr(collected_order_authority,'require',lambda *a:None)
+    monkeypatch.setattr(order_amendments,'reviewer',lambda *a:True)
+    def require_morning(*a,**kw):
+        calls.append('morning')
+        raise db.error(403,'MORNING_USER_NOT_APPROVED','not approved')
+    monkeypatch.setattr(morning_delivery,'authorize_order',require_morning)
+    monkeypatch.setattr(morning_dispatch,'lock_operations',lambda *a:calls.append('lock'))
+    assert cases.cancellation_scope(None,'order',stale)==current
+    assert calls==['lock']
+    current={**stale,'extra_permissions':[]}
+    with pytest.raises(HTTPException) as denied:cases.cancellation_scope(None,'order',stale)
+    assert denied.value.detail['code']=='MORNING_USER_NOT_APPROVED'
+    assert calls==['lock','morning']

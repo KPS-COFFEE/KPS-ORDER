@@ -163,6 +163,20 @@ def invoice_guard(c,o):
         raise db.error(409,'ACCOUNTING_CANCELLATION_REQUIRED','للطلب فاتورة؛ استخدم إلغاء التشغيل مع إحالة المعالجة للمحاسبة.')
 
 
+
+def morning_cancellation_delegate(user, order):
+    """Explicit cancellation authority only; never morning operating approval."""
+    from .order_interventions import controlled
+    return bool(not user.get('_morning_manager_context')
+        and user.get('active') and user.get('role')=='delivery_manager'
+        and user.get('brand_id')==order['brand_id']
+        and order['branch_id'] in user.get('branch_ids',[])
+        and (order.get('snapshot') or {}).get('delivery_period')=='morning'
+        and controlled(order)
+        and 'orders_cancel_after_print' in (user.get('extra_permissions') or [])
+        and auth.has_permission(user,'orders_cancel_after_print'))
+
+
 def cancellation_scope(c, oid, user):
     """Authorize and acquire the morning lane before taking an order lock."""
     from .order_interventions import high_authority, controlled, qualified_cancel_delegate
@@ -178,7 +192,7 @@ def cancellation_scope(c, oid, user):
     from .order_amendments import reviewer
     if not reviewer(visible,user) and not high_authority(user):raise db.error(403,'CANCELLATION_REVIEWER','الإلغاء من مسؤول الخدمة المختص.')
     from . import morning_delivery, morning_dispatch
-    if not qualified_cancel_delegate(user):
+    if not (qualified_cancel_delegate(user) or morning_cancellation_delegate(user,visible)):
         morning_delivery.authorize_order(c,user,visible,preparation=user['role']=='branch_manager')
     if morning_dispatch.actual_morning(visible):morning_dispatch.lock_operations(c)
     return user
