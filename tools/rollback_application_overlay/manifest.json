@@ -41,7 +41,7 @@
     "app/main.py": "a7c0095075afec3a436af2a8aa955b834253b140d389f0e4235964a85c5335e1",
     "app/operations.py": "d6278e3eb3f74dc38e88e331078305e9ff881e32b75247dd3da24163fc2b4a9d",
     "app/order_amendments.py": "aa9086ca8945b4c9b1bfcc1f3df2ecbe16f899ec39d1472fdf2cfb302ac1c5fb",
-    "app/order_financial_cases.py": "f5b7b13edff12956e78f07fc9d6b3b39c7f86500155d39ea7f3bc939385c9d45",
+    "app/order_financial_cases.py": "3f19e4e4e0da937974d828be9b6b94bb28bbef7d237b0a289ab1ec86c7e68176",
     "app/order_interventions.py": "79032c4a7199241e2262654f4a079a048987abb7db4b8b1f083e1429535d973a",
     "app/orders.py": "95bb90cbc8d6040ae455e5c5ccaf384b967e6f0e976edbdc6a14af15627c1af3",
     "app/preparation_routing.py": "7648296376b2c48ce9b285c7e33176566b3a4df224a3f21f8a5cbf66201f6b56",
