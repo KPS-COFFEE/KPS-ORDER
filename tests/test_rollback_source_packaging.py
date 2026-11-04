@@ -44,9 +44,15 @@ def test_actual_context_retains_all_docker_inputs_and_distinct_prior_app(tmp_pat
  assert (output/'app/main.py').read_bytes()==(ROOT/'tools/rollback_application_overlay/app/main.py').read_bytes()
  for name in ('app/orders.py','public/ops.js'):
   assert (output/name).read_bytes()!=(ROOT/name).read_bytes()
- for name in ('accounting','cash_bags','aggregate_driver_closure','aggregate_manager_closure','financial_clarifications','manual_bank_matching','order_duplicates','delivery_partial_returns','tracking_ingest'):
+ for name in ('accounting','cash_bags','aggregate_driver_closure','aggregate_manager_closure','financial_clarifications','manual_bank_matching','order_duplicates','delivery_partial_returns'):
   path='app/'+name+'.py'
   assert (output/path).read_bytes()==module.git(ROOT,'show',BASE+':'+path),path
+ # GPS has a narrowly inventoried compatibility fix: the sole baseline delta
+ # is the same user/shift ordering and rolled-back transaction retry as current.
+ tracking='app/tracking_ingest.py'
+ assert (output/tracking).read_bytes()==(ROOT/'tools/rollback_application_overlay'/tracking).read_bytes()
+ assert (output/tracking).read_bytes()==(ROOT/tracking).read_bytes()
+ assert identity['overlay_files'][tracking]==hashlib.sha256((output/tracking).read_bytes()).hexdigest()
  # Every local Docker COPY source must exist. A path typo/new tooling input
  # must fail this assertion rather than being replaced by an empty placeholder.
  copy_inputs=[]
