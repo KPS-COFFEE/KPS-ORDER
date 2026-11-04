@@ -240,3 +240,126 @@ def test_exact_saved_replay_remains_acknowledged_across_history_age_boundary(tra
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM driver_tracking_points').fetchone()['n']==1
         assert c.execute('SELECT count(*) n FROM driver_latest_locations').fetchone()['n']==0
+
+
+@pytest.mark.postgres
+def test_batch_waits_for_fleet_user_before_locking_shift(tracking_data, database, monkeypatch):
+    """The real fleet writer must acquire its shifts while GPS waits on users."""
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    import threading
+    import time
+    import psycopg
+    from psycopg.rows import dict_row
+    from app import db, driver_checks, tracking_ingest
+    _, user = tracking_data
+    body = tracking_ingest.Batch.model_validate(batch_body(1, 'fleet-race'))
+    original_tx = db.tx
+    reader_pid = []
+    entered = threading.Event()
+
+    @contextmanager
+    def observed_tx(*args, **kwargs):
+        with original_tx(*args, **kwargs) as conn:
+            if threading.current_thread().name.startswith('tracking-reader'):
+                reader_pid.append(conn.info.backend_pid)
+                entered.set()
+            yield conn
+
+    monkeypatch.setattr(db, 'tx', observed_tx)
+    with psycopg.connect(database, autocommit=True, row_factory=dict_row) as fleet:
+        fleet.execute("SET statement_timeout='5000ms'")
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix='tracking-reader') as workers:
+            with fleet.transaction():
+                # Same first lock as driver_checks.lock_fleet and fleet management.
+                fleet.execute("SELECT id FROM users WHERE brand_id='kps' AND role='driver' ORDER BY id FOR UPDATE").fetchall()
+                future = workers.submit(tracking_ingest.ingest, body, user)
+                assert entered.wait(3)
+                deadline = time.monotonic() + 3
+                while not fleet.execute('SELECT pg_blocking_pids(%s) p', (reader_pid[0],)).fetchone()['p']:
+                    assert time.monotonic() < deadline, 'GPS did not wait on the real user lock'
+                    time.sleep(.01)
+                # On the old ordering GPS already holds this shift and NOWAIT
+                # fails. With users first, the actual fleet lock sequence succeeds.
+                fleet.execute("SELECT id FROM shifts WHERE id='track-shift' FOR UPDATE NOWAIT")
+                driver_checks.lock_fleet(fleet, {'brand_id': 'kps'})
+            assert future.result(timeout=5)['accepted_ids'] == ['fleet-race']
+    with original_tx() as c:
+        assert c.execute("SELECT count(*) n FROM driver_tracking_points WHERE id='fleet-race'").fetchone()['n'] == 1
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('sqlstate', ['40P01', '40001'])
+def test_batch_retries_whole_transaction_without_partial_points(tracking_data, monkeypatch, sqlstate):
+    from app import db, map_services, tracking_ingest
+    client, _ = tracking_data
+    original = map_services.record_sample
+    attempts = []
+
+    def transient_failure(c, *args, **kwargs):
+        attempts.append(c.execute('SELECT txid_current() n').fetchone()['n'])
+        # Fail after the point INSERT, through PostgreSQL itself, so rollback
+        # must erase the partial write before retrying the identical point ID.
+        if len(attempts) == 1:
+            c.execute("DO $$ BEGIN RAISE EXCEPTION 'isolated retry test' USING ERRCODE = '" + sqlstate + "'; END $$")
+        return original(c, *args, **kwargs)
+
+    monkeypatch.setattr(map_services, 'record_sample', transient_failure)
+    monkeypatch.setattr(tracking_ingest.time, 'sleep', lambda _: None)
+    body = batch_body(1, 'retry-point')
+    response = client.post('/api/operations/driver-location-batch', json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()['accepted_ids'] == ['retry-point']
+    assert len(attempts) == 2 and attempts[0] != attempts[1]
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM driver_tracking_points').fetchone()['n'] == 1
+        latest = c.execute('SELECT * FROM driver_latest_locations').fetchone()
+        assert latest['updated_at'].isoformat() == body['points'][0]['captured_at']
+
+
+def test_batch_retry_is_bounded_and_does_not_retry_other_errors(monkeypatch):
+    import psycopg
+    from app import tracking_ingest
+    for error, expected in ((psycopg.errors.DeadlockDetected, 3),
+                            (psycopg.errors.SerializationFailure, 3),
+                            (psycopg.errors.UniqueViolation, 1),
+                            (psycopg.OperationalError, 1),
+                            (RuntimeError, 1)):
+        calls = []
+        def fail(body, user):
+            calls.append(True)
+            raise error('isolated failure')
+        monkeypatch.setattr(tracking_ingest, '_ingest_once', fail)
+        monkeypatch.setattr(tracking_ingest.time, 'sleep', lambda _: None)
+        with pytest.raises(error):
+            tracking_ingest.ingest(Batch(shift_id='s', points=[point()]), {})
+        assert len(calls) == expected
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('change, expected', [('session', 401), ('shift', 409), ('driver', 403)])
+def test_batch_retry_rechecks_session_shift_and_driver(tracking_data, monkeypatch, change, expected):
+    from app import db, map_services, tracking_ingest
+    client, _ = tracking_data
+    original = map_services.record_sample
+    sleep_calls = []
+    def fail(c, *args, **kwargs):
+        c.execute("DO $$ BEGIN RAISE EXCEPTION 'retry scope test' USING ERRCODE='40P01'; END $$")
+        return original(c, *args, **kwargs)
+    def revoke(_):
+        sleep_calls.append(True)
+        with db.tx() as c:
+            if change == 'session':
+                c.execute("UPDATE sessions SET revoked_at=now() WHERE id='track-session'")
+            elif change == 'shift':
+                c.execute("UPDATE shifts SET status='closing' WHERE id='track-shift'")
+            else:
+                c.execute("UPDATE users SET active=false WHERE id='tracking-driver'")
+    monkeypatch.setattr(map_services, 'record_sample', fail)
+    monkeypatch.setattr(tracking_ingest.time, 'sleep', revoke)
+    response = client.post('/api/operations/driver-location-batch', json=batch_body(1, 'revoked'))
+    assert response.status_code == expected, response.text
+    assert len(sleep_calls) == 1
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM driver_tracking_points').fetchone()['n'] == 0
+        assert c.execute('SELECT count(*) n FROM driver_latest_locations').fetchone()['n'] == 0

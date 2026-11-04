@@ -6,6 +6,9 @@ advance the latest position, whose updated_at remains the capture clock.
 from datetime import datetime, timezone, timedelta
 from math import isfinite
 from uuid import uuid4
+import logging
+import time
+from psycopg.errors import DeadlockDetected, SerializationFailure
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from . import auth, db, catalog
@@ -14,6 +17,7 @@ from .operations import safe, shift_access
 router = APIRouter(prefix='/api/operations', tags=['operations'])
 STAFF = ('owner', 'delivery_manager', 'delivery_staff')
 MAX_CAPTURE_GAP_SECONDS = 180
+logger = logging.getLogger(__name__)
 
 
 class Point(BaseModel):
@@ -49,6 +53,12 @@ def validate_capture(point, now, opened_at, session_at):
 
 
 def tracking_shift(c,user,shift_id):
+    # Fleet/check mutations lock users before shifts. The point INSERT later
+    # takes a foreign-key KEY SHARE lock on this same user: acquire it first,
+    # otherwise a fleet writer can hold the user while waiting for our shift.
+    driver=c.execute("SELECT id FROM users WHERE id=%s AND active AND role='driver' FOR KEY SHARE",(user['id'],)).fetchone()
+    if not driver:
+        raise db.error(403,'TRACKING_DRIVER_SCOPE','حساب السائق غير متاح للتتبع.')
     # Lock the physical workday in its canonical order, shared with explicit
     # return/closure. Locking one ledger leg first can deadlock two GPS senders.
     from .driver_work_hours import lock_return_legs
@@ -68,6 +78,20 @@ def tracking_shift(c,user,shift_id):
 
 @router.post('/driver-location-batch')
 def ingest(body:Batch,user=Depends(auth.require_roles('driver'))):
+    # Retry the whole rolled-back transaction, never an individual INSERT or
+    # a transaction whose commit outcome is unknown. Point IDs make replay
+    # idempotent; shift/session checks run again on every attempt.
+    for attempt in range(3):
+        try:
+            return _ingest_once(body,user)
+        except (DeadlockDetected,SerializationFailure) as exc:
+            if attempt == 2:
+                raise
+            logger.warning('tracking_batch_transaction_retry attempt=%s sqlstate=%s',attempt+1,exc.sqlstate)
+            time.sleep(.05 * (2 ** attempt))
+
+
+def _ingest_once(body,user):
     with db.tx() as c:
         shift,session=tracking_shift(c,user,body.shift_id)
         now=c.execute('SELECT now() n').fetchone()['n']
