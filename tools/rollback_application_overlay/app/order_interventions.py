@@ -835,7 +835,7 @@ def enrich_orders(c,orders):
 
 def delegated_cancel_shift_access(user,o,shift,tasks):
     """True grants this order's task cancellation only, never shift/cash authority."""
-    if user.get('role')!='admin' or not high_authority(user) or not (controlled(o) or qualified_cancel_delegate(user)):return False
+    if user.get('role') not in {'admin','delivery_manager'} or not high_authority(user) or not (controlled(o) or qualified_cancel_delegate(user)):return False
     if (not user.get('active',True) or user.get('brand_id')!=o['brand_id']
             or o['branch_id'] not in user.get('branch_ids',[]) or not shift
             or shift.get('brand_id')!=o['brand_id'] or shift.get('kind')!='driver'
