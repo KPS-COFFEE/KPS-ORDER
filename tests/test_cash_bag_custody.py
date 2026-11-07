@@ -1,8 +1,9 @@
 """Real bag custody review is independent of the original driver receipt."""
-from datetime import date,timedelta
+from datetime import date,datetime,timedelta
 from uuid import uuid4
 import pytest
 from app import db
+from app.accounting import TZ
 from app import cash_bag_custody as custody
 from test_enbishan_dual_brand import dual
 from test_central_workdays import central
@@ -156,7 +157,7 @@ def test_actual_partial_then_full_recovery_uses_existing_evidence_and_never_rewr
         assert available.status_code==200,available.text
         assert event_id in {r['id'] for r in available.json()['sources']}
         recovery={k:data[k] for k in ('expected_count_id','expected_receipt_id')}|{'direction':direction,'cash_amount_halalas':25,'card_amount_halalas':0,
-            'cash_custody_event_id':event_id,'evidence_reference':'Actual canonical custody event reference','note':'Apply only actual custody recovery, no new receipt created','occurred_on':date.today().isoformat()}
+            'cash_custody_event_id':event_id,'evidence_reference':'Actual canonical custody event reference','note':'Apply only actual custody recovery, no new receipt created','occurred_on':datetime.now(TZ).date().isoformat()}
         route=review+'/'+proposed['id']+'/recoveries';key=uuid4().hex
         requested=post('accountant',route,recovery,key=key)
         assert post('accountant',route,recovery,key=key)==requested
@@ -187,7 +188,7 @@ def test_recovery_rejects_source_used_by_report_and_stale_count_without_money_ch
         kps=next(s for s in manager['shifts'] if s['brand_id']=='kps')
         c.execute("INSERT INTO custody_events(id,shift_id,amount_halalas,kind,reference_id,actor_id,reason) VALUES(%s,%s,50,'direct_receipt','Actual source','dual-manager','Actual later movement')",(event_id,kps['id']))
     recovery={k:data[k] for k in ('expected_count_id','expected_receipt_id')}|{'direction':'receivable_recovery','cash_amount_halalas':50,'card_amount_halalas':0,'cash_custody_event_id':event_id,
-        'evidence_reference':'Actual canonical cash source witness','note':'Recovery must not reuse consumed source','occurred_on':date.today().isoformat()}
+        'evidence_reference':'Actual canonical cash source witness','note':'Recovery must not reuse consumed source','occurred_on':datetime.now(TZ).date().isoformat()}
     route=review+'/'+proposed['id']+'/recoveries'
     post('accountant',route,{**recovery,'expected_count_id':'old-count'},status=409)
     requested=post('accountant',route,recovery)
