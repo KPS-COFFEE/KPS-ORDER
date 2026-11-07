@@ -11,8 +11,8 @@ from tests.browser_sms_helpers import sms_browser_app
 pytestmark=[pytest.mark.postgres, pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1', reason='Explicit Chromium run')]
 
 
-@pytest.mark.parametrize('lang,width,kind', [('ar',390,'cancel'),('ar',768,'duplicate'),('ar',1280,'cancel'),
-                                         ('en',390,'duplicate'),('en',768,'cancel'),('en',1280,'duplicate')])
+@pytest.mark.parametrize('lang,width,kind', [('ar',390,'cancel'),('ar',768,'cancel'),('ar',1280,'cancel'),
+                                         ('en',390,'cancel'),('en',768,'cancel'),('en',1280,'cancel')])
 def test_customer_request_persists_in_manager_inbox_until_decision(sms_browser_app,chromium_browser,lang,width,kind):
     from playwright.sync_api import expect
     base=sms_browser_app
@@ -41,7 +41,9 @@ def test_customer_request_persists_in_manager_inbox_until_decision(sms_browser_a
               await KPSAmendments.open({oid,api,mutation:(path,data)=>api(path,{method:'POST',data}),user:{role:'customer'}});
             }''',{'oid':oid,'csrf':csrf,'lang':lang})
         open_customer()
-        page.locator(f'[data-request-kind={kind}]').click()
+        expect(page.locator('[data-request-kind=duplicate]')).to_have_count(0)
+        expect(page.locator('.amend-dialog')).not_to_contain_text('محمد أو المالك' if lang=='ar' else 'Mohamed or the owner')
+        page.locator('[data-request-kind=cancel]').click()
         page.locator('#service-request-form [name=note]').fill('ملاحظة اختبار <script>غير قابل للتنفيذ</script>')
         page.locator('#service-request-form [type=submit]').click()
         pending='بانتظار المعالجة' if lang=='ar' else 'Awaiting processing'
@@ -68,7 +70,7 @@ def test_customer_request_persists_in_manager_inbox_until_decision(sms_browser_a
         dialog=manager_page.locator('.intervention-dialog')
         create=dialog.locator('form:has([name=kind])')
         create.locator('[name=kind]').select_option('cancel')
-        create.locator('[name=reason_code]').select_option('customer_cancel' if kind=='cancel' else 'duplicate')
+        create.locator('[name=reason_code]').select_option('customer_cancel')
         create.locator('[name=note]').fill('تمت مراجعة الطلب مع العميل')
         # Leave evidence selectors empty: the matching website request must
         # link automatically, without a duplicate screenshot.
