@@ -24,19 +24,21 @@ def thumbnail(contents:bytes)->bytes:
 def response(contents:bytes):
     return Response(contents,media_type='image/webp',headers={'Cache-Control':'public, max-age=86400','ETag':'"'+hashlib.sha256(contents).hexdigest()+'"'})
 
-@router.get('/media/previews/{filename}')
+@router.get('/media/previews/{filename:path}')
 def static_preview(filename:str):
-    if not re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:jpg|jpeg|png|webp)',filename):
+    if not re.fullmatch(r'(?:enbishan-menu/(?:[A-Za-z0-9_-]+/)*)?[A-Za-z0-9_.-]+\.(?:jpg|jpeg|png|webp)',filename):
         raise db.error(404,'IMAGE_NOT_FOUND','الصورة غير متاحة.')
     path=ASSETS/filename
-    if not path.is_file() or path.is_symlink():raise db.error(404,'IMAGE_NOT_FOUND','الصورة غير متاحة.')
+    if not path.is_file() or path.resolve()!=path:raise db.error(404,'IMAGE_NOT_FOUND','الصورة غير متاحة.')
     built=ASSETS.parent/'previews'/(filename+'.webp')
     if built.is_file():return FileResponse(built,media_type='image/webp',headers={'Cache-Control':'public, max-age=86400'})
     return response(thumbnail(path.read_bytes()))
 
 if __name__=='__main__':
     destination=ASSETS.parent/'previews';destination.mkdir(exist_ok=True)
-    for path in ASSETS.iterdir():
-        if path.is_file() and not path.is_symlink() and path.suffix.lower() in ('.jpg','.jpeg','.png','.webp'):
-            (destination/(path.name+'.webp')).write_bytes(thumbnail(path.read_bytes()))
+    for path in (*ASSETS.iterdir(), *(ASSETS/'enbishan-menu').rglob('*')):
+        if path.is_file() and path.resolve()==path and path.suffix.lower() in ('.jpg','.jpeg','.png','.webp'):
+            target=destination/(path.relative_to(ASSETS).as_posix()+'.webp')
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_bytes(thumbnail(path.read_bytes()))
     thumbnail.cache_clear()

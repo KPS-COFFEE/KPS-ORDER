@@ -44,9 +44,10 @@ console.log('PASS: rapid photo taps, explicit variant removal, required options,
 {
   const helper=source.split('\n').find(line=>line.includes('function showSelectedProductImage()'));
   const original={id:'synthetic-variant',brand_id:'enbishan',image_url:'/assets/enbishan-menu/base.jpg'};
-  const shown=[];const ctx={state:{product:original},$:()=>({getAttribute:()=>'/assets/enbishan-menu/selected.jpg'}),showImage:product=>shown.push(product)};
+  const shown=[];const ctx={state:{product:original,optionValues:[{SIZE:'family'}],imageUnit:0},$:()=>({dataset:{originalImage:'/assets/enbishan-menu/selected.jpg'}}),picturedPriceRange:()=>[6450,6450],showImage:product=>shown.push(product)};
   vm.createContext(ctx);vm.runInContext(helper,ctx);ctx.showSelectedProductImage();
   assert.equal(shown[0].image_url,'/assets/enbishan-menu/selected.jpg','Enlargement must use the displayed variant artwork');
+  assert.equal(shown[0].imagePriceRange.join(','),'6450,6450');
   assert.equal(original.image_url,'/assets/enbishan-menu/base.jpg','Never overwrite canonical product artwork');
   ctx.state.product=null;ctx.showSelectedProductImage();assert.equal(shown.length,1);
   assert.match(source, /product-image-zoom'\).addEventListener\('click',showSelectedProductImage/);

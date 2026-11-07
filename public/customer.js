@@ -892,6 +892,9 @@
   const text = (id, content) => { setText($(id),content); };
   const showError = (id, content) => { const el = $(id); setText(el,knownMessage(content||'')); el.hidden = !content; };
   const safeImage = (url) => { if(typeof url!=='string'||!url.trim())return ''; try { const parsed = new URL(url, location.origin); return parsed.origin === location.origin && !parsed.pathname.startsWith('/api/admin') ? parsed.pathname + parsed.search : ''; } catch { return ''; } };
+  const displayImage = url => /^\/assets\/(?:enbishan-menu\/(?:[A-Za-z0-9_-]+\/)*)?[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(url)
+    ? url.replace('/assets/','/media/previews/')
+    : url?.startsWith('/api/product-assets/') ? url+'?preview=true' : url;
   const city = (name) => String(name || '').replace(/\s/g, '').replace('رفحا', 'رفحاء').replace('رفحاءء', 'رفحاء').replace('قبة','قبه');
   const branch = () => state.branches.find((entry) => entry.id === state.branchId);
   const restricted = (product) => (product.available_cities || []).length > 0;
@@ -1069,7 +1072,7 @@
   async function requestEmail(event){event.preventDefault();await busy($('email-request-submit'),async()=>{try{await api('/api/identity/email/request',{method:'POST',data:{email:$('login-email').value.trim(),brand_id:requestedBrandId,purpose:state.session.user?.identity_kind==='guest'?'customer_link':'email_login'}});text('email-request-state',t("if_this_email_is_eligible_you_will_receive_a_secure_single_use_li"));}catch(error){showError('account-error',errorMessage(error));}});}
   async function verifyEmailLink(){const fragment=new URLSearchParams(location.hash.slice(1));if(!fragment.has('identity_challenge')||!fragment.has('identity_token'))return;history.replaceState(null,'',location.pathname+location.search);state.emailLink={challenge_id:fragment.get('identity_challenge'),token:fragment.get('identity_token')};try{const result=await api('/api/identity/email/verify',{method:'POST',data:state.emailLink});state.emailLink=null;await establishIdentity(result);toast(t("email_verified"));}catch(error){showError('account-error',errorMessage(error));if(error.code==='STAFF_PROFILE_REQUIRED'){$('guest-form').hidden=true;$('email-login-button').hidden=true;$('identity-onboarding-form').hidden=false;}text('account-title',t("email_verification"));openDialog('account-dialog');}}
   function directionsLink(b){if(!b)return '';const raw=b.directions_url;if(typeof raw!=='string')return '';try{const u=new URL(raw);return u.protocol==='https:'&&['www.google.com','google.com','maps.google.com','maps.app.goo.gl','goo.gl'].includes(u.hostname)?u.href:'';}catch{return '';}}
-  function showImage(product){const url=safeImage(product?.image_url);if(!url){toast(t("the_photo_is_currently_unavailable"));return;}state.imageProduct=product;$('image-full').src=url;$('image-full').alt=sourceText(product);text('image-title',sourceText(product));openDialog('image-dialog');}
+  function showImage(product){const url=safeImage(product?.image_url);if(!url){toast(t("the_photo_is_currently_unavailable"));return;}state.imageProduct=product;text('image-price',picturedPriceText(product.imagePriceRange??picturedPriceRange(product)));$('image-full').src=url;$('image-full').alt=sourceText(product);text('image-title',sourceText(product));openDialog('image-dialog');}
   function renderBranches() {
     const cities=new Map();
     for(const b of state.branches)if(b.city&&!cities.has(city(b.city)))cities.set(city(b.city),b.city);
@@ -1266,7 +1269,7 @@
     for(const label of preferred){
       const size=sizes.find(v=>String(v.name||'').includes(label));
       const image=size&&(product.variant_images||[]).find(v=>v.options?.SIZE===(size.code||size.id)&&safeImage(v.image_url));
-      if(image)return {image_url:image.image_url,label:sourceText(size)};
+      if(image)return {image_url:image.image_url,label:sourceText(size),sizeCode:size.code||size.id};
     }
     return {image_url:product.image_url};
   }
@@ -1353,7 +1356,7 @@
   }
   function renderProducts() { const search = $('search').value.trim().toLocaleLowerCase(language); const products = menuProducts().filter((p) => (!state.category || menuSection(p) === state.category) && (!search || [p,...mahashiFamily(p)].some(item=>productSearchText(item).includes(search)))); if(requestedBrandId==='enbishan')products.sort((a,b)=>menuRank(a,!state.category)-menuRank(b,!state.category)); const container = $('products'); container.replaceChildren(); text('menu-count', t("0_items_1",{"0":()=>(number.format(menuProducts().length)),"1":()=>(requestedBrandId==='kps'?t("images_and_options_from_the_kps_menu"):` · ${sourceText(state.brand)}`)})); if (!products.length) { const empty=node('div','empty-state'); empty.append(node('h3','', state.products.length?t("no_matching_items"):t("no_items_have_been_added_for_this_brand_yet")),node('p','', state.products.length?t("try_another_search_or_category"):t("items_approved_by_the_brand_will_appear_here"))); container.append(empty); return; }
     let previousSection=null;
-    for (const product of products) { const section=menuSection(product);if(requestedBrandId==='enbishan'&&!state.category&&section!==previousSection){const heading=node('h3','menu-section-title',menuSectionLabel(section));container.append(heading);previousSection=section;} const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',t(groups(product).length?"details_of_0":"add_0_to_basket",{"0":()=>(sourceText(product))})); const cover=menuCover(product); const originalUrl=safeImage(cover.image_url); const imageUrl=originalUrl?.match(/^\/assets\/[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$/)?originalUrl.replace('/assets/','/media/previews/'):originalUrl?.startsWith('/api/product-assets/')?originalUrl+'?preview=true':originalUrl; if (imageUrl) { const img=node('img'); img.src=imageUrl; img.alt=sourceText(product);if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading=container.childElementCount<4?'eager':'lazy'; img.fetchPriority=container.childElementCount<2?'high':'auto'; img.decoding='async'; img.addEventListener('error', () => { if(img.src!==new URL(originalUrl,location.href).href){img.src=originalUrl;return;}img.remove(); imageButton.append(node('span','image-fallback',t("photo_currently_unavailable"))); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback',t("no_product_photo"))); imageButton.addEventListener('click',()=>addFromCard(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',sourceText(product)); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if(pickupOnlyLabel(product))info.append(node('p','pill warning',pickupOnlyLabel(product))); if(product.brand_id==='enbishan'){const description=menuDescription(product);if(description)info.append(node('p','enbishan-product-description',description));const family=mahashiFamily(product);const detail=family.length>1?entryText('الأحجام: ','Sizes: ')+[...family].reverse().flatMap(p=>(groups(p).find(g=>g.code==='SIZE')?.values||[]).map(v=>sourceText(v))).join(' • '):cover.label?entryText('الصورة: ','Pictured: ')+cover.label:'';if(detail)info.append(node('p','enbishan-size-summary',detail));} if (restricted(product)) info.append(node('span','pill warning',t("available_only_in_hafar_al_batin"))); if (groups(product).length) info.append(node('span','pill',isMug(product)?t("a_color_for_each_mug"):t("options_for_each_unit"))); const bottom=node('div','product-card-bottom'); const startingVariant=mahashiFamily(product).length>1?null:globalThis.KPSMenuVariants?.starting(product);if(startingVariant?.compare_at_halalas>product.price_halalas)bottom.append(node('del','muted',money(startingVariant.compare_at_halalas)));bottom.append(node('span','money',(product.brand_id==='enbishan'&&(mahashiFamily(product).length>1||groups(product).find(g=>g.code==='SIZE')?.values?.length>1)?entryText('يبدأ من ','From '):'')+money(menuStartingPrice(product)))); const add=node('button','product-add-button','+'); add.type='button'; add.setAttribute('aria-label',t("add_0_to_basket",{"0":()=>(sourceText(product))})); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || t("choose_quantity_and_options"); add.addEventListener('click',()=>openProduct(product)); const minus=node('button','product-minus-button','−');minus.type='button';minus.setAttribute('aria-label',t('decrease_quantity_of_0',{'0':()=>(sourceText(product))}));minus.addEventListener('click',()=>removeFromCard(product));const count=node('output','product-card-quantity',number.format(cardQuantity(product.id)));count.setAttribute('aria-live','polite');const controls=node('div','product-card-controls');controls.append(minus,count,add);bottom.append(controls); info.append(bottom); if(isKhaliya(product)&&state.service!=='delivery'&&branch()&&city(branch().city)===city('حفر الباطن')&&Number(branch().branch_no)!==2){info.append(node('p','small muted',language==='en'?'Khaliya is available for pickup at Branch 2 only.':'الخلية متوفرة للاستلام من فرع 2 فقط.'));const target=state.branches.find(b=>Number(b.branch_no)===2&&city(b.city)===city('حفر الباطن'));if(target){const transfer=node('button','button secondary',language==='en'?'Order from Branch 2':'الطلب من فرع 2');transfer.type='button';transfer.addEventListener('click',()=>changeBranch(target.id));info.append(transfer);}} if(imageUrl){const zoom=node('button','image-zoom-button',t("enlarge_photo"));zoom.type='button';zoom.setAttribute('aria-label',t("enlarge_photo_of_0",{"0":()=>(sourceText(product))}));zoom.addEventListener('click',()=>showImage({...product,image_url:cover.image_url}));info.append(zoom);}card.addEventListener('click',event=>{if(!event.target.closest('button,a,input,select,textarea'))addFromCard(product);});card.append(imageButton,info); container.append(card); }
+    for (const product of products) { const section=menuSection(product);if(requestedBrandId==='enbishan'&&!state.category&&section!==previousSection){const heading=node('h3','menu-section-title',menuSectionLabel(section));container.append(heading);previousSection=section;} const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',t(groups(product).length?"details_of_0":"add_0_to_basket",{"0":()=>(sourceText(product))})); const cover=menuCover(product); const originalUrl=safeImage(cover.image_url); const imageUrl=displayImage(originalUrl); if (imageUrl) { const img=node('img'); img.alt=sourceText(product);if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading=container.childElementCount<4?'eager':'lazy'; img.fetchPriority=container.childElementCount<2?'high':'auto'; img.decoding='async'; img.src=imageUrl; img.addEventListener('error', () => { if(img.src!==new URL(originalUrl,location.href).href){img.src=originalUrl;return;}img.remove(); imageButton.append(node('span','image-fallback',t("photo_currently_unavailable"))); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback',t("no_product_photo"))); imageButton.addEventListener('click',()=>addFromCard(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',sourceText(product)); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if(pickupOnlyLabel(product))info.append(node('p','pill warning',pickupOnlyLabel(product))); if(product.brand_id==='enbishan'){const description=menuDescription(product);if(description)info.append(node('p','enbishan-product-description',description));const family=mahashiFamily(product);const detail=family.length>1?entryText('الأحجام: ','Sizes: ')+[...family].reverse().flatMap(p=>(groups(p).find(g=>g.code==='SIZE')?.values||[]).map(v=>sourceText(v))).join(' • '):cover.label?entryText('الصورة: ','Pictured: ')+cover.label:'';if(detail)info.append(node('p','enbishan-size-summary',detail));} if (restricted(product)) info.append(node('span','pill warning',t("available_only_in_hafar_al_batin"))); if (groups(product).length) info.append(node('span','pill',isMug(product)?t("a_color_for_each_mug"):t("options_for_each_unit"))); const bottom=node('div','product-card-bottom'); const startingVariant=mahashiFamily(product).length>1?null:globalThis.KPSMenuVariants?.starting(product);if(startingVariant?.compare_at_halalas>product.price_halalas)bottom.append(node('del','muted',money(startingVariant.compare_at_halalas)));bottom.append(node('span','money',(product.brand_id==='enbishan'&&(mahashiFamily(product).length>1||groups(product).find(g=>g.code==='SIZE')?.values?.length>1)?entryText('يبدأ من ','From '):'')+money(menuStartingPrice(product)))); const add=node('button','product-add-button','+'); add.type='button'; add.setAttribute('aria-label',t("add_0_to_basket",{"0":()=>(sourceText(product))})); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || t("choose_quantity_and_options"); add.addEventListener('click',()=>openProduct(product)); const minus=node('button','product-minus-button','−');minus.type='button';minus.setAttribute('aria-label',t('decrease_quantity_of_0',{'0':()=>(sourceText(product))}));minus.addEventListener('click',()=>removeFromCard(product));const count=node('output','product-card-quantity',number.format(cardQuantity(product.id)));count.setAttribute('aria-live','polite');const controls=node('div','product-card-controls');controls.append(minus,count,add);bottom.append(controls); info.append(bottom); if(isKhaliya(product)&&state.service!=='delivery'&&branch()&&city(branch().city)===city('حفر الباطن')&&Number(branch().branch_no)!==2){info.append(node('p','small muted',language==='en'?'Khaliya is available for pickup at Branch 2 only.':'الخلية متوفرة للاستلام من فرع 2 فقط.'));const target=state.branches.find(b=>Number(b.branch_no)===2&&city(b.city)===city('حفر الباطن'));if(target){const transfer=node('button','button secondary',language==='en'?'Order from Branch 2':'الطلب من فرع 2');transfer.type='button';transfer.addEventListener('click',()=>changeBranch(target.id));info.append(transfer);}} if(imageUrl){const zoom=node('button','image-zoom-button',t("enlarge_photo"));zoom.type='button';zoom.setAttribute('aria-label',t("enlarge_photo_of_0",{"0":()=>(sourceText(product))}));zoom.addEventListener('click',()=>showImage({...product,image_url:cover.image_url}));info.append(zoom);}card.addEventListener('click',event=>{if(!event.target.closest('button,a,input,select,textarea'))addFromCard(product);});card.append(imageButton,info); container.append(card); }
     syncCardQuantities();
   }
   function cardQuantity(id) { return state.cart.filter(line=>line.productId===id||(requestedBrandId==='enbishan'&&mahashiIds.includes(id)&&mahashiIds.includes(line.productId))).reduce((sum,line)=>sum+line.quantity,0); }
@@ -1435,7 +1438,7 @@
         if(!(group?.values||[]).some((value)=>(value.code||value.id)===selected[code]&&value.enabled!==false&&value.available!==false))delete selected[code];
       }
     }
-    text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(menuCover(product).image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){$('product-image').src=image;$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!menuDescription(product); text('product-description',menuDescription(product)); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason||pickupOnlyLabel(product)); text('product-add',t("add_to_basket")); renderOptions();
+    text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(menuCover(product).image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){setProductDialogImage(product,image);$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!menuDescription(product); text('product-description',menuDescription(product)); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason||pickupOnlyLabel(product)); text('product-add',t("add_to_basket")); renderOptions();
     if(optionFocus>=0)$('product-options').querySelectorAll('select')[optionFocus]?.focus({preventScroll:true});
     openDialog('product-dialog');
   }
@@ -1447,9 +1450,38 @@
     const product=state.products.find((entry)=>entry.id===state.product.id);
     openProduct(product||{...state.product,enabled:false,available:false},true);
   }
-  function showSelectedProductImage() { if(!state.product)return;showImage({...state.product,image_url:$('product-image').getAttribute('src')||state.product.image_url}); }
+  function setProductDialogImage(product,original){
+    const img=$('product-image');
+    const display=product.brand_id==='enbishan'?displayImage(original):original;
+    if(img.dataset.originalImage===original)return;
+    img.dataset.originalImage=original;
+    img.onerror=display===original?null:()=>{img.onerror=null;img.src=original;};
+    img.src=display;
+  }
+  function picturedPriceRange(product, selections=[{}]){
+    const rows=product.variant_price_matrix;
+    if(!rows?.length)return [product.price_halalas,product.price_halalas];
+    const coverSize=menuCover(product).sizeCode;
+    let low=0,high=0;
+    for(const selection of selections){
+      const options={...(coverSize?{SIZE:coverSize}:{}),...selection};
+      const candidates=rows.filter(row=>Object.entries(options).every(([key,value])=>row.options[key]===value))
+        .filter(row=>groups(product).every(group=>group.values.some(value=>(value.code||value.id)===row.options[group.code]&&value.enabled!==false&&value.available!==false)));
+      if(!candidates.length)return null;
+      low+=Math.min(...candidates.map(row=>row.price_halalas));
+      high+=Math.max(...candidates.map(row=>row.price_halalas));
+    }
+    return [low,high];
+  }
+  function picturedPriceText(range){
+    if(!range)return '';
+    const [low,high]=range;
+    return low===high?money(low):entryText('من ','From ')+money(low)+' – '+money(high);
+  }
+  function showSelectedProductImage() { if(!state.product)return;showImage({...state.product,image_url:$('product-image').dataset.originalImage||state.product.image_url,imagePriceRange:picturedPriceRange(state.product,[state.optionValues[state.imageUnit]||{}])}); }
   function renderVariantPrice(activeUnit=0){
     const product=state.product;if(!product)return;
+    state.imageUnit=activeUnit;
     if(product.brand_id==='enbishan'){
       const options=state.optionValues[activeUnit]||state.optionValues[0]||{};
       const sizeGroup=groups(product).find(g=>g.code==='SIZE');
@@ -1460,7 +1492,7 @@
       const sizeImages=(product.variant_images||[]).filter(entry=>options.SIZE&&entry.options?.SIZE===options.SIZE);
       const sizeImage=sizeImages.length&&sizeImages.every(entry=>entry.image_url===sizeImages[0].image_url)?sizeImages[0].image_url:null;
       const image=safeImage(variant?.image_url||sizeImage||menuCover(product).image_url);
-      if(image){$('product-image').src=image;$('product-image').hidden=false;}
+      if(image){setProductDialogImage(product,image);$('product-image').hidden=false;$('product-image-zoom').hidden=false;}
     }
     if(!product.variant_price_matrix)return;
     const rows=state.optionValues.map(options=>globalThis.KPSMenuVariants?.selected(product,options));
@@ -1468,9 +1500,14 @@
     const total=complete?rows.reduce((sum,row)=>sum+row.price_halalas,0):product.price_halalas;
     const before=complete?rows.reduce((sum,row)=>sum+(row.compare_at_halalas||row.price_halalas),0):globalThis.KPSMenuVariants?.starting(product)?.compare_at_halalas;
     const price=$('product-price');price.replaceChildren();
-    if(before>total){const old=node('del','',money(before));price.append(old,document.createTextNode(' '));}
-    price.append(document.createTextNode(money(total)));
-    price.dataset.variantPrice=String(total);
+    if(!complete){
+      text('product-price',picturedPriceText(picturedPriceRange(product,state.optionValues)));
+      delete price.dataset.variantPrice;
+    }else{
+      if(before>total){const old=node('del','',money(before));price.append(old,document.createTextNode(' '));}
+      price.append(document.createTextNode(money(total)));
+      price.dataset.variantPrice=String(total);
+    }
     const allChosen=state.optionValues.every(options=>groups(product).every(group=>options[group.code]));
     const invalid=allChosen&&!complete;
     $('product-add').disabled=!eligibleForProduct(product).ok||invalid;
@@ -1748,7 +1785,7 @@
     if(!banner&&requestedBrandId==='enbishan'){
       const signature=state.products.find(p=>p.id==='enbishan-menu-7b0752b4daa269674e08576f');
       const image=safeImage(signature?.image_url);
-      if(signature&&image){container.className='campaign-banner';const img=node('img');img.src=image;img.alt=sourceText(signature);const content=node('div','campaign-content');const copy=node('div');copy.append(node('h2','',sourceText(signature)),node('p','',menuDescription(signature)));const button=node('button','button secondary',entryText('عرض عنبيشن سيجنتشر','View Enbishan Signature'));button.type='button';button.addEventListener('click',()=>openProduct(signature));content.append(copy,button);container.append(img,content);return;}
+      if(signature&&image){container.className='campaign-banner';const img=node('img');img.fetchPriority='high';img.decoding='async';img.src=displayImage(image);if(displayImage(image)!==image)img.addEventListener('error',()=>{img.src=image;},{once:true});img.alt=sourceText(signature);const content=node('div','campaign-content');const copy=node('div');copy.append(node('h2','',sourceText(signature)),node('p','',menuDescription(signature)));const button=node('button','button secondary',entryText('عرض عنبيشن سيجنتشر','View Enbishan Signature'));button.type='button';button.addEventListener('click',()=>openProduct(signature));content.append(copy,button);container.append(img,content);return;}
     }
     if(!banner){
       container.className='intro-banner';
@@ -1946,6 +1983,7 @@
     }
     if($('image-dialog').open&&state.imageProduct){
       text('image-title',sourceText(state.imageProduct));
+      text('image-price',picturedPriceText(state.imageProduct.imagePriceRange??picturedPriceRange(state.imageProduct)));
       $('image-full').alt=sourceText(state.imageProduct);
     }
     if($('orders-dialog').open){

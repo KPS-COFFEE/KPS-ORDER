@@ -1,4 +1,4 @@
-import json, os
+import json, os, re
 from pathlib import Path
 import pytest
 from test_experience_entry_browser import static_customer
@@ -36,6 +36,11 @@ def test_size_contents_price_and_photo_are_visible_before_flavour(static_custome
         expect(page.locator('#product-description')).to_be_visible()
         expect(page.locator('#product-description')).to_contain_text('١٨ ملفوف + ١٨ ورق عنب' if lang=='ar' else '18 cabbage + 18 grape leaves')
         expect(page.locator('#product-image')).to_have_attribute('src',family_image)
+        price=re.compile(r'[٤4][٥5][.,٫][٥5][٠0]')
+        expect(page.locator('#product-price')).to_contain_text(price)
+        page.locator('#product-image-zoom').click()
+        expect(page.locator('#image-price')).to_contain_text(price)
+
         assert page.locator('.enbishan-size-price').count()>=4
         assert page.evaluate('document.documentElement.scrollWidth')<=width+1
         assert not errors
