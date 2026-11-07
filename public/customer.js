@@ -1438,7 +1438,7 @@
         if(!(group?.values||[]).some((value)=>(value.code||value.id)===selected[code]&&value.enabled!==false&&value.available!==false))delete selected[code];
       }
     }
-    text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(menuCover(product).image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){$('product-image').src=image;$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!menuDescription(product); text('product-description',menuDescription(product)); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason||pickupOnlyLabel(product)); text('product-add',t("add_to_basket")); renderOptions();
+    text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(menuCover(product).image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){setProductDialogImage(product,image);$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!menuDescription(product); text('product-description',menuDescription(product)); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason||pickupOnlyLabel(product)); text('product-add',t("add_to_basket")); renderOptions();
     if(optionFocus>=0)$('product-options').querySelectorAll('select')[optionFocus]?.focus({preventScroll:true});
     openDialog('product-dialog');
   }
@@ -1450,7 +1450,15 @@
     const product=state.products.find((entry)=>entry.id===state.product.id);
     openProduct(product||{...state.product,enabled:false,available:false},true);
   }
-  function showSelectedProductImage() { if(!state.product)return;showImage({...state.product,image_url:$('product-image').getAttribute('src')||state.product.image_url}); }
+  function setProductDialogImage(product,original){
+    const img=$('product-image');
+    const display=product.brand_id==='enbishan'?displayImage(original):original;
+    if(img.dataset.originalImage===original)return;
+    img.dataset.originalImage=original;
+    img.onerror=display===original?null:()=>{img.onerror=null;img.src=original;};
+    img.src=display;
+  }
+  function showSelectedProductImage() { if(!state.product)return;showImage({...state.product,image_url:$('product-image').dataset.originalImage||state.product.image_url}); }
   function renderVariantPrice(activeUnit=0){
     const product=state.product;if(!product)return;
     if(product.brand_id==='enbishan'){
@@ -1463,7 +1471,7 @@
       const sizeImages=(product.variant_images||[]).filter(entry=>options.SIZE&&entry.options?.SIZE===options.SIZE);
       const sizeImage=sizeImages.length&&sizeImages.every(entry=>entry.image_url===sizeImages[0].image_url)?sizeImages[0].image_url:null;
       const image=safeImage(variant?.image_url||sizeImage||menuCover(product).image_url);
-      if(image){$('product-image').src=image;$('product-image').hidden=false;}
+      if(image){setProductDialogImage(product,image);$('product-image').hidden=false;$('product-image-zoom').hidden=false;}
     }
     if(!product.variant_price_matrix)return;
     const rows=state.optionValues.map(options=>globalThis.KPSMenuVariants?.selected(product,options));
@@ -1471,9 +1479,14 @@
     const total=complete?rows.reduce((sum,row)=>sum+row.price_halalas,0):product.price_halalas;
     const before=complete?rows.reduce((sum,row)=>sum+(row.compare_at_halalas||row.price_halalas),0):globalThis.KPSMenuVariants?.starting(product)?.compare_at_halalas;
     const price=$('product-price');price.replaceChildren();
-    if(before>total){const old=node('del','',money(before));price.append(old,document.createTextNode(' '));}
-    price.append(document.createTextNode(money(total)));
-    price.dataset.variantPrice=String(total);
+    if(!complete&&state.optionValues.some(options=>options.SIZE)){
+      text('product-price',entryText('يظهر الإجمالي بعد إكمال الاختيارات','Total shown after completing your choices'));
+      delete price.dataset.variantPrice;
+    }else{
+      if(before>total){const old=node('del','',money(before));price.append(old,document.createTextNode(' '));}
+      price.append(document.createTextNode(money(total)));
+      price.dataset.variantPrice=String(total);
+    }
     const allChosen=state.optionValues.every(options=>groups(product).every(group=>options[group.code]));
     const invalid=allChosen&&!complete;
     $('product-add').disabled=!eligibleForProduct(product).ok||invalid;
