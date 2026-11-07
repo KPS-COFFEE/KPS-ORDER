@@ -105,12 +105,21 @@ def test_split_preserves_bags_receipts_money_and_both_accounting_cards(central, 
     _, actor, post, _, _ = central
     manager, first, second, old, new=mixed_closed_vault(central)
     source=manager['shift']['id']
+    path='/api/accounting/manager-cards/'+source+'/day-split'
+    assert actor('accountant','kps').get(path).status_code==403
+    before=actor('owner','kps').get('/api/accounting/manager-cards').json()['cards']
+    assert next(card for card in before if card['id']==source)['can_split_manager_days']
+    read=actor('owner','kps').get(path)
+    assert read.status_code==200 and read.headers['cache-control']=='no-store'
+    preview=read.json()
+    assert {d['day']:d['driver_duties'] for d in preview['days']}=={old.isoformat():1,new.isoformat():1}
+    payload={'fingerprint':preview['fingerprint'],'reason':'Owner correction of mixed admission days','confirmed':True}
+    post('accountant',path,payload,'kps',status=403)
+    post('owner',path,{**payload,'fingerprint':'a'*64},'kps',status=409)
+    result=post('owner',path,payload,'kps',key='verified-manager-split')
+    assert post('owner',path,payload,'kps',key='verified-manager-split')==result
     with db.tx() as c:
-        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-        owner=c.execute("SELECT * FROM users WHERE id='dual-owner'").fetchone()
-        preview=manager_day_split.plan(c,owner,source)
-        assert {k:len(v) for k,v in preview['groups'].items()}=={old.isoformat():2,new.isoformat():2}
-        result=manager_day_split.apply(c,owner,source,preview['fingerprint'],'Owner correction of mixed admission days')
+        source_workday=c.execute('SELECT workday_id FROM central_workday_legs WHERE shift_id=%s',(source,)).fetchone()['workday_id']
         assert len(result['corrections'])==2 and result['financial_bytes_verified']
         assert result['validation']['bag_count']==2
         assert result['validation']['bag_cash_halalas']==1500
@@ -129,7 +138,7 @@ def test_split_preserves_bags_receipts_money_and_both_accounting_cards(central, 
                         if e['source_shift_id']==source)
         new_group=c.execute('SELECT workday_id FROM central_workday_legs WHERE shift_id=%s',(new_anchor,)).fetchone()
         assert len(manager_day_split.vault_closure(c,new_group['workday_id'])['bag_ids'])==1
-        assert len(manager_day_split.vault_closure(c,preview['source_workday']['id'])['bag_ids'])==1
+        assert len(manager_day_split.vault_closure(c,source_workday)['bag_ids'])==1
         with pytest.raises(RaiseException,match='documented manager day split'):
             with c.transaction():
                 c.execute("INSERT INTO custody_transfers(id,from_shift_id,to_shift_id,amount_halalas,reference,closure,created_by) "

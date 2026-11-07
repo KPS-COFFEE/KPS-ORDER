@@ -133,6 +133,12 @@ def plan(c, owner, source_sid):
         groups.setdefault(actual_day.isoformat(), []).append(child)
     if len(groups) < 2:
         raise ValueError('No mixed admission days were found.')
+    months = sorted({date.fromisoformat(key).replace(day=1) for key in groups}
+                    | {stored_day(parent).replace(day=1) for parent in parents})
+    for parent in parents:
+        if c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=ANY(%s) '
+                     'AND branch_ids ?| %s LIMIT 1', (parent['brand_id'], months, parent['branch_ids'])).fetchone():
+            raise ValueError('A reviewed accounting month includes the affected duties.')
     child_ids = [s['id'] for s in children]
     links = {r['shift_id']: r['workday_id'] for r in c.execute(
         'SELECT shift_id,workday_id FROM central_workday_legs WHERE shift_id=ANY(%s)', (child_ids,)).fetchall()}
