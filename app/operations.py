@@ -567,17 +567,27 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             return open_shift_in_tx(c, user, body)
         return mutate(c,user,request,'shift.open',body.model_dump(),perform)
 
+def shift_opened_bounds(opened_from, opened_to):
+    opened_from, opened_to = (value.replace(tzinfo=RIYADH) if value and value.tzinfo is None else value
+                              for value in (opened_from, opened_to))
+    if opened_from and opened_to and opened_from > opened_to:
+        fail(422, 'وقت البداية بعد النهاية')
+    return opened_from, opened_to
+
+
 @router.get('/shifts')
 @router.get('/shifts/current')
 def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id: str | None = None,
            owner_view: Literal['current','review','history'] | None = None,
            search: str = '', start: date | None = None, end: date | None = None,
-           offset: int = Query(0, ge=0)):
+           offset: int = Query(0, ge=0), opened_from: datetime | None = None,
+           opened_to: datetime | None = None):
     shift_roles(user,'shifts_view','owner','delivery_manager','driver','delivery_staff')
     if owner_view:
         shift_roles(user,'shifts_view','owner')
         if order_id or task_id:fail(422,'لا يمكن الجمع بين عرض الشفتات واختيار سائق')
         if start and end and start>end:fail(422,'تاريخ البداية بعد النهاية')
+        opened_from, opened_to = shift_opened_bounds(opened_from, opened_to)
     with db.tx() as c:
         page_meta={}
         context = user.get('_morning_manager_context')
@@ -629,6 +639,10 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             day="COALESCE(s.reporting_operational_date,s.delivery_operational_date, ((s.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '4 hours')::date)"
             if start:where.append(day+'>=%s');params.append(start)
             if end:where.append(day+'<=%s');params.append(end)
+            if opened_from:
+                where.append('s.opened_at >= %s');params.append(opened_from)
+            if opened_to:
+                where.append("s.opened_at < %s + interval '1 minute'");params.append(opened_to)
             source=' FROM shifts s JOIN users u ON u.id=s.user_id WHERE '+' AND '.join(where)
             total=c.execute('SELECT count(*) AS n'+source,params).fetchone()['n']
             rows=c.execute('SELECT s.*,u.display_name'+source+' ORDER BY s.opened_at DESC,s.id LIMIT 50 OFFSET %s',params+[offset]).fetchall()

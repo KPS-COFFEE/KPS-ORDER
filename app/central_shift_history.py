@@ -1,5 +1,5 @@
 """Authorized physical shift history, grouped before counting and pagination."""
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -38,12 +38,14 @@ def collapse(rows):
 @router.get('/shifts')
 def history(owner_view: Literal['current','review','history'], search: str='',
             start: date | None=None, end: date | None=None, offset: int=Query(0,ge=0),
-            user=Depends(auth.current_user)):
+            user=Depends(auth.current_user), opened_from: datetime | None=None,
+            opened_to: datetime | None=None):
     if not multibrand.enabled() or user['role']=='customer' or user.get('_morning_manager_context'):
         raise db.error(404,'CENTRAL_WORKDAY_UNAVAILABLE','الوردية غير متاحة.')
     ops.shift_roles(user,'shifts_view','owner')
     if start and end and start>end:
         ops.fail(422,'تاريخ البداية بعد النهاية')
+    opened_from, opened_to = ops.shift_opened_bounds(opened_from, opened_to)
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         existing=c.execute('SELECT anchor_shift_id FROM central_workdays WHERE user_id=%s OR %s LIMIT 1',
@@ -76,14 +78,19 @@ def history(owner_view: Literal['current','review','history'], search: str='',
             filters.append(day+'>=%s');params.append(start)
         if end:
             filters.append(day+'<=%s');params.append(end)
+        if opened_from:
+            filters.append('v.group_opened_at >= %s');params.append(opened_from)
+        if opened_to:
+            filters.append("v.group_opened_at < %s + interval '1 minute'");params.append(opened_to)
         # Every returned leg comes from a fresh, explicit canonical brand scope.
         # A partially visible physical day cannot be opened or safely acted on;
         # omit the whole group rather than returning an incomplete ledger sum.
         source=('WITH visible AS (SELECT s.*,u.display_name,l.workday_id,w.anchor_shift_id,'
+                'coalesce(a.opened_at,s.opened_at) AS group_opened_at,'
                 "coalesce('day:'||w.id,'shift:'||s.id) AS group_key "
                 'FROM shifts s JOIN users u ON u.id=s.user_id '
                 'LEFT JOIN central_workday_legs l ON l.shift_id=s.id '
-                'LEFT JOIN central_workdays w ON w.id=l.workday_id WHERE ('+' OR '.join(scopes)+')),'
+                'LEFT JOIN central_workdays w ON w.id=l.workday_id LEFT JOIN shifts a ON a.id=w.anchor_shift_id WHERE ('+' OR '.join(scopes)+')),'
                 ' complete AS (SELECT v.* FROM visible v WHERE v.workday_id IS NULL OR NOT EXISTS '
                 '(SELECT 1 FROM central_workday_legs x WHERE x.workday_id=v.workday_id '
                 'AND NOT EXISTS (SELECT 1 FROM visible y WHERE y.id=x.shift_id))),'
@@ -111,7 +118,7 @@ def history(owner_view: Literal['current','review','history'], search: str='',
         grouped={key:[] for key in keys}
         for row in rows:
             key=row.pop('group_key')
-            row.pop('workday_id',None);row.pop('anchor_shift_id',None)
+            row.pop('workday_id',None);row.pop('anchor_shift_id',None);row.pop('group_opened_at',None)
             grouped[key].append(row)
         return ops.safe({'shifts':[collapse(grouped[key]) for key in keys], 'total':total,'offset':offset,
                          'next_offset':offset+PAGE_SIZE if offset+PAGE_SIZE<total else None})
