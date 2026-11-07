@@ -1072,7 +1072,7 @@
   async function requestEmail(event){event.preventDefault();await busy($('email-request-submit'),async()=>{try{await api('/api/identity/email/request',{method:'POST',data:{email:$('login-email').value.trim(),brand_id:requestedBrandId,purpose:state.session.user?.identity_kind==='guest'?'customer_link':'email_login'}});text('email-request-state',t("if_this_email_is_eligible_you_will_receive_a_secure_single_use_li"));}catch(error){showError('account-error',errorMessage(error));}});}
   async function verifyEmailLink(){const fragment=new URLSearchParams(location.hash.slice(1));if(!fragment.has('identity_challenge')||!fragment.has('identity_token'))return;history.replaceState(null,'',location.pathname+location.search);state.emailLink={challenge_id:fragment.get('identity_challenge'),token:fragment.get('identity_token')};try{const result=await api('/api/identity/email/verify',{method:'POST',data:state.emailLink});state.emailLink=null;await establishIdentity(result);toast(t("email_verified"));}catch(error){showError('account-error',errorMessage(error));if(error.code==='STAFF_PROFILE_REQUIRED'){$('guest-form').hidden=true;$('email-login-button').hidden=true;$('identity-onboarding-form').hidden=false;}text('account-title',t("email_verification"));openDialog('account-dialog');}}
   function directionsLink(b){if(!b)return '';const raw=b.directions_url;if(typeof raw!=='string')return '';try{const u=new URL(raw);return u.protocol==='https:'&&['www.google.com','google.com','maps.google.com','maps.app.goo.gl','goo.gl'].includes(u.hostname)?u.href:'';}catch{return '';}}
-  function showImage(product){const url=safeImage(product?.image_url);if(!url){toast(t("the_photo_is_currently_unavailable"));return;}state.imageProduct=product;$('image-full').src=url;$('image-full').alt=sourceText(product);text('image-title',sourceText(product));openDialog('image-dialog');}
+  function showImage(product){const url=safeImage(product?.image_url);if(!url){toast(t("the_photo_is_currently_unavailable"));return;}state.imageProduct=product;text('image-price',picturedPriceText(product.imagePriceRange??picturedPriceRange(product)));$('image-full').src=url;$('image-full').alt=sourceText(product);text('image-title',sourceText(product));openDialog('image-dialog');}
   function renderBranches() {
     const cities=new Map();
     for(const b of state.branches)if(b.city&&!cities.has(city(b.city)))cities.set(city(b.city),b.city);
@@ -1269,7 +1269,7 @@
     for(const label of preferred){
       const size=sizes.find(v=>String(v.name||'').includes(label));
       const image=size&&(product.variant_images||[]).find(v=>v.options?.SIZE===(size.code||size.id)&&safeImage(v.image_url));
-      if(image)return {image_url:image.image_url,label:sourceText(size)};
+      if(image)return {image_url:image.image_url,label:sourceText(size),sizeCode:size.code||size.id};
     }
     return {image_url:product.image_url};
   }
@@ -1458,9 +1458,30 @@
     img.onerror=display===original?null:()=>{img.onerror=null;img.src=original;};
     img.src=display;
   }
-  function showSelectedProductImage() { if(!state.product)return;showImage({...state.product,image_url:$('product-image').dataset.originalImage||state.product.image_url}); }
+  function picturedPriceRange(product, selections=[{}]){
+    const rows=product.variant_price_matrix;
+    if(!rows?.length)return [product.price_halalas,product.price_halalas];
+    const coverSize=menuCover(product).sizeCode;
+    let low=0,high=0;
+    for(const selection of selections){
+      const options={...(coverSize?{SIZE:coverSize}:{}),...selection};
+      const candidates=rows.filter(row=>Object.entries(options).every(([key,value])=>row.options[key]===value))
+        .filter(row=>groups(product).every(group=>group.values.some(value=>(value.code||value.id)===row.options[group.code]&&value.enabled!==false&&value.available!==false)));
+      if(!candidates.length)return null;
+      low+=Math.min(...candidates.map(row=>row.price_halalas));
+      high+=Math.max(...candidates.map(row=>row.price_halalas));
+    }
+    return [low,high];
+  }
+  function picturedPriceText(range){
+    if(!range)return '';
+    const [low,high]=range;
+    return low===high?money(low):entryText('من ','From ')+money(low)+' – '+money(high);
+  }
+  function showSelectedProductImage() { if(!state.product)return;showImage({...state.product,image_url:$('product-image').dataset.originalImage||state.product.image_url,imagePriceRange:picturedPriceRange(state.product,[state.optionValues[state.imageUnit]||{}])}); }
   function renderVariantPrice(activeUnit=0){
     const product=state.product;if(!product)return;
+    state.imageUnit=activeUnit;
     if(product.brand_id==='enbishan'){
       const options=state.optionValues[activeUnit]||state.optionValues[0]||{};
       const sizeGroup=groups(product).find(g=>g.code==='SIZE');
@@ -1479,8 +1500,8 @@
     const total=complete?rows.reduce((sum,row)=>sum+row.price_halalas,0):product.price_halalas;
     const before=complete?rows.reduce((sum,row)=>sum+(row.compare_at_halalas||row.price_halalas),0):globalThis.KPSMenuVariants?.starting(product)?.compare_at_halalas;
     const price=$('product-price');price.replaceChildren();
-    if(!complete&&state.optionValues.some(options=>options.SIZE)){
-      text('product-price',entryText('يظهر الإجمالي بعد إكمال الاختيارات','Total shown after completing your choices'));
+    if(!complete){
+      text('product-price',picturedPriceText(picturedPriceRange(product,state.optionValues)));
       delete price.dataset.variantPrice;
     }else{
       if(before>total){const old=node('del','',money(before));price.append(old,document.createTextNode(' '));}
@@ -1962,6 +1983,7 @@
     }
     if($('image-dialog').open&&state.imageProduct){
       text('image-title',sourceText(state.imageProduct));
+      text('image-price',picturedPriceText(state.imageProduct.imagePriceRange??picturedPriceRange(state.imageProduct)));
       $('image-full').alt=sourceText(state.imageProduct);
     }
     if($('orders-dialog').open){
