@@ -275,13 +275,15 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None, *,
         return False, 'BRANCH_CONFIGURATION_UNVERIFIED', 'بيانات تشغيل هذا الفرع لم تُعتمد بعد.'
     if not settings.get('opening_hours'):
         return False, 'HOURS_UNCONFIGURED', 'ساعات استقبال هذا الفرع غير مهيأة.'
-    if not (late_desk or prior_delivery) and not _hours_open(settings['opening_hours'], now):
+    from . import morning_delivery
+    enbishan_morning = (service == 'delivery' and branch.get('brand_id') == 'enbishan'
+                        and morning_delivery.active(branch, brand_settings, now))
+    if not (late_desk or prior_delivery or enbishan_morning) and not _hours_open(settings['opening_hours'], now):
         return False, 'BRANCH_CLOSED', 'الفرع مغلق الآن لاستقبال الطلبات.'
     if not isinstance(settings.get('payment_methods'), list) or not settings['payment_methods']:
         return False, 'PAYMENT_UNCONFIGURED', 'طرق الدفع لهذا الفرع غير مهيأة.'
     if service == 'delivery':
-        from . import morning_delivery
-        delivery_hours = morning_delivery.HOURS if morning_delivery.active(branch, brand_settings, now) else settings.get('delivery_hours')
+        delivery_hours = morning_delivery.scheduled_delivery_hours(branch, brand_settings, now)
         if not delivery_hours:
             return False, 'DELIVERY_HOURS_UNCONFIGURED', 'ساعات التوصيل لهذا الفرع غير مهيأة.'
         if not (late_desk or prior_delivery) and not _hours_open(delivery_hours, now):
@@ -552,7 +554,7 @@ def branches(brand_id: str | None = Query(default=None, max_length=80)):
         item['delivery_eligible'] = delivery_city_eligible(branch)
         from . import morning_delivery
         morning = morning_delivery.active(branch, brand_settings, now)
-        item['delivery_schedule'] = hours_status(morning_delivery.HOURS if morning else branch['settings'].get('delivery_hours'), now)
+        item['delivery_schedule'] = hours_status(morning_delivery.scheduled_delivery_hours(branch, brand_settings, now), now)
         item['services'] = {}
         for service in ('pickup', 'car', 'delivery'):
             available, code, reason = branch_service(branch, service, now=now, brand_settings=brand_settings)
@@ -1378,7 +1380,7 @@ def rank_nearest_branches(rows, point, service, brand_settings, products=(), by_
         item.update(available=available, code=code, reason=reason, unavailable_products=missing,
                     directions_url=directions_url(branch), distance_label=DISTANCE_LABEL,
                     delivery_fee_halalas=branch['settings'].get('delivery_fee_halalas'),
-                    delivery_schedule=hours_status(morning_delivery.HOURS if morning_delivery.active(branch, brand_settings, now) else branch['settings'].get('delivery_hours'), now),
+                    delivery_schedule=hours_status(morning_delivery.scheduled_delivery_hours(branch, brand_settings, now), now),
                     location_verified=location_verified(branch), covered=covered(branch['settings'].get('coverage'), point),
                     services={kind: {'available': state[0], 'code': state[1], 'reason': state[2]}
                               for kind in ('pickup', 'car', 'delivery')
