@@ -293,6 +293,16 @@ host.querySelector('#ac-results').innerHTML=`<div class="ac-shift-filter"><label
     }
     bindSettlementActions(rows);
     bindManagerBagActions(cards);
+    host.querySelectorAll('[data-manager-day-split]').forEach(button=>button.onclick=()=>guarded(async()=>{
+      const id=button.dataset.managerDaySplit,path='/api/accounting/manager-cards/'+encodeURIComponent(id)+'/day-split';
+      const preview=await api(path);
+      const amount=(day,method)=>(day.collections||[]).find(row=>row.method===method)?.amount_halalas||0;
+      const lines=preview.days.map(day=>`<tr><td><bdi>${esc(day.day)}</bdi></td><td>${esc(day.driver_duties)}</td><td>${esc(day.order_count)}</td><td>${esc(money(amount(day,'cash')))}</td><td>${esc(money(amount(day,'card')))}</td><td>${esc(day.bag_count)}</td></tr>`).join('');
+      modal(tr('معاينة فصل التقفيلات','Preview closure separation'),`<form class="ac-case-form"><p>${text('ستظهر كل مناوبة في بطاقة مستقلة. تبقى الأكياس والإيصالات والمبالغ الأصلية محفوظة.','Each duty gets a separate card. Original bags, receipts and amounts are retained.')}</p><div class="ac-table"><table><thead><tr><th>${text('اليوم','Day')}</th><th>${text('شفتات السائقين','Driver duties')}</th><th>${text('الطلبات','Orders')}</th><th>${text('الكاش المحصل','Collected cash')}</th><th>${text('الشبكة المسجلة','Recorded card')}</th><th>${text('الأكياس','Bags')}</th></tr></thead><tbody>${lines}</tbody></table></div><label>${text('سبب التصحيح','Correction reason')}<textarea name="reason" required minlength="5" maxlength="2000"></textarea></label><label><input type="checkbox" name="confirmed" required> ${text('راجعت توزيع التقفيلات والمبالغ','I reviewed the closure and amount breakdown')}</label><button type="submit">${text('فصل التقفيلات','Separate closures')}</button></form>`,async fd=>{
+        await mutation(path,{fingerprint:preview.fingerprint,reason:fd.get('reason'),confirmed:fd.get('confirmed')==='on'});
+        closeModal();await loadManagerCards(id);
+      });
+    }));
     bindManagerFilters(cards);
     for(const card of host.querySelectorAll('[data-manager-card]')){
       card.addEventListener('toggle',()=>{if(card.open)managerCardOpenIds.add(card.dataset.managerCard);else managerCardOpenIds.delete(card.dataset.managerCard);saveManagerCardView();});
@@ -328,7 +338,7 @@ host.querySelector('#ac-results').innerHTML=`<div class="ac-shift-filter"><label
     }).join('');
     const pendingIds=new Set(pending.map(d=>d.id));
     const remaining=bags.filter(b=>!(b.shift_ids||[b.anchor_shift_id]).some(id=>pendingIds.has(id)));
-    return `<section class="ac-shift-drivers"><h3>${text('السائقون في فترة هذا الشفت','Drivers in this shift period')}</h3>${content}${remaining.map(managerBagCard).join('')}</section>`;
+    return `<section class="ac-shift-drivers">${card.can_split_manager_days?`<button type="button" class="ac-secondary" data-manager-day-split="${esc(card.id)}">${text('معاينة فصل التقفيلات','Preview closure separation')}</button>`:''}<h3>${text('السائقون في فترة هذا الشفت','Drivers in this shift period')}</h3>${content}${remaining.map(managerBagCard).join('')}</section>`;
   }
   function managerBagCard(b){
     return `<article class="ac-inline-bag" data-inline-bag="${esc(b.id)}"><div><strong>${esc(b.driver_name)}</strong><small>${text('الكيس','Bag')}: <bdi>${esc(b.reference)}</bdi></small><small>${text('مكان الكيس','Bag location')}: ${esc(b.destination==='manager_vault'?tr('خزنة مدير التوصيل','Delivery manager vault'):b.branch_name||'—')}</small></div><div><small>${text('المعلن','Declared')}: ${esc(money(b.declared_cash_halalas))}</small><strong>${b.count_id?text('المعدود فعليا','Actually counted')+': '+esc(money(b.received_cash_halalas)):text('لم يسجل استلام المحاسبة','Accounting receipt not recorded')}</strong></div><div>${!options.can_review?'':!b.count_id?(b.ready_to_count?`<button type="button" data-manager-bag-count="${esc(b.id)}">${text('سحب وجرد كيس السائق','Collect and count driver bag')}</button>`:`<small>${text('بانتظار استلام مدير التوصيل للكيس','Awaiting delivery manager bag receipt')}</small>`):`${(b.accounting_custody_difference_halalas||b.accounting_custody_card_difference_halalas)?`<button type="button" data-manager-bag-custody="${esc(b.id)}">${text('معالجة فرق جرد الكيس','Treat bag count difference')}</button>`:''}${ctx.openSharedDriverClosure?`<button type="button" class="ac-secondary" data-ac-driver-allocate="${esc(b.anchor_shift_id)}">${text('الإسناد والمطابقة','Attribution and reconciliation')}</button>`:''}`}</div></article>`;

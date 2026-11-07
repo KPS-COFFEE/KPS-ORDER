@@ -62,6 +62,8 @@ def test_search_foreign_leg_id_and_dates_select_one_complete_physical_day(centra
     assert selected['total']==1 and len(selected['shifts'])==1
     assert selected['shifts'][0]['id']=='history-kps-2'
     assert selected['shifts'][0]['opening_halalas']==300
+    timed=get_history(actor,'owner_view=history&search=history-enbishan-2&opened_from=2026-01-03T21:00&opened_to=2026-01-03T21:00')
+    assert timed['total']==1 and len(timed['shifts'][0]['central_legs'])==2
     ranged=get_history(actor,'owner_view=history&start=2026-01-02&end=2026-01-03')
     assert ranged['total']==2
     assert {s['id'] for s in ranged['shifts']}=={'history-kps-1','history-kps-2'}

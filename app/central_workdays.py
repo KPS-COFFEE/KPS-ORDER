@@ -138,8 +138,11 @@ def _open(c, user, body):
     if not target or target['role'] not in {'driver', 'delivery_manager', 'owner'}:
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الموظف غير متاح.')
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', ('shift:'+target['id'],))
+    from .manager_admission import prior_day_filter
     from .aggregate_driver_closure import staffing_pending_sql
-    if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND "+staffing_pending_sql(), (target['id'],)).fetchone():
+    prior_filter, prior_params = prior_day_filter('shifts', body.kind)
+    if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND "
+                 + staffing_pending_sql() + prior_filter, (target['id'], *prior_params)).fetchone():
         raise db.error(409, 'SHIFT_ALREADY_OPEN', 'للموظف وردية مفتوحة؛ أكملها قبل فتح وردية جديدة.')
     from .central_operations import context
     scopes = context(c, target)['brands']

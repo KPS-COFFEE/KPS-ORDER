@@ -1121,7 +1121,59 @@ def accounting_manager_cards(offset:int=Query(0,ge=0),page_size:int=Query(20,ge=
         result=manager_cards(c,user,bids,page_size=page_size,offset=offset)
         if focus_id and not any(card['id']==focus_id for card in result['cards']):
             result['cards'].extend(manager_cards(c,user,bids,manager_shift_ids=[focus_id])['cards'])
+        from . import multibrand
+        if user['role']=='owner' and result['cards'] and multibrand.enabled():
+            ids=[card['id'] for card in result['cards']]
+            eligible={r['anchor_shift_id'] for r in c.execute("""SELECT w.anchor_shift_id
+                FROM central_workdays w JOIN manager_vault_closures vault ON vault.workday_id=w.id
+                JOIN shifts child ON child.manager_shift_id=w.anchor_shift_id
+                WHERE w.anchor_shift_id=ANY(%s) AND child.kind='driver'
+                  AND NOT EXISTS (SELECT 1 FROM manager_day_splits d WHERE d.source_shift_id=w.anchor_shift_id)
+                GROUP BY w.anchor_shift_id
+                HAVING count(DISTINCT ((child.opened_at AT TIME ZONE 'Asia/Riyadh')-interval '4 hours')::date)>1
+            """,(ids,)).fetchall()}
+            for card in result['cards']:
+                card['can_split_manager_days']=card['id'] in eligible
         return result
+
+
+class ManagerDaySplit(BaseModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    fingerprint:str=Field(pattern=r'^[a-f0-9]{64}$')
+    reason:str=Field(min_length=5,max_length=2000,pattern=r'^[^\x00]+$')
+    confirmed:StrictBool
+
+
+@router.get('/manager-cards/{manager_shift_id}/day-split')
+def preview_manager_day_split(manager_shift_id:str,response:Response,user=Depends(auth.require_roles('owner'))):
+    from . import central_workdays as days, manager_day_split
+    response.headers['Cache-Control']='no-store'
+    days.require_enabled(user,REVIEW,existing_sid=manager_shift_id)
+    with db.tx() as c:
+        days.lock_lanes(c)
+        try:preview=manager_day_split.plan(c,user,manager_shift_id)
+        except ValueError as exc:raise db.error(409,'MANAGER_DAY_SPLIT_BLOCKED',
+            'تعذر فصل التقفيلات بأمان. راجع السجل الأصلي والتسويات المسجلة.') from exc
+        return safe({'fingerprint':preview['fingerprint'],'validation':preview['validation'],
+                     'days':[{'day':day,'driver_duties':len(preview['day_membership'][day]),**totals}
+                             for day,totals in preview['validation']['days'].items()]})
+
+
+@router.post('/manager-cards/{manager_shift_id}/day-split')
+def apply_manager_day_split(manager_shift_id:str,body:ManagerDaySplit,request:Request,user=Depends(auth.require_roles('owner'))):
+    from . import central_workdays as days, manager_day_split
+    if not body.confirmed:fail('CONFIRMATION_REQUIRED','أكد مراجعة بيانات الفصل.')
+    days.require_enabled(user,REVIEW,existing_sid=manager_shift_id)
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+        days.lock_lanes(c)
+        days.authorized(c,user,manager_shift_id)
+        def perform():
+            try:return safe(manager_day_split.apply(c,user,manager_shift_id,body.fingerprint,body.reason))
+            except ValueError as exc:raise db.error(409,'MANAGER_DAY_SPLIT_STALE',
+                'تغيرت بيانات التقفيلة أو أصبحت غير مؤهلة. أعد فتح المعاينة.') from exc
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),
+            'accounting.manager_day_split:'+manager_shift_id,body.model_dump(),perform)
 
 
 @router.post('/driver-settlements/{report_id}/extend-deadline')

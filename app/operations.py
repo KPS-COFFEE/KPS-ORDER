@@ -396,6 +396,11 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
     if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
     if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+target['id'],))
+    if body.kind == 'manager':
+        from .manager_admission import retire_previous_days
+        retire_previous_days(c, user, target)
+    from .manager_admission import prior_day_filter
+    prior_filter, prior_params = prior_day_filter('s', body.kind)
     physical_pending = None
     if multibrand.enabled():
         from .aggregate_driver_closure import staffing_pending_sql
@@ -403,11 +408,11 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
     if multibrand.enabled() and c.execute(
             "SELECT 1 FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id "
             "WHERE s.user_id=%s AND s.status<>'closed' "
-            "AND " + physical_pending + " LIMIT 1", (target['id'],)).fetchone():
+            "AND " + physical_pending + prior_filter + " LIMIT 1", (target['id'], *prior_params)).fetchone():
         # An existing grouped day cannot acquire an independent physical shift.
         from .central_workdays import require_action
         require_action()
-    active_sql="SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'"
+    active_sql="SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND manager_admission_ended_at IS NULL"
     active_params=(target['id'],)
     if multibrand.enabled():
         multibrand.isolation_guard()
@@ -480,6 +485,9 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
                 or (continuation.get('vehicle_log') or {}).get('receipt_trial')):
             raise db.error(409, 'CENTRAL_ADOPTION_SCOPE', 'مرجع الوردية القائمة غير مطابق.')
     if body.kind == 'driver':
+        if not continuation and period != 'morning':
+            from .manager_admission import require_current
+            require_current(manager)
         operational_date, delivery_window = driver_shift_window(c, brand, branch_rows, manager, manager_user)
     else:
         operational_date, delivery_window = delivery_shift_window(
@@ -559,17 +567,27 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             return open_shift_in_tx(c, user, body)
         return mutate(c,user,request,'shift.open',body.model_dump(),perform)
 
+def shift_opened_bounds(opened_from, opened_to):
+    opened_from, opened_to = (value.replace(tzinfo=RIYADH) if value and value.tzinfo is None else value
+                              for value in (opened_from, opened_to))
+    if opened_from and opened_to and opened_from > opened_to:
+        fail(422, 'وقت البداية بعد النهاية')
+    return opened_from, opened_to
+
+
 @router.get('/shifts')
 @router.get('/shifts/current')
 def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id: str | None = None,
            owner_view: Literal['current','review','history'] | None = None,
            search: str = '', start: date | None = None, end: date | None = None,
-           offset: int = Query(0, ge=0)):
+           offset: int = Query(0, ge=0), opened_from: datetime | None = None,
+           opened_to: datetime | None = None):
     shift_roles(user,'shifts_view','owner','delivery_manager','driver','delivery_staff')
     if owner_view:
         shift_roles(user,'shifts_view','owner')
         if order_id or task_id:fail(422,'لا يمكن الجمع بين عرض الشفتات واختيار سائق')
         if start and end and start>end:fail(422,'تاريخ البداية بعد النهاية')
+        opened_from, opened_to = shift_opened_bounds(opened_from, opened_to)
     with db.tx() as c:
         page_meta={}
         context = user.get('_morning_manager_context')
@@ -621,6 +639,10 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             day="COALESCE(s.reporting_operational_date,s.delivery_operational_date, ((s.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '4 hours')::date)"
             if start:where.append(day+'>=%s');params.append(start)
             if end:where.append(day+'<=%s');params.append(end)
+            if opened_from:
+                where.append('s.opened_at >= %s');params.append(opened_from)
+            if opened_to:
+                where.append("s.opened_at < %s + interval '1 minute'");params.append(opened_to)
             source=' FROM shifts s JOIN users u ON u.id=s.user_id WHERE '+' AND '.join(where)
             total=c.execute('SELECT count(*) AS n'+source,params).fetchone()['n']
             rows=c.execute('SELECT s.*,u.display_name'+source+' ORDER BY s.opened_at DESC,s.id LIMIT 50 OFFSET %s',params+[offset]).fetchall()
@@ -674,6 +696,11 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
         from .central_workdays import annotate
         annotate(c, rows)
         shift_order_counts.attach(c,rows,user)
+        from .manager_admission import stored_day
+        current_day = service_hours.delivery_operational_date()
+        for row in rows:
+            if row['kind'] == 'manager' and row.get('opened_at'):
+                row['staffing_current_day'] = stored_day(row) == current_day
         return safe(blind_closure.driver_view(user,{'shifts':rows,**people_data(c,user),**page_meta},shift_money=True))
 
 def driver_cash_policy(c,brand_id):
@@ -692,7 +719,7 @@ def people_data(c,user):
     users=[dict(u,duty_city=city_assignments.get(u['id'])) for u in users]
     if user.get('home_brand_id') and user['role']=='owner':
         users=[dict(u,branch_ids=[b for b in u['branch_ids'] if b in user['branch_ids']]) for u in users]
-    managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,s.delivery_window_snapshot,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
+    managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,s.opened_at,s.delivery_operational_date,s.manager_admission_ended_at,s.delivery_window_snapshot,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if unrestricted_owner(user) or (set(s['branch_ids'])<=set(user.get('branch_ids',[])) if user.get('home_brand_id') and user['role']=='owner' else set(s['branch_ids'])&set(user.get('branch_ids',[])))]
     if user['role']=='driver':
         managers=[s for s in managers if bool(set(user.get('branch_ids',[]))&set(s['branch_ids']))]
@@ -712,7 +739,8 @@ def people_data(c,user):
                          and authorized(c, dict(s, brand_id=user['brand_id']), user['branch_ids']))]
     from .central_workdays import annotate
     annotate(c, managers)
-    return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers,'driver_cash_receipt_policy':driver_cash_policy(c,user['brand_id'])}
+    from .manager_admission import accepts_staff
+    return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if accepts_staff(s)],'closure_manager_shifts':managers,'driver_cash_receipt_policy':driver_cash_policy(c,user['brand_id'])}
 
 @router.get('/operations/people')
 def people(user=Depends(auth.current_user)):
@@ -1025,6 +1053,11 @@ def _eligible_driver_shift(c, s, order, *, observational):
     manager=(c.execute('SELECT * FROM shifts WHERE id=%s', (s['manager_shift_id'],)).fetchone()
              if observational else lock_shift(c,s['manager_shift_id']))
     if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')
+    from .manager_admission import stored_day
+    if (order.get('created_at') and order.get('snapshot', {}).get('delivery_period') != 'morning'
+            and (manager.get('delivery_window_snapshot') or {}).get('period') != 'morning'
+            and service_hours.delivery_operational_date(order['created_at']) > stored_day(manager)):
+        raise db.error(409, 'MANAGER_NEW_DAY_REQUIRED', 'الطلب يخص يومًا أحدث؛ اختر شفت مدير اليوم.')
     principal=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
     if multibrand.enabled():principal=multibrand.project(c,principal,order['brand_id'])
     if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (not unrestricted_owner(principal) and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')

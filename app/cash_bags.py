@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import Field, StrictBool, StrictInt
 from . import auth, db, operations as ops, multibrand, central_workdays as days
+from .manager_day_split import vault_closure
 from .aggregate_driver_closure import accounting, authorize, latest, validate_operational, physical_finished
 router=APIRouter(prefix='/api/cash-bags',tags=['cash-bags'])
 LOCAL_CITIES=frozenset({'حفر الباطن'})
@@ -145,7 +146,7 @@ def vault_close(sid:str,body:VaultClose,request:Request,user=Depends(auth.curren
         if day['kind']!='manager' or day['user_id']!=user['id']:raise db.error(403,'VAULT_CLOSE_OWN_ONLY','المدير ينهي مناوبته من حسابه.')
         def perform():
             if not body.confirmed:raise db.error(422,'VAULT_CLOSE_CONFIRMATION','أكد حفظ أكياس السائقين منفصلة في الخزنة.')
-            if c.execute('SELECT 1 FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone():raise db.error(409,'VAULT_ALREADY_CLOSED','انتهاء المناوبة محفوظ.')
+            if vault_closure(c,day['id']):raise db.error(409,'VAULT_ALREADY_CLOSED','انتهاء المناوبة محفوظ.')
             for _,s in legs:
                 if s['status'] not in {'open','closing','submitted'} or s.get('staffing_ended_at'):raise db.error(409,'VAULT_SHIFT_STATE','المناوبة منتهية أو غير متاحة.')
                 ops.guard_accepted_awaiting_dispatch(c,s)

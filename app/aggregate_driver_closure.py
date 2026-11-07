@@ -15,7 +15,7 @@ BASE='/central-operations/workdays/{sid}'
 
 def staffing_pending_sql(alias='shifts'):
     if alias not in {'shifts','s','driver','child'}:raise ValueError('Unknown shift alias')
-    return f"{alias}.staffing_ended_at IS NULL"
+    return f"({alias}.staffing_ended_at IS NULL AND {alias}.manager_admission_ended_at IS NULL)"
 
 
 def physical_finished(c,sid):
@@ -397,7 +397,8 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
                 if s['status']!='submitted' or (s.get('submission') or {}).get('shared_declaration_id')!=declaration['id']:raise db.error(409,'SHARED_ALLOCATION_STATE','سجل الوردية لا يطابق أصل التقفيلة.')
                 bag=c.execute('SELECT destination FROM driver_cash_bags WHERE declaration_id=%s',(declaration['id'],)).fetchone()
                 remote=bool(bag and bag['destination']=='branch')
-                manager=ops.lock_shift(c,source['manager_shift_id'])
+                from .manager_day_split import allocation_manager_id
+                manager=ops.lock_shift(c,allocation_manager_id(c,s,source['manager_shift_id']))
                 if not remote and (not manager or manager['status']=='closed' or manager['user_id']!=receipt['received_by']):raise db.error(409,'SHARED_MANAGER_LEDGER_CLOSED','يلزم إسناد النقد قبل الإقفال المالي لسجل مدير الاستلام.')
                 if ops.balance(c,s)!=source['expected_halalas']:raise db.error(409,'SHARED_EXPECTED_CHANGED','تغير دفتر النقد بعد التصريح؛ يلزم مراجعة مرتبطة من المحاسبة.')
                 from .driver_incentives import require_decisions

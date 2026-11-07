@@ -5,7 +5,8 @@ FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PORT=10000
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends fonts-dejavu-core libstdc++6 libssl3t64 \
+    && apt-get install --yes --no-install-recommends fonts-dejavu-core libstdc++6 libssl3t64 zlib1g \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' zlib1g)" ge '1:1.3.dfsg+really1.3.1-1+deb13u1' \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 kpsorder \
     && useradd --uid 10001 --gid kpsorder --no-create-home kpsorder

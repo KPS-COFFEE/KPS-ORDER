@@ -8,7 +8,7 @@ def _physical_staffing_clause():
     # The completion marker is installed only by the multi-brand migration.
     # Old submitted financial records remain history, never fresh staffing.
     from . import multibrand
-    return ' AND staffing_ended_at IS NULL' if multibrand.enabled() else ''
+    return ' AND manager_admission_ended_at IS NULL' + (' AND staffing_ended_at IS NULL' if multibrand.enabled() else '')
 
 
 def current_shift(conn, user):

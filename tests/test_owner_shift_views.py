@@ -26,6 +26,8 @@ def test_owner_shift_views_scope_pagination_dates_and_preservation(ops):
     assert not ({s['id'] for s in first['shifts']}&{s['id'] for s in second['shifts']})
     assert view('history',offset=200)['next_offset'] is None
     assert view('history',search='manager',start='2026-10-13',end='2026-10-13')['total']==205
+    assert view('history',opened_from='2026-10-13T21:00',opened_to='2026-10-13T21:00')['total']==205
+    assert view('history',opened_from='2026-10-13T21:01')['total']==0
     assert view('history',search='nonexistent')['total']==0
     assert view('history',end='2026-10-12')['total']==0
     assert actor('owner').get('/api/shifts?owner_view=history&start=2026-10-14&end=2026-10-13').status_code==422
