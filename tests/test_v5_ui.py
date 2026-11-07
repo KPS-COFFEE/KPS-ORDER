@@ -120,7 +120,7 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
             }''')
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert page.locator('.cart-line').count() == 1
-        page.locator('#account-button').click()
+        page.locator('#checkout-button').click()
         expect(page.locator('#guest-form')).to_be_hidden()
         expect(page.locator('#email-login-button')).to_be_hidden()
         expect(page.locator('#otp-request-form')).to_be_visible()
