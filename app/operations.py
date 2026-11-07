@@ -344,8 +344,6 @@ def driver_shift_window(c, brand, branches, manager, principal):
     settings = c.execute('SELECT settings FROM brands WHERE id=%s', (brand,)).fetchone()['settings']
     if settings.get('services', {}).get('delivery', True) is not True:
         fail(409, 'خدمة التوصيل موقوفة من إدارة البراند؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
-    from .manager_admission import require_current
-    require_current(manager)
     snapshot = deepcopy(manager.get('delivery_window_snapshot') or {})
     period = snapshot.get('period', 'evening')
     morning = period == 'morning'
@@ -487,6 +485,9 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
                 or (continuation.get('vehicle_log') or {}).get('receipt_trial')):
             raise db.error(409, 'CENTRAL_ADOPTION_SCOPE', 'مرجع الوردية القائمة غير مطابق.')
     if body.kind == 'driver':
+        if not continuation and period != 'morning':
+            from .manager_admission import require_current
+            require_current(manager)
         operational_date, delivery_window = driver_shift_window(c, brand, branch_rows, manager, manager_user)
     else:
         operational_date, delivery_window = delivery_shift_window(
@@ -1039,7 +1040,9 @@ def _eligible_driver_shift(c, s, order, *, observational):
              if observational else lock_shift(c,s['manager_shift_id']))
     if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')
     from .manager_admission import stored_day
-    if service_hours.delivery_operational_date(order['created_at']) > stored_day(manager):
+    if (order.get('created_at') and order.get('snapshot', {}).get('delivery_period') != 'morning'
+            and (manager.get('delivery_window_snapshot') or {}).get('period') != 'morning'
+            and service_hours.delivery_operational_date(order['created_at']) > stored_day(manager)):
         raise db.error(409, 'MANAGER_NEW_DAY_REQUIRED', 'الطلب يخص يومًا أحدث؛ اختر شفت مدير اليوم.')
     principal=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
     if multibrand.enabled():principal=multibrand.project(c,principal,order['brand_id'])

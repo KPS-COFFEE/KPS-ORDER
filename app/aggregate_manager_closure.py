@@ -52,7 +52,7 @@ def latest(c,day_id):return c.execute('SELECT * FROM shared_manager_closure_decl
 
 def view(c,user,day,legs):
     anchor=next(s for _,s in legs if s['id']==day['anchor_shift_id'])
-    vault=vault_closure(c,day['id'])
+    vault=vault_closure(c,day['id'], allow_inherited=bool((anchor.get('submission') or {}).get('attribution_correction')))
     dec=latest(c,day['id'])
     receipt=c.execute('SELECT * FROM shared_manager_closure_receipts WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
     returned=c.execute('SELECT * FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None

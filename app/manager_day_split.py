@@ -27,11 +27,11 @@ def shifted_window(window, old_day, new_day):
     return result
 
 
-def vault_closure(c, workday_id):
+def vault_closure(c, workday_id, *, allow_inherited=True):
     """Project current bag membership; preserve the original vault declaration."""
     row = c.execute('SELECT * FROM manager_vault_closures WHERE workday_id=%s', (workday_id,)).fetchone()
     split = None
-    if not row:
+    if not row and allow_inherited:
         split = c.execute('SELECT correction.* FROM manager_day_splits correction '
             'JOIN central_workday_legs target ON target.shift_id=correction.target_shift_id '
             'WHERE target.workday_id=%s ORDER BY correction.id LIMIT 1', (workday_id,)).fetchone()

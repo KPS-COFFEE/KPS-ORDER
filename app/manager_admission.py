@@ -34,7 +34,7 @@ def retire_previous_days(c, user, target, *, at=None):
     Do not change status, amounts, child attribution or physical receipt markers.
     A genuine same-day duplicate remains blocked by both the API and its index.
     """
-    now = at or datetime.now(service_hours.RIYADH)
+    now = at or service_hours.now_riyadh()
     today = service_hours.delivery_operational_date(now)
     rows = c.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='manager' "
                      "AND status<>'closed' AND manager_admission_ended_at IS NULL "
