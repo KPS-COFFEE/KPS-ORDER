@@ -54,3 +54,5 @@
 @media(max-width:550px){.announcement-ticker{min-height:44px}.ticker-cycle{font-size:14px;gap:22px;min-height:44px}.ticker-pause{padding:6px 8px;max-width:88px;font-size:11px}.intro-banner{min-height:120px;padding-block:16px}.intro-banner .hero-quote{font-size:12px}.branch-picker{grid-template-columns:1fr}.nearest-panel{padding:12px}.nearest-branch-card{align-items:start;flex-wrap:wrap}.nearest-branch-card .button{font-size:14px;min-height:44px}.nearest-branch-card h3{font-size:17px}.branch-location-tools .button{font-size:14px}}
 @media(prefers-reduced-motion:reduce){.announcement-track{animation:none!important;will-change:auto;width:100%;transform:none}.ticker-cycle{flex-wrap:wrap;white-space:normal;justify-content:center;width:100%;gap:12px;padding-block:5px}.ticker-text{white-space:normal;overflow-wrap:anywhere}.ticker-cycle[aria-hidden=true],.ticker-cycle>[aria-hidden=true]{display:none}}
 @media print{.announcement-ticker{display:none!important}}
+
+.signature-banner-image{display:block;width:100%;padding:0;border:0;background:none;cursor:pointer}
