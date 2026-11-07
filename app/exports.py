@@ -58,10 +58,10 @@ TABLES += ('driver_tracking_points', 'driver_trip_stops', 'driver_route_eta_stat
 TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
 # Restore orders first and immutable routes last; their nullable current pointer
 # is deferred, and the complete relationship is verified before constraints end.
-TABLES += ('order_preparation_routes',)
+TABLES += ('order_preparation_routes','manager_day_splits')
 # Notification addresses and private delivery receipts stay in full archives.
 TABLES += ('manager_notification_subscriptions','manager_email_notifications')
-SHARED_PHYSICAL_TABLES = {'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
+SHARED_PHYSICAL_TABLES = {'manager_day_splits','driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
                           'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
 # Combined physical actuals cannot be split into invented brand amounts in a brand export.
 # Full private archives retain the whole immutable declaration and its provenance.
@@ -425,6 +425,15 @@ def _verify_staffing_markers(conn, available):
         proofs.append("""(s.kind='manager' AND EXISTS (
             SELECT 1 FROM manager_vault_closures v JOIN central_workday_legs l ON l.workday_id=v.workday_id
             WHERE l.shift_id=s.id AND v.manager_id=s.user_id AND v.created_at=s.staffing_ended_at))""")
+    if 'manager_day_splits' in available and 'manager_vault_closures' in available:
+        proofs.append("""(s.kind='manager' AND EXISTS (
+            SELECT 1 FROM manager_day_splits correction JOIN shifts source ON source.id=correction.source_shift_id
+            JOIN central_workday_legs l ON l.shift_id=source.id
+            JOIN manager_vault_closures vault ON vault.workday_id=l.workday_id
+            WHERE correction.target_shift_id=s.id AND correction.brand_id=s.brand_id
+              AND source.kind='manager' AND source.brand_id=s.brand_id AND source.user_id=s.user_id
+              AND source.staffing_ended_at=s.staffing_ended_at AND vault.created_at=s.staffing_ended_at
+              AND vault.manager_id=s.user_id AND s.delivery_operational_date=correction.corrected_day))""")
     invalid = conn.execute("SELECT s.id FROM shifts s WHERE s.staffing_ended_at IS NOT NULL "
         "AND (s.status NOT IN ('submitted','closed') OR NOT ("+' OR '.join(proofs)+")) LIMIT 1").fetchone()
     if invalid:

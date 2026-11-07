@@ -6,6 +6,7 @@ ledgers stay submitted and may receive only those delayed child attributions.
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import Field, StrictBool, StrictInt
 from . import auth, db, multibrand, operations as ops, central_workdays as days
+from .manager_day_split import vault_closure
 from .aggregate_driver_closure import accounting, physical_finished, receipt_difference
 router=APIRouter(prefix='/api',tags=['shared-manager-closure'])
 BASE='/central-operations/workdays/{sid}'
@@ -51,7 +52,7 @@ def latest(c,day_id):return c.execute('SELECT * FROM shared_manager_closure_decl
 
 def view(c,user,day,legs):
     anchor=next(s for _,s in legs if s['id']==day['anchor_shift_id'])
-    vault=c.execute('SELECT * FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone()
+    vault=vault_closure(c,day['id'])
     dec=latest(c,day['id'])
     receipt=c.execute('SELECT * FROM shared_manager_closure_receipts WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
     returned=c.execute('SELECT * FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
@@ -138,7 +139,7 @@ def receive(sid:str,body:Receipt,request:Request,user=Depends(auth.current_user)
     with db.tx() as c:
         days.lock_lanes(c);day,legs=authorize(c,user,sid)
         def perform():
-            if c.execute('SELECT 1 FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone():raise db.error(409,'MANAGER_VAULT_DUTY_ENDED','المناوبة منتهية والأكياس للمحاسبة؛ لا يعاد فتحها أو تأكيد استلام المالك بعد حفظ الخزنة.')
+            if vault_closure(c,day['id']):raise db.error(409,'MANAGER_VAULT_DUTY_ENDED','المناوبة منتهية والأكياس للمحاسبة؛ لا يعاد فتحها أو تأكيد استلام المالك بعد حفظ الخزنة.')
             dec=latest(c,day['id'])
             if not dec or dec['id']!=body.declaration_id:raise db.error(409,'SHARED_MANAGER_DECLARATION_STALE','تغير أصل التقفيلة.')
             if c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_DECLARATION_RETURNED','أُعيدت التقفيلة؛ انتظر إعادة إرسال مدير التوصيل للأصل المصحح.')
@@ -162,7 +163,7 @@ def return_declaration(sid:str,body:Return,request:Request,user=Depends(auth.cur
     with db.tx() as c:
         days.lock_lanes(c);day,legs=authorize(c,user,sid)
         def perform():
-            if c.execute('SELECT 1 FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone():raise db.error(409,'MANAGER_VAULT_DUTY_ENDED','المناوبة منتهية والأكياس للمحاسبة؛ لا يعاد فتحها أو تأكيد استلام المالك بعد حفظ الخزنة.')
+            if vault_closure(c,day['id']):raise db.error(409,'MANAGER_VAULT_DUTY_ENDED','المناوبة منتهية والأكياس للمحاسبة؛ لا يعاد فتحها أو تأكيد استلام المالك بعد حفظ الخزنة.')
             dec=latest(c,day['id'])
             if not dec or dec['id']!=body.declaration_id:raise db.error(409,'SHARED_MANAGER_DECLARATION_STALE','تغير أصل التقفيلة.')
             if user['id'] not in {dec['recipient_user_id'],day['user_id']}:raise db.error(403,'SHARED_MANAGER_ACTUAL_RECIPIENT','الإرجاع لمدير الوردية أو المالك المستلم المسجل.')

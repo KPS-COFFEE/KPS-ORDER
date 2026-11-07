@@ -19,7 +19,8 @@
     "Shared morning/evening intervention authority, invoice-issuance locks, action-bound attachment exceptions and immutable linked amendment correction notes; prior dispatch and UI remain distinct",
     "Approved routed amendments retain their existing preparation destination through a bound replacement route; generic new-route creation remains disabled in the prior application",
     "Terminal customer requests preserve their original evidence and formal accounting review linkage; review-only referrals cannot authorize or post refunds, collections or cancellation",
-    "User-before-shift GPS foreign-key locks and bounded full-transaction retries preserve point identity, capture time and current driver/shift/session guards during fallback"
+    "User-before-shift GPS foreign-key locks and bounded full-transaction retries preserve point identity, capture time and current driver/shift/session guards during fallback",
+    "Read-only archive compatibility for documented manager day separation; the database rejects stale custody writes to the original parent."
   ],
   "fallbacks": [
     "b528 prior operations UI and original order search/listing remain distinct from the candidate",
@@ -32,13 +33,13 @@
     "app/branch_printing.py": "bd7305f03b20c501532f1d7ce2e12e2ca0f0ee1b3e616cc82a75f28f4ade198a",
     "app/central_operations.py": "f812c632c7bc82667b89a065135ddc4a87498f37a143a72f79fcc47cd1737969",
     "app/collected_order_authority.py": "94b873b3f13ca247cf3255294913fe9a011c8e10a36b4c060a01010991887579",
-    "app/db.py": "7bb3fcfaed39eaf7e35e9deed95ad30d2b9b8441e3398cb6309a5f876430f3b1",
+    "app/db.py": "b0d26c1f651f494658a79531a41a312cf2c00f6acd71d114b44ca2262a5304a6",
     "app/dispatch_impact.py": "642fe65518441cb3452526bb380fb25da2fe12c517d1cc6c3819dfb9f2e47d56",
     "app/dispatch_map.py": "33d033492c0e690a3fd23f46a2625dafe056a15a7d3fe854dea575ce58d98a3e",
     "app/driver_auto_return.py": "bda17455edf76783f9e22b91c2c4934c33e5470f85b570edd0b02a98ab720032",
     "app/driver_work_hours.py": "1bd3116c194dd0fa15f8fa1db9de18e0c6532a50ad495dc068a6f24c57ba4980",
     "app/employee_permissions.py": "b8fb067c08be6dfabd194e7b5f4d7e3203ec6fed7916712d93abadab5ce5b0c5",
-    "app/exports.py": "ffc2efbfc2fbf18cbb12d3e75af1285c733e278923ae2ce6241fffebac0525e9",
+    "app/exports.py": "097ab3414d4dc80c952dd65ec331ff4f5c5f410f28af8dacc64c4a51560624f7",
     "app/main.py": "a7c0095075afec3a436af2a8aa955b834253b140d389f0e4235964a85c5335e1",
     "app/operations.py": "d6278e3eb3f74dc38e88e331078305e9ff881e32b75247dd3da24163fc2b4a9d",
     "app/order_amendments.py": "aa9086ca8945b4c9b1bfcc1f3df2ecbe16f899ec39d1472fdf2cfb302ac1c5fb",
