@@ -1,7 +1,6 @@
-"""Customer map-link acceptance against real assets and synthetic APIs only."""
+"""Customer location and restored draft acceptance against real assets and synthetic APIs only."""
 import json
 import os
-from pathlib import Path
 import pytest
 from test_experience_entry_browser import static_customer
 
@@ -9,10 +8,9 @@ pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Ch
 
 
 @pytest.mark.parametrize('lang',['ar','en'])
-def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang):
+def test_current_location_refresh_otp_checkout_and_change(static_customer,lang):
     from playwright.sync_api import sync_playwright,expect
     point={'lat':28.4,'lng':45.9}
-    link='https://maps.app.goo.gl/SYNTHETIC?g_st=iw'
     branch={'id':'demo-branch','brand_id':'kps','branch_no':1,'name':'فرع المروج','city':'حفر الباطن',
             'location':point,'location_verified':True,'available':True,'direct_distance_meters':500,
             'payment_methods':['cash','card'],'services':{'delivery':{'available':True},'pickup':{'available':False},'car':{'available':False}}}
@@ -24,6 +22,7 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
         browser=p.chromium.launch(headless=True)
         context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True)
         context.add_init_script("localStorage.setItem('kps_customer_lang',"+json.dumps(lang)+")")
+        context.add_init_script("Object.defineProperty(navigator,'geolocation',{value:{getCurrentPosition(ok){ok({coords:{latitude:28.4,longitude:45.9}})}}})")
         page=context.new_page();page.on('pageerror',lambda error:errors.append(str(error)))
         def api(route):
             request=route.request;path=request.url.split('/api/',1)[1].split('?',1)[0];requests.append(path)
@@ -37,11 +36,7 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
                 'auth/otp/request':{'challenge_id':'synthetic','channel':'sms'},
                 'customer/marketing-consent':{'brand_id':'kps','notice':None,'marketing':{'sms':False,'whatsapp':False},'affects_order_messages':False},
             }
-            if path=='location/parse-map-url':
-                if request.post_data_json['url']!=link:
-                    route.fulfill(status=422,content_type='application/json',body=json.dumps({'detail':{'code':'MAP_PIN_REQUIRED','message':'حدد دبوسًا صحيحًا'}}));return
-                data={'location':point,'source':'customer_selected','location_is_device_verified':False}
-            elif path=='auth/otp/verify':
+            if path=='auth/otp/verify':
                 session.update(user=user,csrf_token='synthetic-only',customer_verified=True);data=session
             elif path in ('quote','gifts/quote'):
                 assert request.post_data_json['customer']['location']==point
@@ -56,29 +51,20 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
             route.fulfill(status=200,content_type='application/json',body=json.dumps(data))
         page.route('**/api/**',api)
         page.goto(static_customer+'/',wait_until='networkidle')
-        def open_link():
-            page.evaluate('document.fonts.ready')
-            control=page.locator('#manual-location-button')
-            control.evaluate("el=>el.scrollIntoView({block:'center',behavior:'instant'})")
-            output=Path('test-results');output.mkdir(exist_ok=True)
-            page.screenshot(path=str(output/f'map-link-{lang}-before-open.png'))
-            print(page.evaluate("""()=>({width:innerWidth,client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,
-              visualWidth:visualViewport?.width,scale:visualViewport?.scale,button:document.querySelector('#manual-location-button').getBoundingClientRect().toJSON()})"""))
-            assert page.evaluate('document.documentElement.scrollWidth')<=391
-            control.click()
-        open_link()
-        page.locator('#map-url').fill('موقعي: \u200f'+link)
-        expect(page.locator('#map-link-status')).to_contain_text('✓')
+        expect(page.locator('#location-instruction')).to_be_visible()
+        expect(page.locator('#manual-location-button')).to_be_hidden()
+        page.locator('#locate-button').click()
+        expect(page.locator('#location-confirmed')).to_be_visible()
         expect(page.locator('#nearest-branches .nearest-branch-card')).to_have_count(1)
-        assert requests.count('location/parse-map-url')==1
+        assert 'location/parse-map-url' not in requests
         page.locator('#nearest-branches button').click()
         page.locator('.product-add-button').first.click();page.locator('#product-add').click()
         expect(page.locator('#cart-lines .cart-line')).to_have_count(1)
         page.reload(wait_until='networkidle')
-        expect(page.locator('#clear-location')).to_be_visible()
+        expect(page.locator('#location-confirmed')).to_be_visible()
         expect(page.locator('#branch-select')).to_have_value('demo-branch')
         expect(page.locator('#nearest-branches .nearest-branch-card')).to_have_count(1)
-        assert requests.count('location/parse-map-url')==1,'reload restores the resolved pin without another Google request'
+        assert 'location/parse-map-url' not in requests
         page.locator('#customer-name').fill('علي');page.locator('#customer-phone').fill('512345678')
         expect(page.locator('#neighborhood')).to_have_attribute('required','')
         expect(page.locator('#neighborhood')).to_have_value('')
@@ -96,14 +82,15 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
         page.keyboard.press('Escape');page.reload(wait_until='networkidle')
         expect(page.locator('#neighborhood')).to_have_value('حي اختبار')
         expect(page.locator('#address')).to_have_value('')
-        expect(page.locator('#clear-location')).to_be_visible()
+        expect(page.locator('#location-confirmed')).to_be_visible()
         expect(page.locator('#checkout-button')).to_be_enabled()
-        open_link();expect(page.locator('#map-url')).to_have_value(link)
-        page.locator('#map-url').fill('https://maps.app.goo.gl/INVALID-SYNTHETIC')
-        expect(page.locator('#map-link-status')).to_have_class('notice error')
-        expect(page.locator('#checkout-button')).to_be_disabled()
-        expect(page.locator('#nearest-panel')).to_be_hidden()
-        page.reload(wait_until='networkidle')
-        expect(page.locator('#clear-location')).to_be_hidden()
+        page.locator('#change-delivery-location').click()
+        expect(page.locator('#location-methods')).to_be_visible()
+        expect(page.locator('#location-fields')).to_be_hidden()
+        page.locator('#checkout-button').click()
+        expect(page.locator('#confirm-dialog')).to_be_hidden()
+        page.locator('#locate-button').click()
+        expect(page.locator('#location-confirmed')).to_be_visible()
+        expect(page.locator('#neighborhood')).to_have_value('حي اختبار')
         assert not errors
         context.close();browser.close()

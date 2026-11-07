@@ -23,6 +23,7 @@ def test_browsing_guest_cannot_confirm_until_sms_is_verified(static_customer,lan
     with sync_playwright() as p:
         browser=p.chromium.launch(headless=True);context=browser.new_context(viewport={'width':width,'height':900})
         context.add_init_script("localStorage.setItem('kps_customer_lang',"+json.dumps(lang)+")")
+        context.add_init_script("Object.defineProperty(navigator,'geolocation',{value:{getCurrentPosition(ok){ok({coords:{latitude:28.4,longitude:45.9}})}}})")
         page=context.new_page();page.on('pageerror',lambda error:errors.append(str(error)))
         def api(route):
             req=route.request;key=req.url.split('/api/',1)[1].split('?',1)[0];requests.append((key,req.method))
@@ -65,7 +66,7 @@ def test_browsing_guest_cannot_confirm_until_sms_is_verified(static_customer,lan
         expect(page.locator('#enbishan-basket-dialog')).to_be_visible()
         expect(page.locator('#customer-name')).to_be_hidden()
         page.locator('#enbishan-continue').click();page.locator('#customer-name').fill('Synthetic Guest');page.locator('#customer-phone').fill('0500000000')
-        page.locator('#enbishan-checkout-location').click();page.locator('#manual-location-button').click();page.locator('#map-url').fill('https://maps.google.com/?q=28.4,45.9')
+        page.locator('#enbishan-checkout-location').click();page.locator('#locate-button').click()
         expect(page.locator('#branch-select')).to_have_value('synthetic-branch')
         page.locator('#enbishan-location-done').click();page.locator('#neighborhood').fill('Synthetic area')
         expect(page.locator('#checkout-button')).to_be_enabled();page.locator('#checkout-button').click()

@@ -233,10 +233,6 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
     if user['brand_id'] != body.brand_id:
         raise db.error(403, 'BRAND_FORBIDDEN', 'حساب العميل لا يتبع هذا البراند.')
     with db.tx(pipeline=True) as conn:
-        # The fresh server-session read carries this policy. Replays still
-        # require identity proof without repeating the full settings read.
-        phone_required=False if delivery_center else user.get('customer_phone_required')
-        if phone_required is None:phone_required=auth.customer_phone_required(conn,body.brand_id)
         if delivery_center:
             if body.gift or body.benefit_code or body.cashback_halalas:
                 raise db.error(422,'CUSTOMER_BENEFIT_IDENTITY_REQUIRED','المزايا والإهداء من حساب العميل الموثق. / Use the verified purchaser account.')
@@ -257,6 +253,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                     raise db.error(403, 'MORNING_CUSTOMER_ORDER_SCOPE',
                                    'استقبال طلبات مدير الصباح متاح خلال الفترة الصباحية بفرع 2 فقط.')
         else:
+            phone_required=True if body.brand_id in {'kps', 'enbishan'} else user.get('customer_phone_required')
             auth.assert_customer_order_eligible(conn,user,phone_required=phone_required)
         def perform():
             config=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(body.brand_id,)).fetchone()

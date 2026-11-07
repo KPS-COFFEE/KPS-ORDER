@@ -14,7 +14,7 @@
     });return sdkPromise;
   }
   const valid=p=>p&&Number.isFinite(p.lat)&&Number.isFinite(p.lng)&&Math.abs(p.lat)<=90&&Math.abs(p.lng)<=180;
-  async function mount({api,brandId,host,getLocation,onConfirm,tr,canOpen}){
+  async function mount({api,brandId,host,getLocation,onOpen,onConfirm,tr,canOpen}){
     if(!host||!brandId)return;
     let config;try{config=await api('/api/customer-map/config?brand_id='+encodeURIComponent(brandId));}catch{return;}
     if(!config.enabled||config.provider!=='mapbox'||!/^pk\./.test(config.public_token))return;
@@ -31,11 +31,11 @@
     toolbar.append(title,close);actions.append(locate,confirm);dialog.append(toolbar,canvas,status,actions);document.body.append(dialog);host.prepend(button);
     let map,marker,draft=null,ready=false,opening=false,generation=0;
     const say=(ar,en)=>status.textContent=tr(ar,en);
-    function labels(){button.textContent=tr('حدد موقعك على الخريطة','Choose location on map');title.textContent=tr('حدد مكان التوصيل','Choose delivery location');close.textContent=tr('إغلاق','Close');locate.textContent=tr('استخدام موقعي الحالي','Use my current location');confirm.textContent=tr('تأكيد الموقع وعرض الفروع','Confirm location and show branches');}
+    function labels(){button.textContent=tr('حدد موقعك على الخريطة','Choose location on map');title.textContent=tr('حدد مكان التوصيل','Choose delivery location');close.textContent=tr('إغلاق','Close');locate.textContent=tr('استخدام موقعي الحالي','Use my current location');confirm.textContent=tr('اعتماد الموقع','Confirm location');}
     function choose(p){if(!valid(p)||!marker)return;draft={lat:p.lat,lng:p.lng};marker.setLngLat([draft.lng,draft.lat]);confirm.disabled=!ready;say('حرّك الدبوس أو اضغط على مكان آخر، ثم أكد الموقع.','Drag the pin or tap another place, then confirm.');}
     function failure(reason){generation++;ready=false;confirm.disabled=true;locate.disabled=true;if(map){map.remove();map=null;marker=null;}if(reason==='webgl')say('هذا المتصفح لا يدعم عرض الخريطة. استخدم متصفحًا حديثًا أو حدد موقعك من خارج الخريطة.','This browser cannot display the map. Use a current browser or select your location outside the map.');else say('تعذر تحميل الخريطة. أغلقها واستخدم موقعك الحالي أو أدخل الموقع يدويًا.','The map could not load. Close it and use your current location or enter the location manually.');}
     async function open(){
-      if(opening||canOpen&&!canOpen())return;opening=true;labels();dialog.showModal();generation++;draft=null;confirm.disabled=true;locate.disabled=!ready;say('جاري تحميل الخريطة…','Loading map…');
+      if(opening||canOpen&&!canOpen())return;onOpen?.();opening=true;labels();dialog.showModal();generation++;draft=null;confirm.disabled=true;locate.disabled=!ready;say('جاري تحميل الخريطة…','Loading map…');
       const current=getLocation();
       try{
         const sdk=await loadSDK();if(!dialog.open)return;

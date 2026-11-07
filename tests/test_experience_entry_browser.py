@@ -79,6 +79,7 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
             class Marker {setLngLat(){return this;}addTo(){return this;}on(){}}
             window.mapboxgl={Map,Marker,NavigationControl:class {}};
         ''')
+        context.add_init_script("Object.defineProperty(navigator,'geolocation',{value:{getCurrentPosition(ok){ok({coords:{latitude:28.4,longitude:45.9}})}}})")
         context.add_init_script(f"localStorage.setItem('kps_customer_lang','{lang}')")
         page.goto(static_customer+'/',wait_until='networkidle')
         # Browsing is public even when the owner enables the enhanced journey.
@@ -101,10 +102,7 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
             page.locator('#otp-code').fill('1234')
             page.locator('#verify-otp').click()
             expect(page.locator('#menu')).to_be_visible()
-        page.locator('#manual-location-button').click()
-        page.locator('#manual-location details summary').click()
-        page.locator('#latitude').fill('28.4');page.locator('#longitude').fill('45.9')
-        page.locator('#save-location').click()
+        page.locator('#locate-button').click()
         expect(page.locator('#nearest-branches .nearest-branch-card')).to_have_count(1)
         page.locator('#nearest-branches button').last.click()
         expect(page.locator('#menu')).to_be_visible()
@@ -166,6 +164,7 @@ def test_guest_browsing_hides_optional_form_preserves_details_and_requires_otp(s
     with sync_playwright() as p:
         browser=getattr(p,browser_name).launch(headless=True)
         context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True)
+        context.add_init_script("Object.defineProperty(navigator,'geolocation',{value:{getCurrentPosition(ok){ok({coords:{latitude:28.4,longitude:45.9}})}}})")
         context.add_init_script("localStorage.setItem('kps_customer_lang',"+json.dumps(lang)+")")
         page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
         def api(route):
@@ -199,8 +198,7 @@ def test_guest_browsing_hides_optional_form_preserves_details_and_requires_otp(s
             expect(page.locator('#entry-form')).to_have_count(0)
             expect(page.locator('#customer-name')).to_have_value('علي')
             expect(page.locator('#customer-phone')).to_have_value('512345678')
-        page.locator('#manual-location-button').click();page.locator('#manual-location details summary').click()
-        page.locator('#latitude').fill('28.4');page.locator('#longitude').fill('45.9');page.locator('#save-location').click()
+        page.locator('#locate-button').click()
         expect(page.locator('#nearest-branches button')).to_have_count(1);page.locator('#nearest-branches button').click()
         page.locator('.product-add-button').first.click();page.locator('#product-add').click()
         # The availability request completes asynchronously. Wait until the

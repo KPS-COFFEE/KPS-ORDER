@@ -1,4 +1,4 @@
-"""V5 browser-operated guest → staff → driver → final-report journey.
+"""V5 browser-operated customer → staff → driver → final-report journey.
 
 Real HTTP and isolated PostgreSQL only, no browser API interception. Staff use
 four-digit SMS through the actual UI; only external provider I/O is synthetic.
@@ -203,12 +203,6 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         fonts['driver'] = _font_evidence(driver)
         manager_shift = _authenticated_post(contexts['delivery_manager'], base, '/api/shifts', {'kind': 'manager', 'branch_ids': ['kps-branch-1','kps-branch-9']})['shift']['id']
         driver_shift = _authenticated_post(driver_context, base, '/api/shifts', {'kind': 'driver', 'branch_ids': ['kps-branch-1','kps-branch-9'], 'manager_shift_id': manager_shift, 'vehicle_inspection': _inspection_payload()})['shift']['id']
-        # Exercise the supported guest fallback deliberately. Staff login above
-        # still required certified SMS; no guest is represented as verified.
-        with db.tx() as conn:
-            customer_sms = conn.execute("SELECT enabled FROM identity_channels WHERE brand_id='kps' AND channel='sms'").fetchone()
-            assert customer_sms and customer_sms['enabled'] is True
-            conn.execute("UPDATE identity_channels SET enabled=false WHERE brand_id='kps' AND channel='sms'")
         customer_context, customer, customer_errors = _context(chromium_browser, base)
         customer_context.set_extra_http_headers({'X-KPS-Context':'customer'})
         contexts['guest'], pages['guest'] = customer_context, customer
@@ -219,13 +213,12 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         customer.locator('#branch-select').select_option('kps-branch-1')
         expect(customer.locator('#branch-directions')).to_have_attribute('href', __import__('re').compile(r'destination=28\.4001%2C45\.9001'))
         customer.locator('input[name=service][value=delivery]').check()
+        customer.evaluate("""()=>Object.defineProperty(navigator,'geolocation',{value:{
+          getCurrentPosition(ok){ok({coords:{latitude:28.4002,longitude:45.9002}});}
+        }})""")
+        customer.locator('#locate-button').click()
         customer.locator('#neighborhood').fill('حي اختبار V5 فقط')
         customer.locator('#address').fill('عنوان اختبار معزول — لا تجهيز ولا إرسال فعلي')
-        customer.locator('#manual-location-button').click()
-        customer.locator('#manual-location summary').click()
-        customer.locator('#latitude').fill('28.4002')
-        customer.locator('#longitude').fill('45.9002')
-        customer.locator('#save-location').click()
         # Product photos add plain items directly; titles retain the details flow.
         customer.locator(f'.product-card[data-product-id="{product["id"]}"] .product-content h3 button').click()
         cart_before = customer.locator('#header-count').inner_text()
@@ -240,19 +233,20 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         customer.locator('#customer-phone').fill('0500000033')
         expect(customer.locator('#checkout-button')).to_be_enabled()
         customer.locator('#checkout-button').click()
-        expect(customer.locator('#guest-form')).to_be_visible()
+        expect(customer.locator('#guest-form')).to_be_hidden()
         expect(customer.locator('#email-login-button')).to_be_hidden()
-        expect(customer.locator('#otp-request-form')).to_be_hidden()
-        customer.locator('#guest-submit').click()
+        expect(customer.locator('#otp-request-form')).to_be_visible()
+        customer.locator('#send-otp').click()
+        customer.locator('#otp-code').fill('0123')
+        customer.locator('#verify-otp').click()
         expect(customer.locator('#confirm-dialog')).to_be_visible()
         _capture(customer, 'v5-guest-delivery-order-review')
         customer.locator('#confirm-submit').click()
         expect(customer.locator('#orders-dialog')).to_be_visible()
         with db.tx() as conn:
             order = conn.execute("SELECT * FROM orders WHERE customer->>'name'='ضيف اختبار V5 فقط'").fetchone()
-            assert order and order['customer']['identity_kind'] == 'guest'
-            assert not order['customer']['phone_verified']
-            conn.execute("UPDATE identity_channels SET enabled=%s WHERE brand_id='kps' AND channel='sms'",(customer_sms['enabled'],))
+            assert order and order['customer']['identity_kind'] == 'phone_sms_verified'
+            assert order['customer']['phone_verified']
         order_id, total = order['id'], order['total_halalas']
         public_created = customer_context.request.get(base+'/api/orders/'+order_id)
         assert public_created.status == 200

@@ -69,18 +69,19 @@ def test_current_sms_proof_allows_checkout_even_when_provider_is_unavailable(mon
                  phone_verified_at=now, customer_verified_at=now), phone_required=False)
 
 
-def test_cached_guest_session_cannot_reach_order_creation_or_idempotent_replay(monkeypatch):
+@pytest.mark.parametrize('brand', ['enbishan', 'kps'])
+def test_cached_guest_session_cannot_reach_order_creation_or_idempotent_replay(monkeypatch, brand):
     @contextmanager
     def tx(**kwargs):
         yield SettingsConnection({'customer_phone_required': False})
     monkeypatch.setattr(db, 'tx', tx)
     monkeypatch.setattr(db, 'idempotent', lambda *a, **kw: pytest.fail('Unverified order reached idempotency'))
-    body = orders.catalog.QuoteBody(brand_id='enbishan', branch_id='synthetic-branch', service='delivery',
+    body = orders.catalog.QuoteBody(brand_id=brand, branch_id='synthetic-branch', service='delivery',
         payment_method='cash', items=[{'product_id': 'synthetic-product', 'quantity': 1}],
         customer={'name': 'Synthetic Customer', 'phone': '0500000001', 'neighborhood': 'Synthetic area',
                   'address': 'Synthetic address', 'location': {'lat': 28.4, 'lng': 45.9}})
     with pytest.raises(HTTPException) as error:
-        orders._create_order(body, None, customer(customer_phone_required=False), 'synthetic-replay-key')
+        orders._create_order(body, None, {**customer(customer_phone_required=False), 'brand_id': brand}, 'synthetic-replay-key')
     assert error.value.detail['code'] == 'CUSTOMER_PHONE_VERIFICATION_REQUIRED'
 
 

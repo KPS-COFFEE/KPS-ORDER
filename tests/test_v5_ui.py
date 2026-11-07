@@ -89,12 +89,11 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
         page.locator('#customer-name').fill('عميل اختبار واجهة V5 فقط')
         page.locator('#customer-phone').fill('0500000099')
         page.locator('input[name=service][value=delivery]').check()
+        page.evaluate("""()=>Object.defineProperty(navigator,'geolocation',{value:{
+          getCurrentPosition(ok){ok({coords:{latitude:28.4002,longitude:45.9002}});}
+        }})""")
+        page.locator('#locate-button').click()
         page.locator('#address').fill('')
-        page.locator('#manual-location-button').click()
-        page.locator('#manual-location summary').click()
-        page.locator('#latitude').fill('28.4002')
-        page.locator('#longitude').fill('45.9002')
-        page.locator('#save-location').click()
         expect(page.locator('#basket-error')).to_be_visible()
         expect(page.locator('#checkout-button')).to_be_disabled()
         expect(page.locator('#address')).to_have_value('')
@@ -122,16 +121,10 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert page.locator('.cart-line').count() == 1
         page.locator('#account-button').click()
-        expect(page.locator('#guest-form')).to_be_visible()
-        expect(page.locator('#email-login-button')).not_to_be_visible()
-        expect(page.locator('#otp-request-form')).not_to_be_visible()
-        page.locator('#guest-submit').click()
-        expect(page.locator('#account-dialog')).not_to_be_visible()
-        session = context.request.get(live_app + '/api/session', headers={'X-KPS-Context':'customer'}).json()
-        assert session['user']['identity_kind'] == 'guest'
-        assert session['user']['phone_sms_verified_at'] is None
-        assert session['user']['phone_whatsapp_verified_at'] is None
-        assert session['user']['email_verified_at'] is None
+        expect(page.locator('#guest-form')).to_be_hidden()
+        expect(page.locator('#email-login-button')).to_be_hidden()
+        expect(page.locator('#otp-request-form')).to_be_visible()
+        expect(page.locator('#confirm-dialog')).to_be_hidden()
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) AS n FROM orders').fetchone()['n'] == 0
         assert not errors

@@ -8,7 +8,7 @@ const helpers=source.slice(source.indexOf('  async function checkoutAttempt('),s
 let sequence=0;
 function harness({saved=null,generation='basket-1',api=async()=>({order:{id:'order-1'}})}={}){
   let record=saved,tail=Promise.resolve();const writes=[],opened=[];
-  const context=vm.createContext({state:{session:{user:{id:'customer-1',brand_id:'kps',role:'customer'}},cart:[{id:'coffee'}],quote:{}},requestedBrandId:'kps',basketGeneration:generation,
+  const context=vm.createContext({state:{session:{user:{id:'customer-1',brand_id:'kps',role:'customer'}},cart:[{id:'coffee'}],quote:{}},requestedBrandId:'kps',entryVerified:()=>true,basketGeneration:generation,
     checkoutStore:update=>{const next=tail.then(()=>{const result=update(record);record=result;return structuredClone(result);});tail=next.catch(()=>{});return next;},
     key:()=>`attempt-${++sequence}`,api:async(...args)=>{writes.push(args);return api(...args);},
     localStorage:{getItem:()=>JSON.stringify({generation})},basketStorageKey:'basket',persistDraft:()=>{},renderCart:()=>{},queueNearestBranches:()=>{},queueQuote:()=>{},

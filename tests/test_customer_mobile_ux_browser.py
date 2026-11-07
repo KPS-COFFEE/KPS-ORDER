@@ -10,7 +10,7 @@ from test_delivery_workspace_browser import static_customer
 pytestmark = pytest.mark.skipif(os.getenv('TEST_BROWSER') != '1', reason='Explicit browser run')
 
 
-@pytest.mark.parametrize('brand,lang,width', [('kps', 'ar', 320), ('enbishan', 'en', 390)])
+@pytest.mark.parametrize('brand,lang,width', [('enbishan', 'en', 390), ('kps', 'ar', 320), ('enbishan', 'ar', 1366), ('kps', 'en', 1366)])
 def test_mobile_review_requote_and_confirmation(static_customer, brand, lang, width, tmp_path):
     from playwright.sync_api import expect, sync_playwright
 
@@ -62,10 +62,15 @@ def test_mobile_review_requote_and_confirmation(static_customer, brand, lang, wi
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE') or None)
-        context = browser.new_context(viewport={'width': width, 'height': 800}, is_mobile=True,
-                                      has_touch=True, reduced_motion='reduce')
+        context = browser.new_context(viewport={'width': width, 'height': 800}, is_mobile=width<600,
+                                      has_touch=width<600, reduced_motion='reduce')
         page = context.new_page()
         page.add_init_script(f"localStorage.setItem('kps_customer_lang', '{lang}')")
+        page.add_init_script("""
+          Object.defineProperty(navigator, 'geolocation', {value: {
+            getCurrentPosition(success) { success({coords:{latitude:28.4,longitude:45.9}}); }
+          }});
+        """)
         page.set_default_timeout(8000)
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.route('**/api/**', respond)
@@ -79,7 +84,7 @@ def test_mobile_review_requote_and_confirmation(static_customer, brand, lang, wi
         page.locator('#product-add').click()
         expect(page.locator('#mobile-basket-estimate')).to_have_text('مبلغ تقديري' if lang == 'ar' else 'Estimated')
         page.evaluate('window.scrollTo(0, 0)')
-        page.locator('#mobile-basket').click()
+        page.locator('#mobile-basket' if width<600 else '#header-cart').click()
         if brand == 'enbishan':
             page.locator('#enbishan-continue').click()
             page.locator('#enbishan-checkout-location').click()
@@ -87,12 +92,18 @@ def test_mobile_review_requote_and_confirmation(static_customer, brand, lang, wi
             page.locator('input[name=service][value=delivery]').check()
             page.locator('#basket-service').click()
             expect(page.locator('#locate-button')).to_be_focused()
-        page.locator('#manual-location-button').click()
-        page.locator('#map-url').fill('https://maps.google.com/?q=28.4,45.9')
-        if brand == 'kps':
-            page.locator('#branch-select').select_option(branch['id'])
-        else:
-            expect(page.locator('#branch-select')).to_have_value(branch['id'])
+        expect(page.locator('#location-instruction')).to_be_visible()
+        expect(page.locator('#saved-address-button')).to_be_hidden()
+        expect(page.locator('#manual-location-button')).to_be_hidden()
+        expect(page.locator('#location-fields')).to_be_hidden()
+        page.locator('#locate-button').click()
+        expect(page.locator('#location-confirmed')).to_be_visible()
+        expect(page.locator('#location-methods')).to_be_hidden()
+        page.locator('#change-delivery-location').click()
+        expect(page.locator('#location-methods')).to_be_visible()
+        page.locator('#locate-button').click()
+        expect(page.locator('#branch-select')).to_have_value(branch['id'])
+        if brand == 'enbishan':
             page.locator('#enbishan-location-done').click()
         page.locator('#neighborhood').fill('QA district')
         page.locator('#customer-name').fill('QA Customer')
@@ -117,6 +128,7 @@ def test_mobile_review_requote_and_confirmation(static_customer, brand, lang, wi
         expect(page.locator('.customer-order-actions')).to_contain_text(re.compile('محادثة|conversation', re.I))
         assert len(payloads) == 2 and payloads[0] == payloads[1]
         assert payloads[1]['payment_method'] == 'card'
+        assert payloads[1]['customer']['location'] == point
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
         assert not errors
         page.screenshot(path=str(tmp_path / f'{brand}-{lang}-{width}.png'))

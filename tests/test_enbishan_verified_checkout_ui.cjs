@@ -89,7 +89,7 @@ test('verified Enbishan can resume its existing pending attempt',async()=>{
   h.context.submitCheckout=async()=>{h.calls.push('resume');return true;};
   assert.equal(await h.context.recoverCheckout(),true);assert.deepEqual(h.calls,['resume']);
 });
-test('KPS and other brand policy behavior remains unchanged',async()=>{
+test('KPS guest pending attempts require SMS and other brand policy is preserved',async()=>{
   for(const brand of ['kps','synthetic'])for(const phoneRequired of [undefined,false,true]){
     const h=harness({brand,phoneRequired,session:guest(brand)});
     // The default parameter above is false; set undefined explicitly too.
@@ -97,7 +97,8 @@ test('KPS and other brand policy behavior remains unchanged',async()=>{
     assert.equal(h.context.requiresPhoneVerification(),phoneRequired!==false);
     h.load('  async function recoverCheckout()', '  const node = (tag, cls, content) =>');
     h.context.submitCheckout=async()=>{h.calls.push('resume');return true;};
-    assert.equal(await h.context.recoverCheckout(),true);assert.deepEqual(h.calls,['resume']);
+    assert.equal(await h.context.recoverCheckout(),brand!=='kps');
+    assert.deepEqual(h.calls,brand==='kps'?[]:['resume']);
   }
 });
 
