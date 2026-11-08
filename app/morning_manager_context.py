@@ -123,6 +123,8 @@ def resolve(conn, user, *, shift_id=None, allow_bootstrap=False):
 
 def apply(conn, user, request, *, session=False):
     period = request.headers.get(HEADER)
+    if period is None and request.scope.get('method') == 'GET' and request.url.path == '/api/operating-reports/export/print':
+        period = request.query_params.get('delivery_period')
     if period is None:
         return user
     if period != 'morning':

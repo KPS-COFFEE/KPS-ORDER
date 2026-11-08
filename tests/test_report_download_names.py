@@ -11,7 +11,7 @@ from app.report_filenames import closure_filename, dated_filename
 
 def test_exact_requested_arabic_name_and_no_export_clock():
     assert dated_filename('2026-11-03') == 'تشغيلي الثلاثاء 3-11-2026.pdf'
-    assert operating_reports.filename('2026-11-03', 'shift') == 'تشغيلي الثلاثاء 3-11-2026.pdf'
+    assert operating_reports.filename('2026-11-07', 'shift') == 'تشغيل السبت 07-11-2026.pdf'
     assert dated_filename(None) == 'تشغيلي تاريخ غير مسجل.pdf'
 
 

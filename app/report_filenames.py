@@ -7,13 +7,14 @@ WEEKDAYS = ('الاثنين', 'الثلاثاء', 'الأربعاء', 'الخم�
 ASCII_WEEKDAYS = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
 
 
-def dated_filename(day, *, kind='تشغيلي', extension='pdf'):
+def dated_filename(day, *, kind='تشغيلي', extension='pdf', padded=False):
     try:
         value = date.fromisoformat(str(day)[:10])
     except (TypeError, ValueError):
         # A legacy record with no date must never acquire today's date.
         return f'{kind} تاريخ غير مسجل.{extension}'
-    return f'{kind} {WEEKDAYS[value.weekday()]} {value.day}-{value.month}-{value.year}.{extension}'
+    stamp = f'{value:%d-%m-%Y}' if padded else f'{value.day}-{value.month}-{value.year}'
+    return f'{kind} {WEEKDAYS[value.weekday()]} {stamp}.{extension}'
 
 
 def closure_filename(snapshot, extension='pdf'):
@@ -32,7 +33,7 @@ def disposition(filename):
     if stamp:
         day, month, year = map(int, stamp.groups())
         value = date(year, month, day)
-        fallback += f'-{ASCII_WEEKDAYS[value.weekday()]}-{day}-{month}-{year}'
+        fallback += f'-{ASCII_WEEKDAYS[value.weekday()]}-{stamp[1]}-{stamp[2]}-{stamp[3]}'
     else:
         fallback += '-date-unrecorded'
     return f'attachment; filename="{fallback}.{extension}"; filename*=UTF-8\'\'' + quote(filename, safe='')

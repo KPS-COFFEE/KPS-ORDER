@@ -55,7 +55,7 @@ def test_snapshot_goods_do_not_reprice_or_double_deduct_free_goods():
 def test_filename_uses_selected_operational_day_weekday_not_export_time():
     name=reports.filename(date(2026,10,23),'day')
     assert 'الجمعة' in name and '23-10-2026' in name
-    assert reports.filename('2026-10-27','day') == 'تشغيلي الثلاثاء 27-10-2026.pdf'
+    assert reports.filename('2026-10-27','day') == 'تشغيل الثلاثاء 27-10-2026.pdf'
     assert unquote(reports.disposition(name).split("UTF-8''")[1])==name
 
 
@@ -409,9 +409,11 @@ def test_delivery_timing_counts_only_rated_deliveries_and_highlights_the_delayed
     detail = reports.delivery_timing_tables(report)[1][2][0]
     assert detail[5:9] == ['12:10 · متأخر', '—', '10:00', '45:00']
     html = reports.make_html(report)
-    assert 'class="or-timing-late">12:10 · متأخر' in html
+    assert 'HFR-001' not in html
+    assert 'الالتزام بوقت التوصيل' in html
+    assert 'تفاصيل الطلبات المتأخرة' not in html
     pdf = PdfReader(BytesIO(reports.make_pdf(report)))
-    assert any('HFR-001' in page.extract_text() for page in pdf.pages)
+    assert all('HFR-001' not in page.extract_text() for page in pdf.pages)
 
 
 @pytest.mark.postgres
@@ -450,12 +452,22 @@ def test_shift_timing_uses_original_duty_and_exact_delivered_threshold(ops):
     assert response.status_code == 200, response.text
     group, = response.json()['delivery_timing']
     assert (group['on_time'], group['late'], group['open_late'], group['compliance']) == (1, 1, 1, 50)
-    rows = {o['reference']: o for o in group['delayed_orders']}
+    assert group['delayed_orders'] == []
+    assert actor('manager').get('/api/operating-reports', params={'day': str(day), 'delay_details': 'true'}).status_code == 403
+    details = actor('owner').get('/api/operating-reports', params={'day': str(day), 'delay_details': 'true'})
+    assert details.status_code == 200, details.text
+    assert set(details.json()) == {'day', 'delivery_timing'}
+    rows = {o['reference']: o for g in details.json()['delivery_timing'] for o in g['delayed_orders']}
     assert set(rows) == {'equal', 'late', 'open'}
     assert rows['equal']['status'] == 'on_time' and rows['equal']['delivery_late']
     assert rows['equal']['workload'] == dict(state='assigned', driver='driver', assigned=3, onboard=2)
     assert rows['late']['workload'] == dict(state='assigned', driver='driver', assigned=2, onboard=1)
     assert rows['open']['workload'] == dict(state='unassigned')
+    with db.tx() as c:
+        c.execute("UPDATE branches SET city='القيصومة' WHERE id='ops-branch'")
+    qaisumah = actor('manager').get('/api/operating-reports', params={'day': str(day), 'manager_shift_id': manager})
+    group, = qaisumah.json()['delivery_timing']
+    assert (group['city'], group['limits'], group['on_time'], group['late']) == ('القيصومة', [1620], 0, 2)
     previous = actor('manager').get('/api/operating-reports', params={'previous_day': 'true'})
     assert previous.status_code == 200
     assert previous.json()['day'] == str(reports.service_hours.delivery_operational_date() - timedelta(days=1))
