@@ -1,7 +1,7 @@
 """Versioned province thresholds and event-derived phase durations, without a second order engine."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from copy import deepcopy
 import re
 from fastapi import APIRouter, Depends, Header
@@ -137,6 +137,18 @@ def enrich_orders(conn, rows, now=None):
         row['stage_timing'] = evaluate(row, point, [t for t in tasks if t['order_id'] == row['id']], now)
         from .journey_timing import evaluate as evaluate_journey
         row['journey_timing'] = evaluate_journey(row, point, [t for t in tasks if t['order_id'] == row['id']], now)
+        journey = row['journey_timing']
+        stage = row['stage_timing']
+        row['delivery_timing_flags'] = {
+            'preparation': bool(not cancelled and stage and stage['phases']['preparation']['color'] == 'red'),
+            'delivery': bool(not cancelled and (
+                times['delivery']['seconds'] > (row['snapshot']['delivery_journey_policy']['delivery_seconds'])
+                if journey and times['delivery']['seconds'] is not None
+                else stage and stage['phases']['delivery']['color'] == 'red')),
+        }
+        if journey and pickup and row['delivery_timing_flags']['delivery']:
+            row['delivery_road_deadline_at'] = (_date(pickup) + timedelta(
+                seconds=row['snapshot']['delivery_journey_policy']['delivery_seconds'])).isoformat()
     return rows
 
 

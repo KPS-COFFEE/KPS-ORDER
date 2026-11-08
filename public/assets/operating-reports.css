@@ -6,3 +6,8 @@ html:has(body>main>.accounting){font-family:OperatingKufi,Arial,sans-serif}body>
 @media print{@page{size:A4 landscape;margin:8mm}.screen-only{display:none!important}body>main:has(>.accounting){padding:0}body>main:has(>.accounting) h1{margin:0}body>main:has(>.accounting) p{font-size:9px;margin:4px 0}body>main:has(>.accounting) table{break-inside:avoid}*{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
 
 .or-payment-grid{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.or-payment-grid>div{flex:1;min-width:85px;background:#f4f7f9;padding:6px}.or-payment-grid dt{font-size:11px;color:#687078}.or-payment-grid dd{margin:0;font-size:13px}.or-city-summary{margin:12px 0}.or-city-summary>div{padding:8px 0;border-bottom:1px solid #e0e3e6}.or-city-summary p{overflow-wrap:anywhere;font-size:12px}@media print{@page{size:A3 landscape}}
+
+.or-timing-late { color: #b42318; font-weight: 700; }
+.or-timing-table { overflow-x: auto; }
+.or-timing-table table { min-width: 48rem; }
+.operating-report [data-or-rolling][aria-pressed=true] { background: var(--or-ink); color: #fff; }

@@ -3,7 +3,7 @@
 These are presentations, never new closure snapshots or accounting approvals.
 """
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Response
 from . import auth, db, multibrand, operations as ops, service_hours
 from .employee_permissions import reports_supervisor
+from .journey_timing import stamp
 from .report_filenames import dated_filename, disposition as report_disposition
 
 router = APIRouter(prefix='/api/operating-reports', tags=['operating-reports'])
@@ -168,6 +169,192 @@ def complete_sum(rows, field):
     return sum(r[field] for r in rows) if rows and all(r.get(field) is not None for r in rows) else None
 
 
+def task_intervals(c, where, args, cutoff):
+    # Physical tasks, not the accounting reassignment overlay. A handover may
+    # copy the pickup time to the new task, so its custody starts at creation.
+    return c.execute(
+        "SELECT t.id,t.order_id,t.driver_id,u.display_name,t.created_at,t.picked_up_at,t.status,s.closed_at shift_closed_at, "
+        "CASE WHEN t.status='delivered' THEN COALESCE(t.delivered_at,e.ended_at) "
+        "WHEN t.status IN ('transferred','reassigned','cancelled') THEN e.ended_at END ended_at "
+        "FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id JOIN users u ON u.id=t.driver_id "
+        "LEFT JOIN LATERAL (SELECT min(e.created_at) ended_at FROM order_events e WHERE e.order_id=t.order_id "
+        "AND ((e.event_type IN ('task.cancelled','task.delivered') AND e.details->>'task_id'=t.id) "
+        "OR (e.event_type IN ('task.reassigned','task.handover.accepted') AND e.details->>'previous_task_id'=t.id))) e ON true "
+        "WHERE t.created_at<=%s AND " + where + " ORDER BY t.created_at,t.id",
+        (cutoff, *args)).fetchall()
+
+
+def active_at(task, instant):
+    if task['created_at'] > instant:
+        return False
+    if task['ended_at'] is not None:
+        return instant < task['ended_at']
+    if task['status'] in ('delivered', 'transferred', 'reassigned', 'cancelled'):
+        return False if task['shift_closed_at'] and task['shift_closed_at'] <= instant else None
+    return True
+
+
+def add_delay_workload(c, workload_scope, morning, delayed):
+    if not delayed:
+        return
+    cutoff = max(row['delay_at'] for row in delayed)
+    tasks = defaultdict(list)
+    for task in task_intervals(c, 't.order_id=ANY(%s)', ([row['id'] for row in delayed],), cutoff):
+        tasks[task['order_id']].append(task)
+    observed = []
+    for row in delayed:
+        instant = row['delay_at']
+        history = tasks[row['id']]
+        # The latest actual assignment before the instant supersedes earlier
+        # assignments. An incomplete final transition is reported as unknown.
+        task = next((t for t in reversed(history) if t['created_at'] <= instant), None)
+        active = active_at(task, instant) if task else False
+        row['workload'] = {'state': 'unknown' if active is None else 'unassigned'}
+        if active:
+            observed.append((row, task))
+    if not observed:
+        return
+    by_driver = defaultdict(list)
+    ids = sorted({task['driver_id'] for _, task in observed})
+    scope_filter = (
+        "t.driver_id=ANY(%s) AND o.test_void IS NULL "
+        "AND EXISTS (SELECT 1 FROM jsonb_to_recordset(%s::jsonb) "
+        "AS a(brand_id text, branch_ids jsonb, unrestricted boolean) "
+        "WHERE a.brand_id=o.brand_id AND (a.unrestricted OR a.branch_ids ? o.branch_id)) "
+        "AND (NOT %s OR o.snapshot->>'delivery_period'='morning')")
+    for task in task_intervals(c, scope_filter, (ids, db.json(workload_scope), morning), cutoff):
+        by_driver[task['driver_id']].append(task)
+    for row, assigned in observed:
+        instant = row['delay_at']
+        active_orders, carried = set(), set()
+        uncertain = set()
+        for task in by_driver[assigned['driver_id']]:
+            active = active_at(task, instant)
+            if active is None:
+                uncertain.add(task['order_id'])
+            elif active:
+                active_orders.add(task['order_id'])
+                if task['picked_up_at'] and task['picked_up_at'] <= instant:
+                    carried.add(task['order_id'])
+        known = not (uncertain - active_orders)
+        row['workload'] = dict(state='assigned' if known else 'unknown',
+                               driver=assigned['display_name'], assigned=len(active_orders) if known else None,
+                               onboard=len(carried) if known else None)
+
+
+def delivery_orders(c, principal, candidates, visible, locations, day, now, workload_scope):
+    from .performance import enrich_orders
+    from .reporting import display_order_label
+
+    branches = sorted({branch for shift in visible for branch in shift['branch_ids']})
+    visible_ids = {shift['id'] for shift in visible}
+    if not branches:
+        return []
+    orders = c.execute(
+        "SELECT o.*, COALESCE(o.snapshot->>'manager_shift_id', accepted.manager_id, first_task.manager_id) timing_shift_id "
+        "FROM orders o "
+        "LEFT JOIN LATERAL (SELECT e.details->>'manager_shift_id' manager_id FROM order_events e "
+        "WHERE e.order_id=o.id AND e.event_type='preparation.accepted' AND e.details->>'manager_shift_id' IS NOT NULL "
+        "ORDER BY e.created_at,e.id LIMIT 1) accepted ON true "
+        "LEFT JOIN LATERAL (SELECT s.manager_shift_id manager_id FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id "
+        "WHERE t.order_id=o.id AND s.brand_id=o.brand_id ORDER BY t.created_at,t.id LIMIT 1) first_task ON true "
+        "WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND o.service='delivery' AND o.test_void IS NULL "
+        "AND (o.delivery_operational_date BETWEEN %s::date-1 AND %s::date "
+        "OR (o.delivery_operational_date IS NULL AND o.created_at >= (%s::date-1)::timestamp AT TIME ZONE 'Asia/Riyadh' "
+        "AND o.created_at < ((%s::date+1)::timestamp + interval '4 hours') AT TIME ZONE 'Asia/Riyadh')) ORDER BY o.created_at,o.id",
+        (principal['brand_id'], branches, day, day, day, day)).fetchall()
+
+    scoped = []
+    for order in orders:
+        shift_id = order['timing_shift_id']
+        period = (order.get('snapshot') or {}).get('delivery_period') or 'evening'
+        if principal.get('_morning_manager_context') and period != 'morning':
+            continue
+        if shift_id is None:
+            order_day = (order['created_at'].astimezone(TZ).date() if period == 'morning' else
+                         order.get('delivery_operational_date') or service_hours.delivery_operational_date(order['created_at']))
+            if order_day != day:
+                continue
+            matches = [shift for shift in candidates if order['branch_id'] in shift['branch_ids']
+                       and (shift.get('delivery_window_snapshot') or {}).get('period', 'evening') == period
+                       and shift['opened_at'] <= order['created_at']
+                       and (not (end := shift.get('staffing_ended_at') or shift.get('closed_at'))
+                            or order['created_at'] < end)]
+            if len(matches) == 1:
+                shift_id = matches[0]['id']
+        if shift_id in visible_ids:
+            scoped.append(order)
+    output = []
+    for offset in range(0, len(scoped), 250):
+        for order in enrich_orders(c, scoped[offset:offset + 250], now):
+            snap = order.get('snapshot') or {}
+            city = snap.get('branch_city') or locations[order['branch_id']]['city'] or 'غير مسجلة'
+            city = {'حفرالباطن': 'حفر الباطن', 'قبه': 'قبة'}.get(''.join(city.split()), city)
+            journey = order['journey_timing']
+            stage = order['stage_timing']
+            timing = order['timings']['total']
+            elapsed = journey['elapsed_seconds'] if journey else timing['seconds']
+            limit = journey['limit_seconds'] if journey else (stage or {}).get('total_limit_seconds')
+            cancelled = timing['state'] == 'cancelled'
+            delivered = order['delivery_status'] == 'delivered'
+            if cancelled:
+                status = 'cancelled'
+            elif limit is None or elapsed is None or (not delivered and timing['state'] != 'running'):
+                status = 'unavailable'
+            elif delivered:
+                status = 'late' if elapsed > limit else 'on_time'
+            else:
+                status = 'open_late' if elapsed > limit else 'open'
+            phases = stage['phases'] if stage else {}
+            pickup = next((step for step in (journey or {}).get('stages', []) if step['stage'] == 'pickup'), {})
+            flags = order['delivery_timing_flags']
+            delay_at = None
+            if status in ('late', 'open_late'):
+                delay_at = order['created_at'] + timedelta(seconds=limit)
+            elif not cancelled:
+                deadlines = [
+                    stamp(phases.get('preparation', {}).get('red_at')) if flags['preparation'] else None,
+                    stamp(pickup.get('deadline_at')) if (pickup.get('late_seconds') or 0) > 0 else None,
+                    stamp(order.get('delivery_road_deadline_at') or phases.get('delivery', {}).get('red_at')) if flags['delivery'] else None,
+                ]
+                delay_at = min((value for value in deadlines if value is not None), default=None)
+            output.append(dict(id=order['id'], delay_at=delay_at, city=city, limit_seconds=limit,
+                               status=status, elapsed_seconds=elapsed,
+                               reference=display_order_label(order), brand=order['brand_id'],
+                               branch=locations[order['branch_id']]['name'], driver=order.get('driver_name'),
+                               preparation_seconds=phases.get('preparation', {}).get('seconds', order['timings']['preparation']['seconds']),
+                               delivery_seconds=order['timings']['delivery']['seconds'],
+                               preparation_late=flags['preparation'], delivery_late=flags['delivery'],
+                               pickup_late=not cancelled and (pickup.get('late_seconds') or 0) > 0))
+    delayed = [order for order in output if order['delay_at'] is not None]
+    for offset in range(0, len(delayed), 250):
+        add_delay_workload(c, workload_scope, bool(principal.get('_morning_manager_context')),
+                           delayed[offset:offset + 250])
+    for order in output:
+        del order['id']
+    return output
+
+
+def delivery_timing_summary(orders):
+    groups = {}
+    for order in orders:
+        city = order['city']
+        group = groups.setdefault(city, dict(city=city, limits=[], on_time=0, late=0, open_late=0,
+                                            open=0, cancelled=0, unavailable=0, delayed_orders=[]))
+        limit = order['limit_seconds']
+        if limit is not None and limit not in group['limits']:
+            group['limits'].append(limit)
+        group[order['status']] += 1
+        if order['status'] in ('late', 'open_late') or (
+                order['status'] != 'cancelled' and any(order[k] for k in ('preparation_late', 'pickup_late', 'delivery_late'))):
+            group['delayed_orders'].append(order)
+    for group in groups.values():
+        rated = group['on_time'] + group['late']
+        group['compliance'] = round(100 * group['on_time'] / rated, 1) if rated else None
+        group['limits'].sort()
+    return sorted(groups.values(), key=lambda group: group['city'])
+
+
 def build(c, user, day, scope, manager_shift_id=None):
     ops.roles(user, 'owner', 'delivery_manager')
     if not auth.has_permission(user, 'reports_view'):
@@ -190,6 +377,10 @@ def build(c, user, day, scope, manager_shift_id=None):
     managers, driver_rows, cases, entries, approvals = [], {}, [], [], []
     day_allowed = user['role'] == 'owner' or reports_supervisor(user)
     pending = 0
+    timing_orders = []
+    workload_scope = [dict(brand_id=p['brand_id'], branch_ids=p.get('branch_ids', []),
+                           unrestricted=ops.unrestricted_owner(p)) for p in principals]
+    now = datetime.now(TZ)
     for principal in principals:
         locations = {b['id']: b for b in c.execute('SELECT id,name,city FROM branches WHERE brand_id=%s', (principal['brand_id'],)).fetchall()}
         candidates = c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.brand_id=%s "
@@ -243,6 +434,7 @@ def build(c, user, day, scope, manager_shift_id=None):
             if manager['status'] != 'closed' and manager.get('staffing_ended_at') is None:
                 pending += 1
         if visible:
+            timing_orders.extend(delivery_orders(c, principal, candidates, visible, locations, day, now, workload_scope))
             # Reuse canonical accounting deadlines, extensions and completion;
             # expose status only, not the underlying accounting money/notes.
             from .accounting_statements import manager_cards
@@ -272,16 +464,19 @@ def build(c, user, day, scope, manager_shift_id=None):
         row.update(matching(row))
     accounting = progress(entries, approvals, [m['id'] for m in managers], pending)
     return ops.safe(dict(day=day, scope=scope, can_day=day_allowed and not bool(user.get('_morning_manager_context')), filename=filename(day, scope), manager=user['display_name'],
-                         generated_at=datetime.now(TZ), rows=rows, cases=cases, accounting=accounting,
+                         generated_at=now, rows=rows, cases=cases, accounting=accounting,
+                         delivery_timing=delivery_timing_summary(timing_orders),
                          operational_complete=bool(managers) and not pending and all(r['closed'] for r in rows),evidence_missing=any(r['evidence_missing'] for r in rows),
                          count=sum(v['count'] for r in rows for v in r['brands'].values()), net=sum(r['net'] for r in rows)))
 
 
 @router.get('')
-def listing(day: date | None = None, scope: Literal['shift', 'day'] = 'shift', manager_shift_id: str | None = None, user=Depends(auth.current_user)):
+def listing(day: date | None = None, scope: Literal['shift', 'day'] = 'shift', manager_shift_id: str | None = None,
+            previous_day: bool = False, user=Depends(auth.current_user)):
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-        return build(c, user, day or service_hours.delivery_operational_date(), scope, manager_shift_id)
+        default_day = service_hours.delivery_operational_date() - timedelta(days=int(previous_day))
+        return build(c, user, day or default_day, scope, manager_shift_id)
 
 
 def money(value):
@@ -311,6 +506,45 @@ def city_tables(report):
     return headers, rows
 
 
+def delivery_timing_tables(report):
+    def duration(seconds, late=False):
+        if seconds is None:
+            return '—'
+        minutes, seconds = divmod(int(seconds), 60)
+        return f'{minutes}:{seconds:02}' + (' · متأخر' if late else '')
+
+    def workload(order):
+        evidence = order.get('workload') or {}
+        state = evidence.get('state')
+        if state == 'assigned':
+            return f"{evidence['driver']} · مسند {evidence['assigned']} · معه {evidence['onboard']}"
+        if state == 'unassigned':
+            return 'غير مسند عند التأخير'
+        return 'السجل غير كافٍ' + (f" · {evidence['driver']}" if evidence.get('driver') else '')
+
+    summary, details = [], []
+    for group in report.get('delivery_timing', []):
+        limits = ' / '.join(str(limit // 60) for limit in group['limits'])
+        summary.append([group['city'], limits or '—', group['on_time'], group['late'], group['open_late'],
+                        group['open'], group['cancelled'], group['unavailable'],
+                        '—' if group['compliance'] is None else f"{group['compliance']:g}%"])
+        for order in group['delayed_orders']:
+            details.append([order['reference'], group['city'], BRANDS.get(order['brand'], order['brand']),
+                            order['branch'], order['driver'] or '—',
+                            duration(order['preparation_seconds'], order['preparation_late']),
+                            'متأخر' if order['pickup_late'] else '—',
+                            duration(order['delivery_seconds'], order['delivery_late']),
+                            duration(order['elapsed_seconds'], order['status'] in ('late', 'open_late')),
+                            datetime.fromisoformat(str(order['delay_at'])).astimezone(TZ).strftime('%H:%M:%S')
+                            if order.get('delay_at') else '—', workload(order)])
+    return [
+        ('الالتزام بوقت التوصيل', ['المحافظة', 'الحد بالدقائق', 'ضمن الوقت', 'وصل متأخرًا',
+                                 'متأخر ولم يسلّم', 'مفتوح ضمن الوقت', 'ملغى', 'غير قابل للتقييم', 'الالتزام'], summary),
+        ('تفاصيل الطلبات المتأخرة', ['الطلب', 'المحافظة', 'البراند', 'الفرع', 'السائق', 'مدة التجهيز',
+                                   'موعد الاستلام', 'مدة التوصيل', 'إجمالي المدة', 'وقت التأخير', 'حمل السائق عند التأخير'], details),
+    ]
+
+
 def accounting_lines(report):
     a = report['accounting']
     lines = [f"اكتمال المراجعة المحاسبية: {a['percent']}٪ ({a['completed_steps']} من {a['total_steps']} خطوة)"]
@@ -330,13 +564,16 @@ def accounting_lines(report):
 def make_html(report):
     e = lambda value: escape(str(value))
     headers, rows, totals, cases = report_tables(report)
-    def table(head, data, total=None):
-        return '<table><thead><tr>'+''.join('<th>'+e(x)+'</th>' for x in head)+'</tr></thead><tbody>'+''.join('<tr>'+''.join('<td>'+e(x)+'</td>' for x in r)+'</tr>' for r in data)+'</tbody>'+('<tfoot><tr>'+''.join('<td>'+e(x)+'</td>' for x in total)+'</tr></tfoot>' if total else '')+'</table>'
+    def table(head, data, total=None, timing=False):
+        return '<table><thead><tr>'+''.join('<th>'+e(x)+'</th>' for x in head)+'</tr></thead><tbody>'+''.join('<tr>'+''.join(('<td class="or-timing-late">' if timing and str(x).endswith('متأخر') else '<td>')+e(x)+'</td>' for x in r)+'</tr>' for r in data)+'</tbody>'+('<tfoot><tr>'+''.join('<td>'+e(x)+'</td>' for x in total)+'</tr></tfoot>' if total else '')+'</table>'
     body = '<div class="or-print-logos"><img src="/assets/operating-report/kps.jpeg" alt="كبز"><img src="/assets/operating-report/enbishan.jpeg" alt="عنبيشن"></div><h1>'+('تقرير اليوم التشغيلي' if report['scope'] == 'day' else 'تقرير شفتي')+'</h1><p>'+e(report['day'])+' · '+e(report['manager'])+'</p>'
     body += '<p>'+str(report['count'])+' طلب · صافي المبيعات '+money(report['net'])+' ر.س</p>'+table(headers, rows, totals)
     city_head, city_rows = city_tables(report)
     body += '<h2>ملخص المدن / المحافظات</h2>'+table(city_head, city_rows)
     body += '<p>المطابقة: قيمة الطلبات = شبكة + كاش. النقص عجز والزيادة فائض. — بيانات غير متاحة.</p>'
+    for title, headers, data in delivery_timing_tables(report):
+        if data:
+            body += '<h2>'+e(title)+'</h2>'+table(headers, data, timing=True)
     if cases:
         body += '<h2>الضيافة والتعويضات والحالات</h2>'+table(['السائق', 'البراند', 'النوع', 'القيمة المرجعية', 'المرجع', 'السبب', 'الحالة'], cases)
     else:
@@ -451,21 +688,22 @@ def make_pdf(report, paper='A3'):
         if y - space < bottom:
             new_page()
 
-    def draw_row(cells, cols, dark=False, shaded=False):
+    def draw_row(cells, cols, dark=False, shaded=False, timing=False):
         nonlocal y
         rh = max(len(cell) for cell in cells)*leading+8
         cv.setFillColor(colors.HexColor('#232d34' if dark else '#f4f7f9' if shaded else '#ffffff'))
         cv.rect(margin, y-rh, usable, rh, stroke=0, fill=1)
         x = width-margin
         for col, cell in zip(cols, cells):
+            color = '#ffffff' if dark else '#b42318' if timing and ' '.join(cell).endswith('متأخر') else '#232d34'
             for j,line in enumerate(cell):
-                text(line, x-4, y-pts-4-j*leading, pts, '#ffffff' if dark else '#232d34')
+                text(line, x-4, y-pts-4-j*leading, pts, color)
             cv.setStrokeColor(colors.HexColor('#cfd6de'))
             cv.rect(x-col,y-rh,col,rh,stroke=1,fill=0)
             x -= col
         y -= rh
 
-    def draw_table(data, cols, total_row=False, heading=None, grouped=False):
+    def draw_table(data, cols, total_row=False, heading=None, grouped=False, timing=False):
         nonlocal y
         header, header_height = data[0]
         def table_header():
@@ -495,7 +733,7 @@ def make_pdf(report, paper='A3'):
                     table_header()
                     continue
                 fragment = [cell[:capacity] for cell in remaining]
-                draw_row(fragment, cols, dark=total_row and index == len(data)-1, shaded=index%2 == 0)
+                draw_row(fragment, cols, dark=total_row and index == len(data)-1, shaded=index%2 == 0, timing=timing)
                 remaining = [cell[capacity:] for cell in remaining]
                 if any(remaining):
                     new_page()
@@ -520,6 +758,10 @@ def make_pdf(report, paper='A3'):
     main_layout[0]=layout([['','','','عدد','قيمة','عدد','قيمة','','','','','','','']],widths,pts)[0]
     draw_table(main_layout,widths,True,grouped=True)
     draw_table(city_layout,city_widths,heading='ملخص المدن / المحافظات')
+    for title, headers, data in delivery_timing_tables(report):
+        if data:
+            cols = [usable / len(headers)] * len(headers)
+            draw_table(layout([headers, *data], cols, pts), cols, heading=title, timing=True)
     if cases:
         draw_table(case_layout,case_widths,heading='حالات التشغيل')
     else:

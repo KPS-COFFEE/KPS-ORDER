@@ -281,7 +281,9 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
         expect(row).to_be_visible()
         expect(row).to_contain_text(name)
         expect(row).to_contain_text(district)
-        assert row.locator('.order-summary-fields dd').count() == 6
+        expect(row.locator('.order-summary-fields dd')).to_have_count(7)
+        expect(row.locator('.order-summary-fields dt')).to_contain_text(
+            ['إجمالي المدة' if lang == 'ar' else 'Total elapsed'])
         expect(row.locator('.order-summary-notes')).to_contain_text('ملاحظة اختبار كاملة')
         assert row.locator('script').count() == 0
         row.locator('[data-action=order-review]').click()

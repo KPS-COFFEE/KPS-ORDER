@@ -119,6 +119,7 @@ def test_real_live_shift_report_is_read_only_and_never_claims_accounting_approva
     assert response.status_code==200,response.text
     data=response.json()
     assert data['count']==1 and data['net']==1000 and len(data['rows'])==1
+    assert [(g['city'], g['unavailable']) for g in data['delivery_timing']] == [('حفر الباطن', 1)]
     assert not data['accounting']['approved'] and data['accounting']['percent']==0
     assert not data['operational_complete']
     pdf=actor('manager').get('/api/operating-reports/export/pdf',params={'day':day.isoformat()})
@@ -213,7 +214,7 @@ def test_build_projects_scoped_live_collections_and_locations_without_writes(mon
             if query.startswith('SELECT id,name,city'):return Result([dict(id='b',name='أحد',city='الدمام')])
             if "s.kind='manager'" in query:return Result([manager])
             if "s.kind='driver'" in query:return Result([driver])
-            if 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
+            if 'timing_shift_id' in query or 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
             raise AssertionError(query)
     monkeypatch.setattr(reports.multibrand,'enabled',lambda:False)
     monkeypatch.setattr(reports.auth,'has_permission',lambda *a:True)
@@ -318,7 +319,7 @@ def test_selected_historical_manager_report_keeps_day_and_access_scope(monkeypat
                 return Result(candidates)
             if "s.kind='driver'" in query:
                 visited.append(args[0]);return Result([])
-            if 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
+            if 'timing_shift_id' in query or 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
             raise AssertionError(query)
     monkeypatch.setattr(reports.multibrand,'enabled',lambda:central_enabled)
     monkeypatch.setattr(reports.multibrand,'available',lambda *a:[dict(id='kps')])
@@ -365,7 +366,7 @@ def test_selected_central_manager_report_requires_every_authorized_leg(monkeypat
             if "s.kind='driver'" in query:
                 brand=next(b for b,m in managers.items() if m['id']==args[0])
                 return Result([dict(id=f'{brand}-driver',user_id=f'{brand}-u',display_name=brand,brand_id=brand,branch_ids=['b'],status='closed')])
-            if 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
+            if 'timing_shift_id' in query or 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
             raise AssertionError(query)
     monkeypatch.setattr(reports.multibrand,'enabled',lambda:True)
     monkeypatch.setattr(reports.multibrand,'available',lambda *a:[dict(id=b) for b in managers])
@@ -386,3 +387,75 @@ def test_selected_central_manager_report_requires_every_authorized_leg(monkeypat
         with pytest.raises(HTTPException) as error:
             reports.build(Cursor(),user,date(2026,10,27),'shift',anchor)
         assert error.value.status_code==404
+
+
+def test_delivery_timing_counts_only_rated_deliveries_and_highlights_the_delayed_phase():
+    order = dict(city='حفر الباطن', limit_seconds=2700, status='on_time',
+                 reference='HFR-001', brand='kps', branch='المروج', driver='سائق',
+                 elapsed_seconds=2700, preparation_seconds=730, delivery_seconds=600,
+                 preparation_late=True, pickup_late=False, delivery_late=False)
+    summary = reports.delivery_timing_summary([
+        order, dict(order, status='late', reference='HFR-002', elapsed_seconds=2701,
+                    preparation_late=False),
+        dict(order, status='open_late', reference='HFR-003'),
+        dict(order, status='unavailable', limit_seconds=None, preparation_late=False),
+        dict(order, status='cancelled', reference='EXCLUDED'),
+    ])
+    group, = summary
+    assert (group['on_time'], group['late'], group['open_late'], group['unavailable'],
+            group['cancelled'], group['compliance']) == (1, 1, 1, 1, 1, 50)
+    assert [o['reference'] for o in group['delayed_orders']] == ['HFR-001', 'HFR-002', 'HFR-003']
+    report = dict(example(), delivery_timing=summary)
+    detail = reports.delivery_timing_tables(report)[1][2][0]
+    assert detail[5:9] == ['12:10 · متأخر', '—', '10:00', '45:00']
+    html = reports.make_html(report)
+    assert 'class="or-timing-late">12:10 · متأخر' in html
+    pdf = PdfReader(BytesIO(reports.make_pdf(report)))
+    assert any('HFR-001' in page.extract_text() for page in pdf.pages)
+
+
+@pytest.mark.postgres
+def test_shift_timing_uses_original_duty_and_exact_delivered_threshold(ops):
+    from app.journey_timing import capture
+    actor, _, _, shifts = ops
+    manager, driver = shifts()
+    with db.tx() as c:
+        shift = c.execute('SELECT * FROM shifts WHERE id=%s', (manager,)).fetchone()
+        day = shift['reporting_operational_date']
+        created = shift['opened_at'] - timedelta(hours=2)
+        policy = capture({'branch_city': 'حفر الباطن'})
+        for ref, seconds, duty in [('equal', 2700, manager), ('late', 2701, manager),
+                                   ('open', None, manager), ('outside', 2701, 'different-duty'),
+                                   ('next', 2700, 'different-duty')]:
+            c.execute(
+                "INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,"
+                "payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,created_at,completed_at,delivery_operational_date) "
+                "VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery',%s,%s,'cash',1000,0,1000,%s,'{}',%s,%s,%s)",
+                (ref, 'completed' if seconds else 'new', 'delivered' if seconds else 'pending',
+                 db.json(dict(manager_shift_id=duty, delivery_journey_policy=policy, order_reference=ref)),
+                 created, created + timedelta(seconds=seconds) if seconds else None, day))
+        for ref, assigned, picked, ended, status in [
+            ('late', 50, 150, 2701, 'delivered'),
+            ('outside', 60, None, None, 'assigned'),
+            ('equal', 60, 170, 2700, 'delivered'),
+            ('next', 2701, None, None, 'assigned'),
+        ]:
+            c.execute(
+                "INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,created_at,picked_up_at,delivered_at) "
+                "VALUES(%s,%s,'ops-driver',%s,%s,'ops-manager',%s,%s,%s)",
+                ('task-'+ref, ref, driver, status, created + timedelta(seconds=assigned),
+                 created + timedelta(seconds=picked) if picked else None,
+                 created + timedelta(seconds=ended) if ended else None))
+    response = actor('manager').get('/api/operating-reports', params={'day': str(day), 'manager_shift_id': manager})
+    assert response.status_code == 200, response.text
+    group, = response.json()['delivery_timing']
+    assert (group['on_time'], group['late'], group['open_late'], group['compliance']) == (1, 1, 1, 50)
+    rows = {o['reference']: o for o in group['delayed_orders']}
+    assert set(rows) == {'equal', 'late', 'open'}
+    assert rows['equal']['status'] == 'on_time' and rows['equal']['delivery_late']
+    assert rows['equal']['workload'] == dict(state='assigned', driver='driver', assigned=3, onboard=2)
+    assert rows['late']['workload'] == dict(state='assigned', driver='driver', assigned=2, onboard=1)
+    assert rows['open']['workload'] == dict(state='unassigned')
+    previous = actor('manager').get('/api/operating-reports', params={'previous_day': 'true'})
+    assert previous.status_code == 200
+    assert previous.json()['day'] == str(reports.service_hours.delivery_operational_date() - timedelta(days=1))

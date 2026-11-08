@@ -4,6 +4,7 @@ Brand-scoped settings share the existing database, authorization and replay engi
 Targets are captured with each new order; historical reports remain immutable.
 """
 from copy import deepcopy
+from datetime import timedelta
 from fastapi import APIRouter, Depends, Header, Query
 from . import auth, db
 
@@ -132,8 +133,10 @@ def evaluate(order, points, tasks, now):
     def phase(key, start, stop=None, ended=False):
         a, b = _date(start), _date(stop) if stop else now if not terminal and not ended else None
         seconds = max(0, (b-a).total_seconds()) if a and b else None
-        phases[key] = {'seconds': seconds, 'running': bool(a and not stop and not ended and not terminal),
-                       'color': classification(seconds, p['stages'][key])}
+        color = classification(seconds, p['stages'][key])
+        phases[key] = {'seconds': seconds, 'running': bool(a and not stop and not ended and not terminal), 'color': color}
+        if color == 'red' and key in ('preparation', 'delivery'):
+            phases[key]['red_at'] = (a + timedelta(seconds=p['stages'][key]['red'])).isoformat()
     accepted = points.get('preparation.accepted')
     printed = points.get('order.print_output_confirmed')
     preparing = points.get('preparation.preparing') or printed
