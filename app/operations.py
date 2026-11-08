@@ -287,7 +287,7 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
     if brand_settings.get('services', {}).get('delivery', True) is not True:
         fail(409, 'خدمة التوصيل موقوفة من إدارة البراند؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
     morning = delivery_period == 'morning'
-    morning_status = morning_delivery.manager_shift_status(now) if morning and manager_preparation else None
+    morning_status = morning_delivery.manager_shift_status(now, brand_id=brand) if morning and manager_preparation else None
     if morning:
         approved = morning_delivery.policy(brand_settings)
         if (not principal or not principal.get('active') or principal.get('brand_id') != brand
@@ -302,7 +302,11 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
             fail(409, 'الفترة الصباحية مغلقة أو الفرع غير معتمد للتنفيذ.')
     for branch in branches:
         settings = branch['settings']
-        hours = (morning_delivery.MANAGER_SHIFT_HOURS if manager_preparation else morning_delivery.HOURS) if morning else settings.get('delivery_hours')
+        hours = morning_delivery.hours_for(brand, manager=manager_preparation) if morning else settings.get('delivery_hours')
+        if not morning and brand == 'enbishan' and morning_delivery.scope_branch(branch, brand):
+            hours = morning_delivery.enbishan_evening_hours(hours)
+            if not hours and morning_delivery.active(branch, brand_settings, now):
+                fail(409, 'افتح مناوبة عنبيشن الصباحية لاستقبال طلبات الفترة.')
         if not hours:
             continue
         if catalog.normalize_city(branch['city']) not in catalog.DELIVERY_CITIES:
@@ -317,7 +321,7 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
         if not status['open']:
             if manager_preparation:
                 raise db.error(409, 'MORNING_MANAGER_SHIFT_HOURS' if morning else 'MANAGER_SHIFT_HOURS',
-                               'يتاح تجهيز مدير الصباح من 03:45 صباحًا في الأيام العادية، والجمعة من 12:15 ظهرًا بتوقيت السعودية.' if morning else
+                               ('يتاح تجهيز مدير صباح عنبيشن من 08:45 بتوقيت السعودية.' if brand == 'enbishan' else 'يتاح تجهيز مدير الصباح من 03:45 صباحًا في الأيام العادية، والجمعة من 12:15 ظهرًا بتوقيت السعودية.') if morning else
                                'شفت المدير مغلق الآن. لفترة التوصيل التي تبدأ 16:00، يتاح التجهيز من 15:45 بتوقيت السعودية؛ استقبال العملاء يبدأ 16:00.')
             fail(409, service_hours.closed_delivery_message(hours, now))
         windows[branch['id']] = {'hours': hours, 'window_start': status['current_window_start'],
@@ -357,8 +361,8 @@ def driver_shift_window(c, brand, branches, manager, principal):
     windows = {}
     for branch in branches:
         config = branch['settings']
-        hours = morning_delivery.HOURS if morning else config.get('delivery_hours')
-        if morning and (brand != 'kps' or catalog.normalize_city(branch['city']) != 'حفر الباطن'
+        hours = morning_delivery.hours_for(brand) if morning else config.get('delivery_hours')
+        if morning and (not morning_delivery.scope_branch(branch, brand)
                 or branch['id'] not in approved['execution_branch_ids']):
             fail(409, 'الفرع غير معتمد للتنفيذ الصباحي.')
         if not hours:
@@ -1095,7 +1099,8 @@ def assign_in_transaction(c,user,oid,body):
     pickup_branch_id(c,o,user=user)
     from . import morning_delivery
     morning_delivery.authorize_order(c, user, o)
-    if o.get('snapshot', {}).get('delivery_period') == 'morning' and o['preparation_status'] == 'new':
+    if (o.get('snapshot', {}).get('delivery_period') == 'morning' and o['preparation_status'] == 'new'
+            and not (o['brand_id'] == 'enbishan' and body.accept_order)):
         fail(409, 'ينتظر الطلب الصباحي قبول محضّر الفرع قبل الإسناد.')
     if o['service']!='delivery' or o['preparation_status'] in ('cancelled','rejected','completed') or o.get('completed_at'):fail(409,'الطلب غير قابل للإسناد')
     from .order_amendments import guard

@@ -71,9 +71,10 @@ def capabilities(user):
 
 def resolve(conn, user, *, shift_id=None, allow_bootstrap=False):
     """Fresh owner policy, existing employee scope and real duty are mandatory."""
-    from . import morning_delivery, catalog
+    from . import morning_delivery
+    brand = user.get('brand_id')
     if (not user.get('active') or user.get('invitation_status', 'active') != 'active'
-            or user.get('role') != 'delivery_manager' or user.get('brand_id') != 'kps'):
+            or user.get('role') != 'delivery_manager' or brand not in {'kps', 'enbishan'}):
         raise db.error(403, 'MORNING_MANAGER_SCOPE', 'هذا السياق مخصص لمدير الصباح المعتمد.')
     row = conn.execute('SELECT settings FROM brands WHERE id=%s', (user['brand_id'],)).fetchone()
     policy = morning_delivery.policy((row or {}).get('settings'))
@@ -82,14 +83,18 @@ def resolve(conn, user, *, shift_id=None, allow_bootstrap=False):
     duty = conn.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='manager' "
         "AND status IN ('open','closing','submitted') AND delivery_window_snapshot->>'period'='morning' "
         "ORDER BY opened_at DESC,id DESC LIMIT 1", (user['id'], user['brand_id'])).fetchone()
+    if brand == 'enbishan' and allow_bootstrap and not shift_id and duty:
+        from . import service_hours
+        if duty['delivery_operational_date'] != service_hours.delivery_operational_date():
+            duty = None
     if not duty and allow_bootstrap and not shift_id:
         if not policy['enabled']:
             raise db.error(403, 'MORNING_MANAGER_REVOKED', 'التشغيل الصباحي غير مفعل لفتح مناوبة جديدة.')
         branches = conn.execute('SELECT id,branch_no,city FROM branches WHERE brand_id=%s AND id=ANY(%s)',
             (user['brand_id'], list(set(user.get('branch_ids') or []) & set(policy['execution_branch_ids'])))).fetchall()
-        branches = [b for b in branches if b['branch_no'] == 2 and catalog.normalize_city(b['city']) == 'حفر الباطن']
+        branches = [b for b in branches if morning_delivery.scope_branch(b, brand, manager=True)]
         if len(branches) != 1:
-            raise db.error(403, 'MORNING_MANAGER_BRANCH', 'يلزم اعتماد فرع 2 بحفر الباطن.')
+            raise db.error(403, 'MORNING_MANAGER_BRANCH', 'يلزم اعتماد فرع التنفيذ الصباحي في حفر الباطن.')
         scoped = dict(user, branch_ids=[branches[0]['id']])
         scoped['_morning_manager_context'] = {'period': 'morning', 'shift_id': None,
             'branch_ids': scoped['branch_ids'], 'bootstrap': True}
@@ -101,9 +106,9 @@ def resolve(conn, user, *, shift_id=None, allow_bootstrap=False):
     permitted = set(user.get('branch_ids') or []) & set(policy['execution_branch_ids'])
     # This launch is intentionally one branch. A widened policy cannot widen it.
     if (not branches or len(branches) != len(duty['branch_ids'])
-            or any(b['branch_no'] != 2 or catalog.normalize_city(b['city']) != 'حفر الباطن'
+            or any(not morning_delivery.scope_branch(b, brand, manager=True)
                    or b['id'] not in permitted for b in branches)):
-        raise db.error(403, 'MORNING_MANAGER_BRANCH', 'نطاق الصباح المعتمد حاليًا فرع 2 بحفر الباطن فقط.')
+        raise db.error(403, 'MORNING_MANAGER_BRANCH', 'المناوبة خارج الفرع المعتمد للتوصيل الصباحي.')
     scoped = dict(user)
     scoped['branch_ids'] = [b['id'] for b in branches]
     scoped['_morning_manager_context'] = {'period': 'morning', 'shift_id': duty['id'],

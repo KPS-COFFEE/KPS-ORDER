@@ -43,6 +43,8 @@ def customer_order_view(row):
     if result.get('duplicate_review'):
         result['duplicate_review']={'status':result['duplicate_review']['status']}
     result['snapshot'] = operational_view(catalog.customer_quote_view(row['snapshot']))
+    if row['snapshot'].get('delivery_period') == 'morning' and row.get('brand_id') == 'enbishan':
+        result['snapshot'].pop('manager_shift_id', None)
     if result['snapshot'].get('duplicate_review'):
         result['snapshot']['duplicate_review'] = {'status': result['snapshot']['duplicate_review']['status']}
     if row['snapshot'].get('internal_routing'):
@@ -63,9 +65,10 @@ def _ensure_manager_duty(conn, brand_id, branch_id):
         raise db.error(409, 'DELIVERY_DUTY_UNAVAILABLE', 'لا توجد مناوبة توصيل مهيأة لاستقبال الطلبات.')
     # Exact operations schema is shared with the delivery implementation.
     from . import multibrand
+    period = " AND s.delivery_window_snapshot->>'period' IS DISTINCT FROM 'morning'" if brand_id == 'enbishan' else ''
     if multibrand.enabled():
         multibrand.isolation_guard()
-        shifts = conn.execute("SELECT s.* FROM shifts s WHERE s.brand_id=%s AND s.kind='manager' AND s.status='open' AND s.branch_ids ? %s FOR SHARE", (brand_id,branch_id)).fetchall()
+        shifts = conn.execute("SELECT s.* FROM shifts s WHERE s.brand_id=%s AND s.kind='manager' AND s.status='open' AND s.branch_ids ? %s" + period + ' FOR SHARE', (brand_id,branch_id)).fetchall()
         for shift in shifts:
             principal = multibrand.project(conn,conn.execute('SELECT * FROM users WHERE id=%s',(shift['user_id'],)).fetchone(),brand_id)
             if principal and principal['role'] in ('owner','delivery_manager') and (principal['role']=='owner' or branch_id in principal['branch_ids']):
@@ -73,7 +76,7 @@ def _ensure_manager_duty(conn, brand_id, branch_id):
         raise db.error(409, 'DELIVERY_DUTY_UNAVAILABLE', 'خدمة التوصيل مغلقة حاليًا لعدم وجود مناوبة مستلمة.')
     exists = conn.execute("SELECT 1 FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.kind='manager' AND s.status='open' "
                           "AND s.branch_ids ? %s AND u.brand_id=s.brand_id AND u.active AND u.role IN ('owner','delivery_manager') "
-                          "AND (u.role='owner' OR u.branch_ids ? %s) FOR SHARE OF s,u",
+                          "AND (u.role='owner' OR u.branch_ids ? %s)" + period + ' FOR SHARE OF s,u',
                           (brand_id, branch_id, branch_id)).fetchone()
     if not exists:
         raise db.error(409, 'DELIVERY_DUTY_UNAVAILABLE', 'خدمة التوصيل مغلقة حاليًا لعدم وجود مناوبة مستلمة.')
@@ -222,6 +225,8 @@ def delivery_center_scope(conn, user, branch_id):
     # A morning view must never select another open manager duty belonging to
     # the same employee, including an evening duty on the same branch.
     extra = " AND id=%s AND delivery_window_snapshot->>'period'='morning'" if context else ''
+    if not context and user['brand_id'] == 'enbishan':
+        extra = " AND delivery_window_snapshot->>'period' IS DISTINCT FROM 'morning'"
     params = (user['brand_id'],user['id'],branch_id) + ((context['shift_id'],) if context else ())
     shift = conn.execute("SELECT id FROM shifts WHERE brand_id=%s AND user_id=%s AND kind='manager' AND status='open' AND branch_ids ? %s" + extra + ' FOR SHARE', params).fetchone()
     if not shift:
@@ -252,10 +257,10 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',
                                       (body.branch_id, body.brand_id)).fetchone()
                 brand = conn.execute('SELECT settings FROM brands WHERE id=%s', (body.brand_id,)).fetchone()
-                if (not branch or branch['branch_no'] != 2
+                if (not branch or not morning_delivery.scope_branch(branch, body.brand_id, manager=True)
                         or not morning_delivery.active(branch, (brand or {}).get('settings'))):
                     raise db.error(403, 'MORNING_CUSTOMER_ORDER_SCOPE',
-                                   'استقبال طلبات مدير الصباح متاح خلال الفترة الصباحية بفرع 2 فقط.')
+                                   'استقبال طلبات مدير الصباح متاح في الفرع والفترة الصباحية المعتمدين فقط.')
         else:
             auth.assert_customer_order_eligible(conn,user,phone_required=phone_required)
         def perform():
@@ -290,19 +295,25 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 # The clock and routing are authoritative on the server. A
                 # morning header cannot create an evening or other-city order.
                 from .morning_manager_context import order_allowed
+                from . import morning_delivery
                 candidate = {'brand_id': body.brand_id, 'branch_id': execution_branch_id,
                              'service': body.service, 'snapshot': quote}
                 if (not delivery_center
                         or not order_allowed(user, candidate)
-                        or quote['branch_no'] != 2
-                        or catalog.normalize_city(quote['branch_city']) != 'حفر الباطن'):
+                        or not morning_delivery.scope_branch(
+                            {'branch_no': quote['branch_no'], 'city': quote['branch_city']},
+                            body.brand_id, manager=True)):
                     raise db.error(403, 'MORNING_CUSTOMER_ORDER_SCOPE',
-                                   'طلب مدير الصباح مخصص للتوصيل الصباحي من فرع 2 بحفر الباطن فقط.')
+                                   'طلب مدير الصباح مخصص للفرع المعتمد للتوصيل الصباحي في حفر الباطن.')
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
             if quote.get('delivery_period') == 'morning':
                 from . import morning_delivery
-                morning_delivery.require_duty(conn,body.brand_id,execution_branch_id)
+                morning_duty = morning_delivery.require_duty(conn,body.brand_id,execution_branch_id)
+                if body.brand_id == 'enbishan':
+                    quote['manager_shift_id'] = morning_duty
+                    if delivery_center and morning_duty != user.get('_morning_manager_context', {}).get('shift_id'):
+                        raise db.error(403, 'MORNING_MANAGER_DUTY', 'أنشئ الطلب من مناوبة الصباح المستلمة.')
             elif body.service == 'delivery' and (config or {}).get('settings', {}).get('delivery_workflow') != 'branch_without_manager':
                 _ensure_manager_duty(conn, body.brand_id, execution_branch_id)
             customer = body.customer.model_dump(exclude_none=True)
@@ -352,7 +363,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             from .delivery_workflow import configured_workflow
             quote['delivery_workflow'] = configured_workflow(body.brand_id, (config or {}).get('settings', {}))
             if quote.get('delivery_period') == 'morning':
-                quote['delivery_workflow'] = 'branch_fulfillment'
+                quote['delivery_workflow'] = ('manager_dispatch' if body.brand_id == 'enbishan'
+                                              else 'branch_fulfillment')
             # Read immutable receipt/policy snapshots before the per-branch
             # counter. The allocation remains in this same atomic transaction,
             # while its mandatory serial section contains only durable writes.
@@ -375,7 +387,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             prefix = order_numbering.reference_prefix({'city': quote['branch_city'], 'branch_no': quote['branch_no'], 'brand_id': body.brand_id})
             # Prepare the canonical privacy projection before acquiring the
             # branch counter; do not duplicate routing/privacy rules in SQL.
-            public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id})
+            public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id, 'brand_id': body.brand_id})
             gift_cte, gift_params = first_order_gift.claim_cte(gift_phone, (quote.get('first_order_gift') or {}).get('version'))
             ctes = ('next_number AS (' + order_numbering.NEXT_NUMBER_SQL + '), created_order AS ('
                                'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,payment_status,'
@@ -865,18 +877,20 @@ def manager_accept(order_id: str, body: ManagerAcceptanceBody,
         preparation_id = preparation_routing.pickup_branch_id(conn, order, user=user)
         if preparation_id != order['branch_id']:
             delivery_center_scope(conn, user, preparation_id)
-        morning = bool(user.get('_morning_manager_context')
-                       and order['snapshot'].get('delivery_period') == 'morning')
+        morning = order['snapshot'].get('delivery_period') == 'morning'
+        enbishan_morning = morning and order['brand_id'] == 'enbishan'
+        if enbishan_morning and not user.get('_morning_manager_context'):
+            raise db.error(403, 'MORNING_MANAGER_DUTY', 'اقبل الطلب من مناوبة الصباح المستلمة.')
+        morning = morning and bool(user.get('_morning_manager_context'))
         morning_branch = None
         if morning:
             from . import morning_delivery
             morning_delivery.authorize_order(conn, user, order)
             morning_branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',
                                           (order['branch_id'], order['brand_id'])).fetchone()
-            if (not morning_branch or morning_branch['branch_no'] != 2
-                    or catalog.normalize_city(morning_branch['city']) != 'حفر الباطن'):
-                raise db.error(403, 'MORNING_MANAGER_BRANCH', 'قبول الصباح مخصص لفرع 2 بحفر الباطن فقط.')
-        applicable = (order['snapshot'].get('delivery_workflow') == 'branch_fulfillment' if morning else
+            if not morning_branch or not morning_delivery.scope_branch(morning_branch, order['brand_id'], manager=True):
+                raise db.error(403, 'MORNING_MANAGER_BRANCH', 'قبول الصباح مخصص لفرع التنفيذ المعتمد في حفر الباطن.')
+        applicable = (order['snapshot'].get('delivery_workflow') == ('manager_dispatch' if enbishan_morning else 'branch_fulfillment') if morning else
                       order['snapshot'].get('delivery_workflow') == 'manager_dispatch'
                       and order['snapshot'].get('delivery_period') != 'morning')
         if order['service'] != 'delivery' or not applicable:
@@ -901,7 +915,7 @@ def manager_accept(order_id: str, body: ManagerAcceptanceBody,
             db.event(conn, order_id, user['id'], 'preparation.accepted', details)
             db.audit(conn, user['id'], 'order.manager_accepted', 'order', order_id, details)
             result = {'order': row}
-            if morning_branch:
+            if morning_branch and not enbishan_morning:
                 from .branch_printing import enqueue_morning_preparer_receipt
                 result['printing'] = enqueue_morning_preparer_receipt(
                     conn, user, row, morning_branch, source='morning_manager_acceptance')

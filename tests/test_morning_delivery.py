@@ -73,3 +73,25 @@ def test_customer_quote_hides_execution_and_policy_revision():
     result = catalog.customer_quote_view(deepcopy(quote))
     assert 'internal_routing' not in result
     assert 'morning_policy_version' not in result
+
+
+@pytest.mark.parametrize('day,clock,expected', [
+    ('2026-11-08', '08:59:59', False), ('2026-11-08', '09:00:00', True),
+    ('2026-11-08', '11:59:59', True), ('2026-11-08', '12:00:00', False),
+    ('2026-11-06', '10:00:00', False),
+])
+def test_enbishan_morning_only_branch_one_and_approved_window(day, clock, expected):
+    date = datetime.fromisoformat(day + 'T' + clock).replace(tzinfo=service_hours.RIYADH)
+    branch_one = branch() | {'id': 'enbishan-1', 'brand_id': 'enbishan'}
+    config = {'morning_delivery': {'enabled': True, 'execution_branch_ids': ['enbishan-1']}}
+    assert morning.active(branch_one, config, date) is expected
+    assert not morning.active(branch_one, {}, date)
+    assert not morning.active(branch_one | {'branch_no': 2}, config, date)
+    assert not morning.active(branch_one | {'city': 'الدمام'}, config, date)
+
+
+def test_enbishan_morning_manager_can_prepare_without_admitting_customers():
+    date = datetime.fromisoformat('2026-11-08T08:45:00').replace(tzinfo=service_hours.RIYADH)
+    status = morning.manager_shift_status(date, brand_id='enbishan')
+    assert status['preparation'] and status['current_window_start'].endswith('09:00:00+03:00')
+    assert not service_hours.hours_open(morning.hours_for('enbishan'), date)
