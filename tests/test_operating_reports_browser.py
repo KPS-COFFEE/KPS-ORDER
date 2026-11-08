@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 from test_operating_reports import example
-from app.operating_reports import make_pdf
+from app.operating_reports import make_html, make_pdf
 
 
 @pytest.mark.parametrize('width',[390,1440])
@@ -28,6 +28,7 @@ def test_widget_mobile_accounting_status_refresh_and_export_filename(width,tmp_p
             page.route('**/qa-report',lambda route:route.fulfill(content_type='text/html; charset=utf-8',body='''<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/operating-reports.css"><main id="report"></main><script src="/assets/operating-reports.js"></script></html>'''))
             page.route('**/api/operating-reports?*',lambda route:route.fulfill(content_type='application/json',body=json.dumps(data)))
             page.route('**/api/operating-reports/export/pdf?*',lambda route:route.fulfill(content_type='application/pdf',body=source))
+            page.context.route('**/api/operating-reports/export/print?*',lambda route:route.fulfill(content_type='text/html; charset=utf-8',body=make_html(data)))
             page.goto(f'http://127.0.0.1:{server.server_port}/qa-report')
             page.evaluate('''async()=>{await window.KPSOperatingReports.mount(document.querySelector('#report'),{api:async url=>await(await fetch(url)).json(),initialDay:'2026-10-25',managerShiftId:'historical-manager',allowDay:true,lockContext:true});}''')
             assert page.locator('[data-or-day]').is_disabled()
@@ -45,6 +46,12 @@ def test_widget_mobile_accounting_status_refresh_and_export_filename(width,tmp_p
                 with page.expect_download() as download:
                     page.get_by_role('button',name='حفظ أو مشاركة PDF').click()
             assert download.value.suggested_filename==data['filename']
+            with page.expect_popup() as popup:
+                page.get_by_role('button',name='طباعة',exact=True).click()
+            popup.value.wait_for_load_state()
+            assert 'manager_shift_id=historical-manager' in popup.value.url
+            assert popup.value.title() == data['filename'].removesuffix('.pdf')
+            popup.value.close()
             data['accounting']=example(True)['accounting']
             page.get_by_role('button',name='تحديث',exact=True).click()
             page.get_by_text('100٪',exact=True).wait_for()

@@ -115,6 +115,8 @@ def project(conn, user, brand):
 
 def request_user(conn, request, user):
     values = request.headers.getlist('x-operations-brand')
+    if not values and request.method == 'GET' and request.url.path == '/api/operating-reports/export/print':
+        values = request.query_params.getlist('operations_brand')
     if not values:
         return user
     if not enabled() or len(values) != 1 or ',' in values[0] or user['role'] == 'customer':

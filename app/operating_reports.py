@@ -8,7 +8,6 @@ from html import escape
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Response
@@ -25,7 +24,7 @@ BRANDS = {'kps': 'كبز', 'enbishan': 'عنبيشن'}
 
 def filename(day, scope):
     day = date.fromisoformat(str(day))
-    return dated_filename(day)
+    return dated_filename(day, kind='تشغيل', padded=True)
 
 
 def disposition(name):
@@ -242,7 +241,7 @@ def add_delay_workload(c, workload_scope, morning, delayed):
                                onboard=len(carried) if known else None)
 
 
-def delivery_orders(c, principal, candidates, visible, locations, day, now, workload_scope):
+def delivery_orders(c, principal, candidates, visible, locations, day, now, workload_scope, *, details):
     from .performance import enrich_orders
     from .reporting import display_order_label
 
@@ -295,6 +294,8 @@ def delivery_orders(c, principal, candidates, visible, locations, day, now, work
             timing = order['timings']['total']
             elapsed = journey['elapsed_seconds'] if journey else timing['seconds']
             limit = journey['limit_seconds'] if journey else (stage or {}).get('total_limit_seconds')
+            if ''.join(city.split()) == 'القيصومة':
+                limit = 27 * 60
             cancelled = timing['state'] == 'cancelled'
             delivered = order['delivery_status'] == 'delivered'
             if cancelled:
@@ -326,7 +327,7 @@ def delivery_orders(c, principal, candidates, visible, locations, day, now, work
                                delivery_seconds=order['timings']['delivery']['seconds'],
                                preparation_late=flags['preparation'], delivery_late=flags['delivery'],
                                pickup_late=not cancelled and (pickup.get('late_seconds') or 0) > 0))
-    delayed = [order for order in output if order['delay_at'] is not None]
+    delayed = [order for order in output if order['delay_at'] is not None] if details else []
     for offset in range(0, len(delayed), 250):
         add_delay_workload(c, workload_scope, bool(principal.get('_morning_manager_context')),
                            delayed[offset:offset + 250])
@@ -335,7 +336,7 @@ def delivery_orders(c, principal, candidates, visible, locations, day, now, work
     return output
 
 
-def delivery_timing_summary(orders):
+def delivery_timing_summary(orders, *, details=True):
     groups = {}
     for order in orders:
         city = order['city']
@@ -345,8 +346,8 @@ def delivery_timing_summary(orders):
         if limit is not None and limit not in group['limits']:
             group['limits'].append(limit)
         group[order['status']] += 1
-        if order['status'] in ('late', 'open_late') or (
-                order['status'] != 'cancelled' and any(order[k] for k in ('preparation_late', 'pickup_late', 'delivery_late'))):
+        if details and (order['status'] in ('late', 'open_late') or (
+                order['status'] != 'cancelled' and any(order[k] for k in ('preparation_late', 'pickup_late', 'delivery_late')))):
             group['delayed_orders'].append(order)
     for group in groups.values():
         rated = group['on_time'] + group['late']
@@ -355,10 +356,21 @@ def delivery_timing_summary(orders):
     return sorted(groups.values(), key=lambda group: group['city'])
 
 
-def build(c, user, day, scope, manager_shift_id=None):
+def can_view_delay_details(user):
+    # The owner assigned this report to the general manager. His stable
+    # identity is the same one used by the manager notification directive.
+    return (not user.get('_morning_manager_context') and auth.has_permission(user, 'reports_view')
+            and (user['role'] == 'owner' or
+                 (user['role'] == 'delivery_manager'
+                  and user['id'] == 'staff_a9c2cb536601498aa89edc6b9fc6fef8')))
+
+
+def build(c, user, day, scope, manager_shift_id=None, *, delay_details=False):
     ops.roles(user, 'owner', 'delivery_manager')
     if not auth.has_permission(user, 'reports_view'):
         raise db.error(403, 'OPERATING_REPORT_FORBIDDEN', 'صلاحية التقارير غير متاحة.')
+    if delay_details and not can_view_delay_details(user):
+        raise db.error(403, 'DELIVERY_DELAY_REPORT_FORBIDDEN', 'تفاصيل التأخير متاحة للمالك والمدير العام.')
     if scope == 'day' and user.get('_morning_manager_context'):
         raise db.error(403, 'OPERATING_REPORT_MORNING', 'تقرير الصباح يخص مناوبتك فقط.')
     principals = [user]
@@ -388,6 +400,11 @@ def build(c, user, day, scope, manager_shift_id=None):
                                (principal['brand_id'], day)).fetchall()
         visible = [s for s in candidates if allowed_manager(principal, s, scope)
                    and (selected_manager_ids is None or s['id'] in selected_manager_ids)]
+        if delay_details:
+            visible = [s for s in candidates if allowed_manager(principal, s, 'day')]
+            timing_orders.extend(delivery_orders(c, principal, candidates, visible, locations, day, now,
+                                                 workload_scope, details=True))
+            continue
         if (scope == 'day' and reports_supervisor(principal)
                 and any(s['user_id'] != user['id'] and s['status'] != 'closed' for s in visible)):
             raise db.error(409, 'SUPERVISED_REPORT_PENDING', 'التقرير اليومي بانتظار اعتماد جميع الشفتات المخولة.')
@@ -434,7 +451,7 @@ def build(c, user, day, scope, manager_shift_id=None):
             if manager['status'] != 'closed' and manager.get('staffing_ended_at') is None:
                 pending += 1
         if visible:
-            timing_orders.extend(delivery_orders(c, principal, candidates, visible, locations, day, now, workload_scope))
+            timing_orders.extend(delivery_orders(c, principal, candidates, visible, locations, day, now, workload_scope, details=False))
             # Reuse canonical accounting deadlines, extensions and completion;
             # expose status only, not the underlying accounting money/notes.
             from .accounting_statements import manager_cards
@@ -452,6 +469,8 @@ def build(c, user, day, scope, manager_shift_id=None):
                 for r in c.execute("SELECT r.id FROM closure_reports r JOIN shifts s ON s.id=r.shift_id WHERE s.manager_shift_id=%s AND r.kind='driver'", (manager['id'],)).fetchall():
                     if r['id'] not in card_ids:
                         entries.append({})
+    if delay_details:
+        return ops.safe(dict(day=day, delivery_timing=delivery_timing_summary(timing_orders)))
     if selected_manager_ids is not None and ({m['id'] for m in managers} != selected_manager_ids
                                              or manager_shift_id not in selected_manager_ids):
         raise db.error(404, 'OPERATING_REPORT_SHIFT', 'المناوبة غير متاحة ضمن نطاق التقرير المصرح.')
@@ -465,18 +484,20 @@ def build(c, user, day, scope, manager_shift_id=None):
     accounting = progress(entries, approvals, [m['id'] for m in managers], pending)
     return ops.safe(dict(day=day, scope=scope, can_day=day_allowed and not bool(user.get('_morning_manager_context')), filename=filename(day, scope), manager=user['display_name'],
                          generated_at=now, rows=rows, cases=cases, accounting=accounting,
-                         delivery_timing=delivery_timing_summary(timing_orders),
+                         delivery_timing=delivery_timing_summary(timing_orders, details=False),
+                         can_view_delay_details=can_view_delay_details(user),
                          operational_complete=bool(managers) and not pending and all(r['closed'] for r in rows),evidence_missing=any(r['evidence_missing'] for r in rows),
                          count=sum(v['count'] for r in rows for v in r['brands'].values()), net=sum(r['net'] for r in rows)))
 
 
 @router.get('')
 def listing(day: date | None = None, scope: Literal['shift', 'day'] = 'shift', manager_shift_id: str | None = None,
-            previous_day: bool = False, user=Depends(auth.current_user)):
+            previous_day: bool = False, delay_details: bool = False, user=Depends(auth.current_user)):
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         default_day = service_hours.delivery_operational_date() - timedelta(days=int(previous_day))
-        return build(c, user, day or default_day, scope, manager_shift_id)
+        return build(c, user, day or default_day, 'day' if delay_details else scope,
+                     None if delay_details else manager_shift_id, delay_details=delay_details)
 
 
 def money(value):
@@ -571,7 +592,7 @@ def make_html(report):
     city_head, city_rows = city_tables(report)
     body += '<h2>ملخص المدن / المحافظات</h2>'+table(city_head, city_rows)
     body += '<p>المطابقة: قيمة الطلبات = شبكة + كاش. النقص عجز والزيادة فائض. — بيانات غير متاحة.</p>'
-    for title, headers, data in delivery_timing_tables(report):
+    for title, headers, data in delivery_timing_tables(report)[:1]:
         if data:
             body += '<h2>'+e(title)+'</h2>'+table(headers, data, timing=True)
     if cases:
@@ -580,10 +601,10 @@ def make_html(report):
         body += '<p>لا توجد ضيافة أو تعويضات أو حالات مسجلة.</p>'
     body += '<section class="accounting '+('approved' if report['accounting']['approved'] else '')+'"><h2>متابعة المراجعة المحاسبية</h2><progress max="100" value="'+str(report['accounting']['percent'])+'"></progress>'+''.join('<p>'+e(line)+'</p>' for line in accounting_lines(report))+'</section>'
     body += '<p class="note">تقرير تشغيلي. قيم الضيافة والتعويضات مرجعية ولا تخصم مرة أخرى من التحصيل. لا يشمل تأكيد إيداع البنك إلا وفق سجل المحاسبة.</p>'
-    return '<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+e(report['filename'][:-4])+'</title><link rel="stylesheet" href="/assets/operating-reports.css"><script src="/report.js" defer></script><main><nav class="screen-only"><button data-print-report>طباعة</button></nav>'+body+'</main></html>'
+    return '<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+e(report['filename'][:-4])+'</title><link rel="stylesheet" href="/assets/operating-reports.css?v=20261108-compact-delivery"><script src="/report.js" defer></script><main><nav class="screen-only"><button data-print-report>طباعة</button></nav>'+body+'</main></html>'
 
 
-def make_pdf(report, paper='A3'):
+def make_pdf(report, paper='A3', *, compact=False):
     """Readable landscape report, paginating all evidence at a fixed font size."""
     from reportlab.pdfgen import canvas
     from reportlab.pdfbase import pdfmetrics
@@ -664,8 +685,9 @@ def make_pdf(report, paper='A3'):
                 line += char
             line += ' '
         return result + [line.strip()]
+    row_padding = 4 if compact else 8
     def layout(data, widths, pts):
-        return [(cells, max(len(x) for x in cells)*(pts+3)+8) for cells in [[wrapped(v, w-8, pts) for v,w in zip(row,widths)] for row in data]]
+        return [(cells, max(len(x) for x in cells)*(pts+3)+row_padding) for cells in [[wrapped(v, w-8, pts) for v,w in zip(row,widths)] for row in data]]
     weights = [100,51,89,35,62,35,62,77,63,63,51,51,86,83]
     widths = [usable*x/sum(weights) for x in weights]
     case_widths = [usable*x for x in (.15,.07,.12,.10,.12,.29,.15)]
@@ -690,7 +712,7 @@ def make_pdf(report, paper='A3'):
 
     def draw_row(cells, cols, dark=False, shaded=False, timing=False):
         nonlocal y
-        rh = max(len(cell) for cell in cells)*leading+8
+        rh = max(len(cell) for cell in cells)*leading+row_padding
         cv.setFillColor(colors.HexColor('#232d34' if dark else '#f4f7f9' if shaded else '#ffffff'))
         cv.rect(margin, y-rh, usable, rh, stroke=0, fill=1)
         x = width-margin
@@ -758,7 +780,7 @@ def make_pdf(report, paper='A3'):
     main_layout[0]=layout([['','','','عدد','قيمة','عدد','قيمة','','','','','','','']],widths,pts)[0]
     draw_table(main_layout,widths,True,grouped=True)
     draw_table(city_layout,city_widths,heading='ملخص المدن / المحافظات')
-    for title, headers, data in delivery_timing_tables(report):
+    for title, headers, data in delivery_timing_tables(report)[:1]:
         if data:
             cols = [usable / len(headers)] * len(headers)
             draw_table(layout([headers, *data], cols, pts), cols, heading=title, timing=True)
@@ -815,5 +837,5 @@ def export(format: Literal['pdf', 'print'], day: date | None = None, scope: Lite
     headers = {'Cache-Control': 'private, no-store'}
     if format == 'pdf':
         headers['Content-Disposition'] = disposition(report['filename'])
-    return Response(make_pdf(report) if format == 'pdf' else make_html(report),
+    return Response(make_pdf(report, compact=True) if format == 'pdf' else make_html(report),
                     media_type='application/pdf' if format == 'pdf' else 'text/html', headers=headers)

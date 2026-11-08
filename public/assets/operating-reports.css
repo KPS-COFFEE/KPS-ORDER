@@ -11,3 +11,11 @@ html:has(body>main>.accounting){font-family:OperatingKufi,Arial,sans-serif}body>
 .or-timing-table { overflow-x: auto; }
 .or-timing-table table { min-width: 48rem; }
 .operating-report [data-or-rolling][aria-pressed=true] { background: var(--or-ink); color: #fff; }
+
+@media print {
+  body > main:has(> .accounting) th,
+  body > main:has(> .accounting) td { padding: 3px 5px; font-size: 10pt; }
+  body > main:has(> .accounting) h2 { margin: 8px 0 4px; }
+  body > main:has(> .accounting) table { break-inside: auto; }
+  body > main:has(> .accounting) tr { break-inside: avoid; }
+}
