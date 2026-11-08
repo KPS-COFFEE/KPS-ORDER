@@ -134,6 +134,7 @@ def count(bid:str,body:Count,request:Request,user=Depends(auth.current_user)):
 class VaultClose(ops.OperationBody):
     confirmed:StrictBool
     note:str=Field(default='',max_length=2000)
+    allow_incomplete:StrictBool=False
 
 
 @router.post('/workdays/{sid}/vault-close')
@@ -147,20 +148,27 @@ def vault_close(sid:str,body:VaultClose,request:Request,user=Depends(auth.curren
         def perform():
             if not body.confirmed:raise db.error(422,'VAULT_CLOSE_CONFIRMATION','أكد حفظ أكياس السائقين منفصلة في الخزنة.')
             if vault_closure(c,day['id']):raise db.error(409,'VAULT_ALREADY_CLOSED','انتهاء المناوبة محفوظ.')
+            pending_by_manager = {}
             for _,s in legs:
                 if s['status'] not in {'open','closing','submitted'} or s.get('staffing_ended_at'):raise db.error(409,'VAULT_SHIFT_STATE','المناوبة منتهية أو غير متاحة.')
                 ops.guard_accepted_awaiting_dispatch(c,s)
                 if ops.unresolved(c,s['id']):raise db.error(409,'OPEN_TASKS','أكمل تسليم مسؤولية الطلبات النشطة أولًا.')
-                if c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed' AND staffing_ended_at IS NULL",(s['id'],)).fetchone():raise db.error(409,'DRIVER_BAG_PENDING','أكمل استلام أكياس السائقين أو اعتماد تقفيلات الأكياس المسلمة للفرع أولًا.')
+                pending_by_manager[s['id']] = [row['id'] for row in c.execute(
+                    "SELECT id FROM shifts WHERE manager_shift_id=%s AND kind='driver' "
+                    "AND status<>'closed' AND staffing_ended_at IS NULL ORDER BY id", (s['id'],)).fetchall()]
                 if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'HANDOVER_PENDING','أكمل تسليم مسؤولية المناوبة المعلق.')
                 if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'RECEIPT_PENDING','أكد أو أعد تسليم النقد المعلق أولًا.')
+            pending_driver_shift_ids = [sid for ids in pending_by_manager.values() for sid in ids]
+            if pending_driver_shift_ids and not body.allow_incomplete:
+                raise db.error(409, 'DRIVER_BAG_PENDING',
+                               'توجد تقفيلات سائقين معلقة. أكملها أو أكد إنهاء مناوبتك مع إبقائها معلقة.')
             shifts=[s['id'] for _,s in legs]
             bags=c.execute("SELECT DISTINCT b.id FROM driver_cash_bags b JOIN shared_driver_closure_receipts r ON r.declaration_id=b.declaration_id JOIN central_workday_legs l ON l.workday_id=b.workday_id JOIN shifts s ON s.id=l.shift_id WHERE s.manager_shift_id=ANY(%s) AND b.destination='manager_vault'",(shifts,)).fetchall()
             entry=c.execute('INSERT INTO manager_vault_closures(id,workday_id,manager_id,bag_ids,note) VALUES(%s,%s,%s,%s,%s) RETURNING *',(ops.uid(),day['id'],user['id'],db.json([b['id'] for b in bags]),body.note)).fetchone()
-            for _,s in legs:c.execute("UPDATE shifts SET status='submitted',submitted_at=coalesce(submitted_at,now()),staffing_ended_at=%s,submission=coalesce(submission,'{}'::jsonb)||%s::jsonb WHERE id=%s",(entry['created_at'],db.json({'vault_closure_id':entry['id'],'physical_state':'bags_in_vault','financial_state':'awaiting_accounting_bag_counts'}),s['id']))
-            db.audit(c,user['id'],'manager.vault_closed','central_workday',day['id'],{'vault_closure_id':entry['id'],'bag_ids':[b['id'] for b in bags],'owner_receipt_required':False,'cash_received_by_accounting':False})
-            return {'vault_closure_id':entry['id']}
-        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'manager.vault_close:'+day['id'],body.model_dump(),perform)
+            for _,s in legs:c.execute("UPDATE shifts SET status='submitted',submitted_at=coalesce(submitted_at,now()),staffing_ended_at=%s,submission=coalesce(submission,'{}'::jsonb)||%s::jsonb WHERE id=%s",(entry['created_at'],db.json({'vault_closure_id':entry['id'],'physical_state':'bags_in_vault','financial_state':'awaiting_accounting_bag_counts','pending_driver_shift_ids_at_end':pending_by_manager[s['id']]}),s['id']))
+            db.audit(c,user['id'],'manager.vault_closed','central_workday',day['id'],{'vault_closure_id':entry['id'],'bag_ids':[b['id'] for b in bags],'owner_receipt_required':False,'cash_received_by_accounting':False,'pending_driver_shift_ids_at_end':pending_driver_shift_ids})
+            return {'vault_closure_id':entry['id'],'pending_driver_shift_count':len(pending_driver_shift_ids)}
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'manager.vault_close:'+day['id'],body.model_dump(exclude={'allow_incomplete'} if not body.allow_incomplete else None),perform)
 
 
 from .cash_bag_custody import router as custody_router

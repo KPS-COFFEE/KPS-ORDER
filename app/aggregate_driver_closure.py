@@ -227,7 +227,14 @@ def submit(sid:str,body:PhysicalSubmission,request:Request,user=Depends(auth.cur
             snapshot=[]
             for principal,s in legs:
                 manager=ops.lock_shift(c,s['manager_shift_id'])
-                if not manager or manager['kind']!='manager' or manager['status'] not in {'open','closing'}:raise db.error(409,'SHARED_MANAGER_CLOSED','شفت مدير الاستلام غير متاح.')
+                if not manager or manager['kind'] != 'manager':
+                    raise db.error(409, 'SHARED_MANAGER_CLOSED', 'شفت مدير الاستلام غير متاح.')
+                manager_submission = manager.get('submission') or {}
+                vault_ended = (manager['status'] == 'submitted' and manager.get('staffing_ended_at')
+                               and manager_submission.get('vault_closure_id')
+                               and s['id'] in manager_submission.get('pending_driver_shift_ids_at_end', []))
+                if manager['status'] not in {'open', 'closing'} and not vault_ended:
+                    raise db.error(409, 'SHARED_MANAGER_CLOSED', 'شفت مدير الاستلام غير متاح.')
                 with workdays.action():ops.shift_vehicle.finish(c,principal,s,body.vehicle_inspection)
                 card=ops.blind_closure.card_reconciliation(c,s['id'],0,(s.get('external_enbishan') or {}).get('card_halalas',0))
                 snapshot.append({'shift_id':s['id'],'brand_id':s['brand_id'],'manager_shift_id':manager['id'],'manager_user_id':manager['user_id'],'expected_halalas':ops.balance(c,s),'expected_card_halalas':card['expected_card_halalas'],'permanent_float_halalas':(s.get('permanent_float') or {}).get('amount',0)})
