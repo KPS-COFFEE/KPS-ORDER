@@ -184,3 +184,46 @@ def test_unreviewed_split_rolls_back_without_any_correction(central):
     with db.tx() as c:
         assert not c.execute('SELECT 1 FROM manager_day_splits').fetchone()
         assert c.execute("SELECT count(*) n FROM shifts WHERE kind='manager'").fetchone()['n']==2
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('city',['حفر الباطن','النعيرية'])
+def test_manager_can_explicitly_end_before_driver_submits_and_finish_original_bag_later(central,city):
+    _, actor, post, _, _ = central
+    with db.tx() as c:
+        c.execute('UPDATE branches SET city=%s WHERE id=ANY(%s)',
+                  (city,['kps-branch-1','enbishan-test-1','enbishan-test-2']))
+    manager,driver=open_days(central)
+    close='/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close'
+    path='/api/central-operations/workdays/'+driver['shift']['id']
+    post('owner',close,{'confirmed':True,'allow_incomplete':True},status=403)
+    post('manager',close,{'confirmed':True},status=409)
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(manager['shift']['id'],)).fetchone()['status']=='open'
+    ended=post('manager',close,{'confirmed':True,'allow_incomplete':True})
+    assert ended['pending_driver_shift_count']==len(driver['shifts'])
+    new_manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    assert new_manager['shift']['id']!=manager['shift']['id']
+    req=post('driver',path+'/request',{'reason':'Finished synthetic shift'})
+    post('manager',path+'/decision',{'request_id':req['shift']['closure_authorization']['id'],
+         'decision':'approved','reason':'Confirm previous shift completion'})
+    post('driver',path+'/closing',{})
+    declared=post('driver',path+'/physical-submit',{'cash_halalas':700,'card_halalas':900,
+        'vehicle_inspection':inspection(1010),'handover_branch_id':'kps-branch-1',
+        'bag_reference':'SYNTHETIC late separate bag','bag_delivered':True})
+    if city=='حفر الباطن':
+        post('manager',path+'/physical-receipt',{'declaration_id':declared['declaration_id'],
+             'received_halalas':700,'confirmed':True,'reference':'Synthetic actual receipt'})
+    else:
+        post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],
+             'confirmed':True,'reason':'Reviewed the bag at branch'})
+    bag=declared['cash_bag']
+    assert actor('accountant','kps').get('/api/cash-bags').status_code==200
+    post('accountant','/api/cash-bags/'+bag['id']+'/count',{'received_cash_halalas':700,
+         'card_halalas':900,'confirmed':True,'reference':'Synthetic actual count'})
+    with db.tx() as c:
+        old=c.execute('SELECT submission FROM shifts WHERE id=%s',(manager['shift']['id'],)).fetchone()
+        assert set(old['submission']['pending_driver_shift_ids_at_end'])=={s['id'] for s in driver['shifts'] if s['manager_shift_id']==manager['shift']['id']}
+        assert c.execute('SELECT bag_ids FROM manager_vault_closures WHERE id=%s',(ended['vault_closure_id'],)).fetchone()['bag_ids']==[]
+        for shift in driver['shifts']:
+            assert c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(shift['id'],)).fetchone()['manager_shift_id']==shift['manager_shift_id']
