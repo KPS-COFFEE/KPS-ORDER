@@ -13,16 +13,25 @@ class Element {
 const fields={};let priced=0;
 const p={id:'e1'};const group={code:'SIZE',name:'Size',required:true,values:[{code:'six',name:'6 pieces'},{code:'twelve',name:'12 pieces'},{code:'closed',name:'Unavailable',available:false}]};
 const ctx={mahashiFamily:()=>[],renderMahashiSizes:()=>{},state:{product:p,optionValues:[{}],branchCatalogPending:false,branchId:'b',branchCatalogId:'b'},requestedBrandId:'enbishan',
- $:id=>fields[id]||(fields[id]=new Element('div')),groups:()=>[group],fixedSingleSize:()=>false,isMug:()=>false,isKhaliya:()=>false,
+ $:id=>fields[id]||(fields[id]=new Element('div')),groups:product=>product.option_groups||[group],isMug:()=>false,isKhaliya:()=>false,
  node:(tag,cls,text)=>new Element(tag,text),Option:function(text,value){const el=new Element('option',text);el.value=value;return el;},
  entryText:(ar,en)=>en,text:()=>{},number:{format:String},t:x=>x,groupLabel:g=>g.name,sourceText:v=>v.name,eligibleForProduct:()=>({ok:true}),showError:()=>{},renderVariantPrice:()=>priced++};
 fields['product-qty']=new Element('input');fields['product-qty'].value='1';vm.createContext(ctx);
+vm.runInContext(source.slice(source.indexOf('  function fixedOption('),source.indexOf('  const progressLabels=')),ctx);
 vm.runInContext(source.slice(source.indexOf('  function renderOptions()'),source.indexOf('  function addProduct()',source.indexOf('  function renderOptions()'))>0?source.indexOf('  function addProduct()',source.indexOf('  function renderOptions()')):source.indexOf('  async function addProduct()',source.indexOf('  function renderOptions()'))),ctx);
 ctx.renderOptions();let buttons=fields['product-options'].querySelectorAll('button');assert.equal(buttons.length,3);assert.equal(buttons[2].disabled,true);
 buttons[1].listeners.click();assert.equal(ctx.state.optionValues[0].SIZE,'twelve');assert.equal(buttons[1].attributes['aria-pressed'],'true');assert.equal(buttons[0].attributes['aria-pressed'],'false');assert.ok(priced>=2);
 fields['product-qty'].value='2';ctx.renderOptions();buttons=fields['product-options'].querySelectorAll('button');buttons[3].listeners.click();assert.equal(ctx.state.optionValues[0].SIZE,'twelve');assert.equal(ctx.state.optionValues[1].SIZE,'six');
 ctx.requestedBrandId='kps';ctx.renderOptions();assert.equal(fields['product-options'].querySelectorAll('button').length,0);
 console.log('PASS: direct Enbishan choices preserve disabled options, independent unit selections, pricing refresh and KPS controls.');
+
+ctx.state.product={brand_id:'enbishan',option_groups:[{...group,values:[{code:'family',name:'Family · 44 pieces'}]}]};
+ctx.state.optionValues=[];
+ctx.renderOptions();
+assert.equal(fields['product-options'].querySelectorAll('button').length,0);
+assert.equal(fields['product-option-hint'].hidden,true);
+assert.deepEqual(Array.from(ctx.state.optionValues, options=>options.SIZE),['family','family']);
+ctx.state.product=p;
 
 // The four visible choices are independent flavours; one or two selections
 // map to an approved server variant without requiring a second flavour.
