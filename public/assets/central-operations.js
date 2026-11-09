@@ -10,6 +10,7 @@
     ['/api/fuel-exceptions',['requests']], ['/api/driver-breaks',['breaks']],
     ['/api/driver-closure',['requests']], ['/api/orders',['orders']], ['/api/order-amendments/inbox',['orders','requests']], ['/api/tasks',['tasks']],
     ['/api/preparation-routing/tasks',['preparation_tasks']],
+    ['/api/order-interventions/pending-cancellations',['requests']],
     ['/api/conversations',['conversations']], ['/api/conversations/alerts',['awaiting_reply']],
     ['/api/shifts',['shifts','available_manager_shifts']],
     ['/api/shifts/current',['shifts','available_manager_shifts']],
@@ -87,6 +88,9 @@
       if(output.orders){
         const newest=url.searchParams.get('sort')==='newest';
         output.orders.sort((a,b)=>(newest?-1:1)*(String(a.created_at||'').localeCompare(String(b.created_at||'')))||String(a.id).localeCompare(String(b.id)));
+      }
+      if(url.pathname==='/api/order-interventions/pending-cancellations'){
+        output.requests.sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)||String(a.id).localeCompare(String(b.id)));
       }
       if(output.conversations)output.conversations.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||''))||String(a.id).localeCompare(String(b.id)));
       // The offset advances each constituent stream by the same canonical page
