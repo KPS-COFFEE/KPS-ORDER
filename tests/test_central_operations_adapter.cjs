@@ -396,3 +396,20 @@ test('driver live counts deduplicate shared duty and include the busy brand leg'
   }
 });
 
+
+test('processing requests combine authorized brands oldest first with brand labels',async()=>{
+  const path='/api/order-interventions/pending-cancellations';
+  const scoped={...user,central_operations:{brands:[...user.central_operations.brands,
+    {id:'unassigned',name:'Unassigned',branch_ids:[]}]}};
+  const calls=[];
+  const result=await create().request(path,{},async(endpoint,options)=>{
+    assert.equal(endpoint,path);
+    calls.push(options.brand);
+    return {requests:[{id:options.brand+'-request',created_at:options.brand==='kps'
+      ?'2026-11-09T02:35:00Z':'2026-11-09T02:31:00Z'}]};
+  },scoped);
+  assert.deepEqual(calls,['kps','enbishan']);
+  assert.deepEqual(result.requests.map(row=>[row.id,row.brand_name]),[
+    ['enbishan-request','Enbishan'],['kps-request','KPS'],
+  ]);
+});
