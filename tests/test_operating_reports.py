@@ -80,26 +80,6 @@ def test_pdf_one_landscape_sheet_with_all_cases_and_real_approval_status(approve
     assert ('محمد أحمد' in html) is approved
 
 
-def test_day_pdf_export_stays_one_readable_portrait_page(monkeypatch):
-    from contextlib import nullcontext
-    from types import SimpleNamespace
-
-    report = example()
-    report['rows'] *= 30
-    report['count'] *= 30
-    report['net'] *= 30
-    report['delivery_timing'] = [dict(on_time=40, late=5, open_late=0, open=0, cancelled=0, unavailable=0)]
-    monkeypatch.setattr(reports.db, 'tx', lambda: nullcontext(SimpleNamespace(execute=lambda _: None)))
-    monkeypatch.setattr(reports, 'build', lambda *args: report)
-
-    response = reports.export('pdf', day=date(2026, 10, 25), scope='day', user={})
-    pages = PdfReader(BytesIO(response.body)).pages
-    assert len(pages) == 1
-    assert pages[0].mediabox.height > pages[0].mediabox.width
-    assert '40,500' in pages[0].extract_text()
-    assert 'filename*=UTF-8' in response.headers['content-disposition']
-
-
 def test_mobile_and_print_escape_staff_content():
     report=example();report['manager']='<script>alert(1)</script>'
     report['rows'][0]['name']='<img src=x onerror=alert(1)>'
