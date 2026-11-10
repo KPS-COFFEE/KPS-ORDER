@@ -5,7 +5,7 @@ employee's role, brand, branches, task ownership, custody or approval policies.
 The route table uses resolved endpoint identities, not caller-supplied URLs.
 """
 
-ADMIN = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage',
+ADMIN = {'performance_policies_manage', 'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage',
          'brand_services_manage', 'vehicle_maintenance_manage', 'fleet_active_swap', 'branch_printers_manage',
          'accounting_reports', 'accounting_review', 'accounting_cases_followup'}
 MANAGER = {'delivery_manager'}
@@ -50,6 +50,7 @@ DEFINITIONS = [
     ('chat_reply', 'الرد على الزبائن وإرسال الصور', 'Reply to customers and send photos', 'support', OPERATORS),
     ('chat_manage', 'استلام وتحويل وإغلاق المحادثات', 'Claim, transfer and close conversations', 'support', OPERATORS),
     ('support_manage', 'إدارة تذاكر الشكاوى والمطالبات والتعويض', 'Manage complaint and compensation tickets', 'support', MANAGER),
+    ('performance_policies_manage', 'ضبط معايير وقت التوصيل', 'Manage delivery time targets', 'configuration', {'admin'}),
     ('branch_availability', 'إيقاف واستئناف توفر الصنف بالفرع', 'Pause or resume branch item availability', 'configuration', {'branch_manager'}),
     ('vehicle_refuel', 'تسجيل تعبئة الوقود أثناء الشفت', 'Record shift refuelling', 'vehicles', MANAGER | {'driver'}),
     ('vehicle_register', 'تسجيل مركبتك أول مرة', 'Register your vehicle for the first time', 'vehicles', set()),
@@ -87,6 +88,7 @@ DEFINITIONS.append(('orders_route_preparation', 'اختيار فرع تجهيز 
 DEFINITIONS.append(('reports_supervise', 'عرض تقارير الشفتات المعتمدة ضمن الفروع المخولة', 'Supervise approved reports in assigned branches', 'reports', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'performance_policies_manage': {'admin'},
     'accounting_reports': {'delivery_manager'},
     'reports_supervise': {'delivery_manager'},
     'orders_view': {'admin'},
