@@ -224,8 +224,10 @@ class PolicyBody(BaseModel):
 
 
 @router.post('/policies')
-def create_policy(body: PolicyBody, user=Depends(auth.require_roles('owner', 'delivery_manager')),
+def create_policy(body: PolicyBody, user=Depends(auth.require_roles('owner', 'delivery_manager', 'admin')),
                   idem: str | None = Header(None, alias='Idempotency-Key')):
+    if user['role'] == 'admin' and not auth.has_permission(user, 'performance_policies_manage'):
+        raise db.error(403, 'ROLE_FORBIDDEN', 'هذه الصلاحية لم يمنحها المالك لحسابك.')
     if not body.province_name.strip() or body.t1_seconds >= body.t2_seconds or body.effective_at.tzinfo is None:
         raise db.error(422, 'PERFORMANCE_LIMITS_INVALID', 'يلزم 0 < T1 < T2 وتاريخ نفاذ بمنطقة زمنية.')
     with db.tx() as conn:
@@ -250,7 +252,9 @@ def create_policy(body: PolicyBody, user=Depends(auth.require_roles('owner', 'de
 
 
 @router.get('/policies')
-def policies(user=Depends(auth.require_roles('owner', 'delivery_manager', 'delivery_staff', 'branch_manager'))):
+def policies(user=Depends(auth.require_roles('owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'admin'))):
+    if user['role'] == 'admin' and not auth.has_permission(user, 'performance_policies_manage'):
+        raise db.error(403, 'ROLE_FORBIDDEN', 'هذه الصلاحية لم يمنحها المالك لحسابك.')
     with db.tx() as conn:
         rows = conn.execute('SELECT p.*,v.name province_name FROM province_performance_policies p '
                             'JOIN performance_provinces v ON v.brand_id=p.brand_id AND v.id=p.province_id '
