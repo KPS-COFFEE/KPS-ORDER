@@ -1,0 +1,402 @@
+from datetime import datetime, timezone, timedelta
+import httpx
+import pytest
+from fastapi import HTTPException
+from app import route_eta as eta
+
+NOW=datetime(2026,10,26,10,tzinfo=timezone.utc)
+
+
+def stop(identifier,kind='dropoff',required=()):
+    return {'id':identifier,'kind':kind,'location':{'lat':28.4,'lng':45.9},
+            'prerequisite_ids':list(required),'brand_id':'kps'}
+
+
+def test_exact_road_order_differs_from_geographic_neighbour_and_is_directed():
+    stops=[stop('a'),stop('b'),stop('c')]
+    roads=[[0,1,2,3],[100,0,100,100],[100,1,0,1],[100,1,100,0]]
+    # Geographic ordering is irrelevant. Best road path is b -> c -> a.
+    assert [s['id'] for s in eta.road_order(stops,roads)] == ['b','c','a']
+
+
+def test_pickups_before_deliveries_and_return_last_across_two_brands():
+    stops=[stop('pickup:a','pickup'),stop('a',required=['pickup:a']),
+           {**stop('b'),'brand_id':'enbishan'},stop('return:x','return',['pickup:a','a','b'])]
+    roads=[[0 if i==j else 10 for j in range(5)] for i in range(5)]
+    roads[0][2]=1  # Delivery appears attractive but must not precede pickup.
+    ordered=eta.road_order(stops,roads)
+    ids=[s['id'] for s in ordered]
+    assert ids.index('pickup:a')<ids.index('a') and ids[-1]=='return:x'
+    assert {s['brand_id'] for s in ordered}=={'kps','enbishan'}
+
+
+def test_cumulative_eta_counts_each_road_and_dwell_once_and_separates_return():
+    stops=[stop('p','pickup'),stop('a',required=['p']),stop('b'),stop('r','return',['p','a','b'])]
+    roads=[[0 if i==j else 60 for j in range(5)] for i in range(5)]
+    view=eta.timeline(stops,stops,roads,NOW,NOW)
+    assert [r['eta_seconds'] for r in view['stops']]==[60,300,480,660]
+    assert view['delivery_complete_seconds']==600
+    assert view['return_seconds']==660
+    assert sum(r['drive_seconds'] for r in view['stops'])==240
+    assert sum(r['dwell_seconds'] for r in view['stops'])==420
+    assert eta.timeline(stops,stops,roads,NOW,NOW+timedelta(seconds=20))['return_seconds']==640
+
+
+@pytest.mark.parametrize('ordered',[['a','a'],['a'],['a','foreign'],['a','p']])
+def test_manual_reorder_cannot_omit_duplicate_inject_or_deliver_before_pickup(ordered):
+    stops=[stop('p','pickup'),stop('a',required=['p'])]
+    with pytest.raises(HTTPException):eta.validate_order(stops,ordered)
+
+
+def test_manual_order_and_return_are_preserved():
+    stops=[stop('a'),stop('b'),stop('r','return',['a','b'])]
+    assert [s['id'] for s in eta.validate_order(stops,['b','a'])]==['b','a','r']
+
+
+def test_unreachable_road_has_no_straight_line_speed_fallback():
+    with pytest.raises(ValueError):eta.road_order([stop('a')],[[0,None],[None,0]])
+    with pytest.raises(ValueError):eta.timeline([stop('a')],[stop('a')],[[0,None],[None,0]],NOW)
+
+
+@pytest.mark.parametrize('matrix',[[[0]],[[0,True],[0,0]],[[0,float('nan')],[0,0]],[[0,-1],[0,0]],[[0,'60'],[0,0]]])
+def test_malformed_matrix_cannot_become_eta(matrix):
+    with pytest.raises(ValueError):eta.validate_matrix(matrix,2)
+
+
+def test_missing_station_location_is_explicit_instead_of_dropped():
+    context={'stops':[dict(stop('a'),location=None)],'return_branches':[]}
+    with pytest.raises(HTTPException):eta.prepare_stops(context)
+
+
+def test_foreign_return_cannot_be_requested():
+    context={'stops':[stop('a')],'return_branches':[]}
+    with pytest.raises(HTTPException):eta.prepare_stops(context,'foreign-branch')
+
+
+def test_http_matrix_uses_one_fixed_host_no_fallback_and_directed_durations():
+    requests=[]
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200,json={'code':'Ok','durations':[[0,10],[25,0]]})
+    assert eta.fetch_matrix([{'lat':28.,'lng':45.},{'lat':29.,'lng':46.}], 'pk.test',httpx.MockTransport(handler))==[[0,10],[25,0]]
+    assert len(requests)==1
+    url=requests[0].url
+    assert url.host=='api.mapbox.com'
+    assert url.path=='/directions-matrix/v1/mapbox/driving/45.0,28.0;46.0,29.0'
+    assert url.params.get('annotations')=='duration'
+    assert 'fallback_speed' not in url.params
+
+
+@pytest.mark.parametrize('status,payload',[(403,{}),(200,{'code':'NoRoute'}),(200,{'code':'Ok','durations':[[0]]}),(302,{})])
+def test_provider_rejections_redirect_and_bad_shape_fail_closed(status,payload):
+    transport=httpx.MockTransport(lambda _:httpx.Response(status,json=payload))
+    with pytest.raises(ValueError):eta.fetch_matrix([{'lat':0,'lng':0},{'lat':1,'lng':1}],'pk.test',transport)
+
+
+def test_missing_prerequisite_cannot_be_ignored():
+    with pytest.raises(ValueError):eta.road_order([stop('a',required=['foreign'])],[[0,5],[5,0]])
+
+
+def test_two_orders_at_same_branch_share_one_pickup_and_wait_estimate():
+    source=[]
+    for i in ('a','b'):
+        source += [{**stop('pickup:'+i,'pickup'),'branch_id':'branch-1','task_id':i,'order_id':'order-'+i,'shift_id':'shift-1'},
+                   stop('dropoff:'+i,required=['pickup:'+i])]
+    stops=eta.prepare_stops({'stops':source,'return_branches':[]})
+    assert len(stops)==3
+    branch=[s for s in stops if s['kind']=='pickup'][0]
+    assert branch['task_ids']==['a','b']
+    assert all(s['prerequisite_ids']==[branch['id']] for s in stops if s['kind']=='dropoff')
+    roads=[[0 if i==j else 60 for j in range(4)] for i in range(4)]
+    view=eta.timeline(stops,eta.road_order(stops,roads),roads,NOW,NOW)
+    assert sum(r['dwell_seconds'] for r in view['stops'])==420  # 180 once + 120 per delivery.
+
+
+def test_hidden_active_task_prevents_partial_trip_completion_claim():
+    class Connection:
+        def execute(self,sql,args):return self
+        def fetchall(self):return [{'id':'visible-task'},{'id':'hidden-task'}]
+    user={'id':'m','brand_id':'kps'}
+    context={'driver_id':'d','stops':[dict(stop('a'),task_id='visible-task')],'tasks':[]}
+    assert eta.complete_itinerary(Connection(),user,context) is False
+    context['stops'].append(dict(stop('b'),task_id='hidden-task'))
+    assert eta.complete_itinerary(Connection(),user,context) is True
+
+
+class LifeConnection:
+    def __init__(self,tasks):self.tasks=tasks
+    def execute(self,sql,args):return self
+    def fetchall(self):return self.tasks
+
+
+def publication(stops):
+    return {'published_stops':stops,'published_stop_ids':[s['id'] for s in stops]}
+
+
+def life_task(identifier,status='picked_up',driver='d',shift='s'):
+    return {'id':identifier,'status':status,'driver_id':driver,'shift_id':shift}
+
+
+def task_stop(identifier,kind='dropoff',required=()):
+    return dict(stop(identifier,kind,required),task_id=identifier.split(':')[-1],shift_id='s')
+
+
+def test_published_pickup_then_delivery_advance_without_reapproval():
+    pickup=dict(task_stop('pickup:a','pickup'),task_ids=['a'],branch_id='b')
+    a=task_stop('dropoff:a',required=['pickup:a'])
+    b=task_stop('dropoff:b')
+    original=[pickup,a,b]
+    picked=[dict(a,prerequisite_ids=[]),b]
+    c=LifeConnection([life_task('a'),life_task('b')])
+    result=eta.remaining_publication(c,publication(original),picked,'d')
+    assert [s['id'] for s in result[1]]==['dropoff:a','dropoff:b']
+    c=LifeConnection([life_task('a','delivered'),life_task('b')])
+    result=eta.remaining_publication(c,publication(original),[b],'d')
+    assert [s['id'] for s in result[1]]==['dropoff:b']
+
+
+@pytest.mark.parametrize('status,driver,shift',[('cancelled','d','s'),('reassigned','other','s'),('delivered','other','s'),('delivered','d','new-shift')])
+def test_missing_station_requires_proven_own_completed_task(status,driver,shift):
+    original=[task_stop('dropoff:a'),task_stop('dropoff:b')]
+    c=LifeConnection([life_task('a',status,driver,shift),life_task('b')])
+    assert eta.remaining_publication(c,publication(original),[original[1]],'d') is None
+
+
+def test_new_work_and_changed_coordinates_invalidate_published_order():
+    original=[task_stop('dropoff:a')]
+    c=LifeConnection([life_task('a')])
+    assert eta.remaining_publication(c,publication(original),original+[task_stop('dropoff:new')],'d') is None
+    assert eta.remaining_publication(c,publication(original),[dict(original[0],location={'lat':29.,'lng':46.})],'d') is None
+
+
+def test_remaining_matrix_keeps_original_indices_instead_of_renumbering():
+    original=[task_stop('dropoff:a'),task_stop('dropoff:b')]
+    roads=[[0,10,70],[10,0,20],[70,20,0]]
+    c=LifeConnection([life_task('a','delivered'),life_task('b')])
+    full,remaining=eta.remaining_publication(c,publication(original),[original[1]],'d')
+    assert eta.timeline(full,remaining,roads,NOW,NOW)['next_stop']['drive_seconds']==70
+
+
+def test_morning_published_source_rechecks_policy_instead_of_reusing_capabilities(monkeypatch):
+    from app import multibrand,morning_manager_context
+    manager={'id':'m','brand_id':'kps','role':'delivery_manager','active':True,
+             'branch_ids':['b'],'permission_denials':['delivery_assign']}
+    class Connection:
+        def execute(self,sql,args):return self
+        def fetchone(self):return manager
+    monkeypatch.setattr(multibrand,'project',lambda c,u,b:u)
+    calls=[]
+    def allowed(c,u,shift_id):
+        calls.append(shift_id)
+        return dict(u,_morning_manager_context={'period':'morning','shift_id':shift_id,'branch_ids':['b']})
+    monkeypatch.setattr(morning_manager_context,'resolve',allowed)
+    saved={'manager_id':'m','manager_brand_id':'kps','central_scope':False,'morning_shift_id':'morning-duty'}
+    assert eta.published_manager(Connection(),saved)['_morning_manager_context']['shift_id']=='morning-duty'
+    assert calls==['morning-duty']
+    def revoked(*args,**kwargs):raise HTTPException(403,'revoked')
+    monkeypatch.setattr(morning_manager_context,'resolve',revoked)
+    assert eta.published_manager(Connection(),saved) is None
+
+
+def test_new_map_endpoints_have_bounded_morning_manager_allowlist():
+    from app import morning_manager_context
+    assert morning_manager_context.ENDPOINTS['route_eta']=={'route_eta'}
+    assert morning_manager_context.ENDPOINTS['tracking_ingest']=={'history','resolve_alert'}
+    assert 'driver_route_plan' not in morning_manager_context.ENDPOINTS['route_eta']
+
+
+def test_own_route_denied_tasks_capability_before_database_or_history_read():
+    user={'id':'d','role':'driver','brand_id':'kps','permission_denials':['tasks_view']}
+    with pytest.raises(HTTPException) as exc:eta.driver_route_plan(user)
+    assert exc.value.status_code==403
+
+
+@pytest.mark.parametrize('revocation',['session','role','permission','brand'])
+def test_provider_return_rejects_revoked_live_actor_authority(monkeypatch,revocation):
+    from app import multibrand
+    user={'id':'m','role':'delivery_manager','brand_id':'kps','branch_ids':['b'],'session_id':'sess','active':True}
+    actor=dict(user)
+    if revocation=='role':actor['role']='driver'
+    if revocation=='permission':actor['permission_denials']=['drivers_view']
+    class Connection:
+        def execute(self,sql,args):
+            self.session_query='FROM sessions' in sql
+            return self
+        def fetchone(self):
+            return (None if revocation=='session' else {'id':'sess'}) if self.session_query else actor
+    monkeypatch.setattr(multibrand,'project',lambda c,u,b:None if revocation=='brand' else u)
+    with pytest.raises(HTTPException) as exc:eta.refreshed_caller(Connection(),user)
+    assert exc.value.status_code==(401 if revocation=='session' else 403)
+
+
+def test_provider_return_reconstructs_current_morning_duty_without_stored_capabilities(monkeypatch):
+    from app import multibrand,morning_manager_context
+    user={'id':'m','role':'delivery_manager','brand_id':'kps','branch_ids':['b'],'session_id':'sess','active':True,
+          '_morning_manager_context':{'shift_id':'morning-duty','period':'morning','branch_ids':['b']}}
+    actor={k:v for k,v in user.items() if not k.startswith('_')}
+    class Connection:
+        def execute(self,sql,args):
+            self.session_query='FROM sessions' in sql
+            return self
+        def fetchone(self):return {'id':'sess'} if self.session_query else actor
+    monkeypatch.setattr(multibrand,'project',lambda c,u,b:u)
+    calls=[]
+    def resolve(c,u,shift_id):
+        calls.append(shift_id)
+        return dict(u,_morning_manager_context={'period':'morning','shift_id':shift_id,'branch_ids':['b']})
+    monkeypatch.setattr(morning_manager_context,'resolve',resolve)
+    result=eta.refreshed_caller(Connection(),user,assignment=True)
+    assert result['session_id']=='sess' and calls==['morning-duty']
+
+
+class RouteBudgetCursor:
+    def __init__(self):
+        self.settings={}
+    def execute(self,statement,args=()):
+        if statement.startswith('UPDATE app_settings'):
+            self.settings=args[0].obj
+        return self
+    def fetchone(self):
+        return {'settings':self.settings,'budget_now':NOW}
+
+
+def test_corridor_budget_uses_distinct_cooldown_and_shared_monthly_count():
+    from app import dispatch_map
+    cursor=RouteBudgetCursor()
+    dispatch_map.consume_route_budget(cursor,'driver','manager',units=9)
+    dispatch_map.consume_route_budget(cursor,'driver','manager',units=1,purpose='corridor')
+    budget=cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]
+    assert budget['count']==10
+    assert set(budget['recent'])=={'driver:driver','manager:manager','corridor:driver:driver','corridor:manager:manager'}
+    for driver,manager,purpose in [('driver','other','corridor'),('other','manager','corridor'),('driver','other','route')]:
+        with pytest.raises(HTTPException) as raised:
+            dispatch_map.consume_route_budget(cursor,driver,manager,purpose=purpose)
+        assert raised.value.status_code==429
+    assert cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]['count']==10
+
+
+def test_optional_corridor_monthly_limit_preserves_prior_matrix_reservation(monkeypatch):
+    from app import dispatch_map
+    monkeypatch.setattr(dispatch_map,'ROUTE_MONTHLY_LIMIT',9)
+    cursor=RouteBudgetCursor()
+    dispatch_map.consume_route_budget(cursor,'driver','manager',units=9)
+    with pytest.raises(HTTPException) as raised:
+        dispatch_map.consume_route_budget(cursor,'driver','manager',purpose='corridor')
+    assert raised.value.status_code==429
+    assert cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]['count']==9
+    assert 'corridor:driver:driver' not in cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]['recent']
+
+
+@pytest.mark.parametrize('purpose,units',[('other',1),('corridor',2),('corridor',True),('route',0)])
+def test_route_budget_rejects_invalid_purpose_or_corridor_units(purpose,units):
+    from app import dispatch_map
+    with pytest.raises(HTTPException) as raised:
+        dispatch_map.consume_route_budget(RouteBudgetCursor(),'driver','manager',units=units,purpose=purpose)
+    assert raised.value.status_code==422
+
+
+@pytest.mark.parametrize('fields',[{'publish':True},{'publish':False},{'ordered_stop_ids':None},
+                                   {'ordered_stop_ids':[]},{'return_branch_id':None},{'return_branch_id':'branch'}])
+def test_automatic_preview_rejects_every_explicit_route_intent_field(fields):
+    with pytest.raises(ValueError):
+        eta.EtaRequest(driver_id='d',automatic_preview=True,**fields)
+
+
+def test_automatic_preview_intent_follows_published_remaining_order_and_explicit_return(monkeypatch):
+    context={'driver_id':'d','tasks':[],'stops':[],'return_branches':[]}
+    published={'stops':[dict(stop('dropoff:b'),order_id='b'),dict(stop('dropoff:a'),order_id='a'),
+                        dict(stop('return:b','return'),branch_id='return-branch')]}
+    monkeypatch.setattr(eta,'published_plan_for',lambda *args:published)
+    saved={'ordered_stop_ids':['dropoff:a','dropoff:b'],'return_branch_id':'private-return'}
+    assert eta.automatic_intent(None,{'id':'m'},context,saved)==('return-branch',['dropoff:b','dropoff:a'],'published')
+    assert saved=={'ordered_stop_ids':['dropoff:a','dropoff:b'],'return_branch_id':'private-return'}
+
+
+def test_automatic_preview_without_published_return_never_infers_one(monkeypatch):
+    monkeypatch.setattr(eta,'published_plan_for',lambda *args:{'stops':[stop('a')]})
+    assert eta.automatic_intent(None,{}, {'driver_id':'d'}, {'return_branch_id':'private-return'})==(None,['a'],'published')
+
+
+def test_automatic_preview_saved_order_survives_cache_signature_changes(monkeypatch):
+    monkeypatch.setattr(eta,'published_plan_for',lambda *args:None)
+    context={'driver_id':'d','stops':[stop('a'),stop('b')],'return_branches':[]}
+    saved={'fingerprint':'old-provider-cache','ordered_stop_ids':['b','a'],'return_branch_id':None}
+    assert eta.automatic_intent(None,{},context,saved)==(None,['b','a'],'saved_preferences')
+    assert eta.automatic_intent(None,{},context,None)==(None,None,'road_suggestion')
+
+
+def test_automatic_preview_budget_allows_fleet_but_keeps_driver_cooldown_and_monthly_cap(monkeypatch):
+    from app import dispatch_map
+    cursor=RouteBudgetCursor()
+    dispatch_map.consume_route_budget(cursor,'d1','manager',units=9,purpose='automatic_preview')
+    dispatch_map.consume_route_budget(cursor,'d2','manager',units=9,purpose='automatic_preview')
+    budget=cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]
+    assert budget['count']==18
+    assert set(budget['recent'])=={'driver:d1','driver:d2','automatic:manager:manager:driver:d1','automatic:manager:manager:driver:d2'}
+    for purpose in ['route','automatic_preview']:
+        with pytest.raises(HTTPException) as exc:
+            dispatch_map.consume_route_budget(cursor,'d1','other-manager',purpose=purpose)
+        assert exc.value.status_code==429
+    monkeypatch.setattr(dispatch_map,'ROUTE_MONTHLY_LIMIT',20)
+    with pytest.raises(HTTPException):
+        dispatch_map.consume_route_budget(cursor,'d3','manager',units=9,purpose='automatic_preview')
+    assert cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]['count']==18
+
+
+@pytest.mark.parametrize('age,fresh',[(-1,False),(-0.001,False),(0,True),(120,True),(120.001,False),(121,False)])
+def test_eta_location_clock_rejects_future_and_aged_captures(age,fresh):
+    assert eta.location_fresh(NOW-timedelta(seconds=age),NOW) is fresh
+
+
+@pytest.mark.parametrize('stamp',[None,'2026-10-27T12:00:00Z',datetime(2026,10,27,12)])
+def test_eta_location_clock_does_not_trust_missing_unparsed_or_unzoned_capture(stamp):
+    assert eta.location_fresh(stamp,NOW) is False
+
+
+def test_budget_reason_distinguishes_monthly_exhaustion_from_cooldown_without_charges(monkeypatch):
+    from app import dispatch_map
+    cursor=RouteBudgetCursor()
+    dispatch_map.consume_route_budget(cursor,'d','m',units=9,purpose='automatic_preview')
+    before=cursor.settings.copy()
+    with pytest.raises(dispatch_map.RouteBudgetExceeded) as cooldown:
+        dispatch_map.consume_route_budget(cursor,'d','m',purpose='automatic_preview')
+    assert cooldown.value.status_code==429
+    assert cooldown.value.reason=='route_refresh_cooldown'
+    assert cooldown.value.detail=='انتظر دقيقة قبل طلب مسار جديد.'
+    monkeypatch.setattr(dispatch_map,'ROUTE_MONTHLY_LIMIT',9)
+    # Both conditions hold: a minute retry cannot repair monthly exhaustion.
+    with pytest.raises(dispatch_map.RouteBudgetExceeded) as monthly:
+        dispatch_map.consume_route_budget(cursor,'d','m',purpose='automatic_preview')
+    assert monthly.value.status_code==429
+    assert monthly.value.reason=='route_monthly_budget_exhausted'
+    assert monthly.value.detail=='تم بلوغ حد المسارات لهذا الشهر.'
+    assert cursor.settings==before
+
+
+def test_completed_return_guard_requires_linked_confirmed_trip_and_preserves_active_route():
+    saved={'published_at':NOW,'published_stops':[dict(task_stop('dropoff:a'),order_id='order-a'),stop('r','return')]}
+    class Connection:
+        def __init__(self,completed):self.completed=completed;self.args=None
+        def execute(self,sql,args):self.args=args;return self
+        def fetchone(self):return {'exists':1} if self.completed else None
+    pending=Connection(False)
+    assert not eta.published_return_completed(pending,saved,[stop('r','return')],'d')
+    confirmed=Connection(True)
+    assert eta.published_return_completed(confirmed,saved,[stop('r','return')],'d')
+    assert confirmed.args==('d',NOW,['order-a'])
+    # Outstanding work is never hidden merely because an earlier trip returned.
+    active=Connection(True)
+    assert not eta.published_return_completed(active,saved,[task_stop('dropoff:a'),stop('r','return')],'d')
+    assert active.args is None
+    # Unbound explicit repositioning is not inferred to belong to an old trip.
+    assert not eta.published_return_completed(confirmed,{'published_at':NOW,'published_stops':[stop('r','return')]},[stop('r','return')],'d')
+
+
+def test_confirmed_return_consumes_return_only_publication_without_mutating_it():
+    original=[dict(task_stop('dropoff:a'),order_id='order-a'),stop('r','return')]
+    saved={**publication(original),'published_at':NOW,'return_branch_id':'branch'}
+    class Connection(LifeConnection):
+        def fetchone(self):return {'exists':1}
+    c=Connection([life_task('a','delivered')])
+    assert eta.remaining_publication(c,saved,[original[1]],'d') is None
+    assert saved['return_branch_id']=='branch' and saved['published_stop_ids']==['dropoff:a','r']

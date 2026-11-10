@@ -1,0 +1,31 @@
+{
+  "status": "prepared_not_applied",
+  "owner_domain": "enbishan.com",
+  "architecture": "one_existing_KPS_ORDER_backend_and_PostgreSQL_database",
+  "workspace": "My Workspace",
+  "service_id": "srv-db4s1v942hec73epmar0",
+  "database_id": "dpg-db4rjgo473hc738soueg-a",
+  "database_name": "kps_order_emergency_v4_db",
+  "database_major_version_observed": "18",
+  "deployed_revision_observed": "797cdc1771ef4bc15fa9673c83dee5be0a8da24b",
+  "service_plan_observed": "1c-2g",
+  "host_brand_mapping_after_separate_activation": {
+    "order.kps.sa": "kps",
+    "kps-order-emergency-v4.onrender.com": "kps",
+    "enbishan.com": "enbishan"
+  },
+  "activation_requires": [
+    "successful exact-revision acceptance",
+    "explicit final owner activation approval",
+    "existing database backup and reviewed migrations",
+    "explicit staff brand and branch grants",
+    "approved Tawked sender and provider check",
+    "reviewed branch settings and coverage",
+    "physical printer acceptance"
+  ],
+  "production_mutations_performed": false,
+  "dns_changes_performed": false,
+  "new_services_or_databases_created": false,
+  "customer_data_copied": false,
+  "real_sms_or_payments_enabled": false
+}

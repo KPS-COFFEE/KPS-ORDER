@@ -1,0 +1,48 @@
+{
+  "synthetic": true,
+  "official_issuance": false,
+  "document": {
+    "subtotal_halalas": 3950,
+    "discount_halalas": 0,
+    "delivery_fee_halalas": 0,
+    "total_halalas": 3950,
+    "tax_halalas": 515,
+    "net_halalas": 3435,
+    "vat_rate": "15.00",
+    "schema_version": 1,
+    "phase": 1,
+    "kind": "invoice",
+    "status": "local_preview_only",
+    "number": "PREVIEW-EXAMPLE-1",
+    "issued_at": "2026-10-15T23:30:00Z",
+    "seller": {
+      "entity_id": "reem",
+      "legal_name": "مؤسسة ريم فهاد لافي الحربي لتقديم الوجبات",
+      "vat_number": "311887526600003",
+      "address": "حفر الباطن,حفر الباطن,8437 - حي الصفاء,39912",
+      "postal_code": "39912",
+      "address_source": "ZATCA VAT certificate 100241103016858"
+    },
+    "order_id": "SYNTHETIC-FISCAL-EXAMPLE",
+    "items": [
+      {
+        "name": "براونيز كراميل",
+        "product_id": "example-1",
+        "quantity": 1,
+        "line_total_halalas": 550,
+        "units": []
+      },
+      {
+        "name": "بوكس براونيز كراميل",
+        "product_id": "example-2",
+        "quantity": 1,
+        "line_total_halalas": 3400,
+        "units": []
+      }
+    ],
+    "payment_method": "cash",
+    "source_revision": 0,
+    "prices_include_vat": true,
+    "qr_text": "AUzZhdik2LPYs9ipINix2YrZhSDZgdmH2KfYryDZhNin2YHZiiDYp9mE2K3Ysdio2Yog2YTYqtmC2K/ZitmFINin2YTZiNis2KjYp9iqAg8zMTE4ODc1MjY2MDAwMDMDFDIwMjYtMTAtMTVUMjM6MzA6MDBaBAUzOS41MAUENS4xNQ=="
+  }
+}

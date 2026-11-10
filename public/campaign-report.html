@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <title>تقارير الطلبات والعروض</title>
+  <link rel="stylesheet" href="/assets/campaign-report.css?v=20261023-2">
+  <script src="/assets/campaign-report.js?v=20261023-2" defer></script>
+</head>
+<body>
+  <a class="skip" href="#campaign-main" data-i18n="skip">انتقل للتقرير</a>
+  <header class="report-header">
+    <a id="report-back" href="/ops" data-i18n="back">التشغيل</a>
+    <strong id="report-brand"></strong>
+    <button type="button" id="report-language">English</button>
+  </header>
+  <main id="campaign-main" class="report-main">
+    <div class="page-heading"><h1 data-i18n="title">تقارير الطلبات والعروض</h1><p data-i18n="subtitle">الطلبات الأونلاين والعملاء المستفيدون، ضمن فروع حسابك.</p></div>
+    <p class="date-note" data-i18n="basis">التواريخ أيام تقويمية بتوقيت الرياض، وليست أيام التقفيلة المحاسبية.</p>
+    <form id="report-filters" class="panel report-filters" hidden>
+      <label><span data-i18n="start">من تاريخ</span><input type="date" name="start" required></label>
+      <label><span data-i18n="end">إلى تاريخ</span><input type="date" name="end" required></label>
+      <label><span data-i18n="branch">الفرع</span><select name="branch_id"><option value="" data-i18n="all">جميع الفروع المخولة</option></select></label>
+      <label><span data-i18n="version">إصدار إعداد العرض (اختياري)</span><input name="policy_version" type="number" min="1" max="2147483647" step="1" inputmode="numeric"></label>
+      <button type="submit" data-i18n="show">عرض التقرير</button>
+    </form>
+    <section id="report-saved-panel" class="panel saved-reports" hidden>
+      <button type="button" id="report-saved-refresh" data-i18n="saved">التقارير النهائية المحفوظة</button>
+      <label><span data-i18n="saved_latest">آخر 50 تقريرًا ضمن صلاحياتك</span><select id="report-saved"><option value=""></option></select></label>
+    </section>
+    <p id="report-status" role="status" aria-live="polite"></p>
+    <button type="button" id="report-retry" hidden data-i18n="retry">إعادة المحاولة</button>
+    <div id="report-content" hidden>
+      <p id="report-applied" class="applied"></p>
+      <p id="report-final-evidence" class="date-note" hidden></p>
+      <button type="button" id="report-download" hidden data-i18n="download">تنزيل التقرير النهائي كاملًا</button>
+      <form id="report-finalize-form" class="panel report-finalize" hidden>
+        <h2 data-i18n="finalize_title">حفظ تقرير نهائي للفترة</h2>
+        <p class="explanation" data-i18n="finalize_note">يحفظ جميع صفحات المستفيدين وملخص الأيام كما هي وقت الحفظ. لا يوقف الهدية أو الإعلان ولا يغيّر التقفيلة المحاسبية.</p>
+        <label><span data-i18n="reason">سبب حفظ التقرير</span><input id="report-finalize-reason" name="reason" minlength="3" maxlength="500" required></label>
+        <button type="submit" id="report-finalize" data-i18n="finalize">تأكيد وحفظ التقرير النهائي</button>
+      </form>
+      <section id="report-summary" class="report-summary" aria-label="ملخص التقرير"></section>
+      <p class="explanation" data-i18n="customer_note">العميل الجديد هنا هو صاحب أول طلب أونلاين غير ملغى ضمن سجل الفروع المختارة. إذا عاد وطلب خلال الفترة نفسها فقد يُحسب جديدًا ومتكررًا، ويظهر مرة واحدة في إجمالي العملاء.</p>
+      <section class="panel">
+        <h2 data-i18n="daily">الطلبات حسب اليوم</h2>
+        <div class="table-scroll" tabindex="0"><table id="report-daily"><caption class="sr-only" data-i18n="daily">الطلبات حسب اليوم</caption><thead></thead><tbody></tbody></table></div>
+      </section>
+      <section class="panel beneficiaries-section">
+        <div class="section-heading"><h2 data-i18n="beneficiaries">المستفيدون من الهدية</h2><button type="button" id="report-print" data-i18n="print">طباعة الصفحة المعروضة</button></div>
+        <p class="explanation" data-i18n="gift_note">يُسجَّل الاستفادة عند تأكيد الطلب. إلغاء الطلب لا يعيد استحقاق الهدية. أرقام الجوال معروضة بآخر أربعة أرقام فقط.</p>
+        <p class="explanation" data-i18n="version_note">اختيار إصدار العرض يفلتر الهدايا فقط؛ إجمالي طلبات الأونلاين يبقى لجميع الطلبات في الفترة.</p>
+        <div id="report-beneficiaries" class="beneficiary-grid"></div>
+        <nav class="pagination" aria-label="صفحات المستفيدين"><button type="button" id="report-previous" data-i18n="previous">السابق</button><span id="report-page"></span><button type="button" id="report-next" data-i18n="next">التالي</button></nav>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

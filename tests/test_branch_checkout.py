@@ -1,0 +1,143 @@
+"""Real PostgreSQL checkout claims, synthetic intent adapter, no merchant traffic."""
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
+from cryptography.fernet import Fernet
+import pytest
+from app import db, payment_intents, payment_gateways
+from test_branch_payments import branch_payment, accept, attempt
+from test_operations import ops
+
+pytestmark=pytest.mark.postgres
+
+
+@pytest.fixture
+def checkout_case(branch_payment,monkeypatch):
+    actor,post,oid=branch_payment
+    monkeypatch.setenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED','true')
+    monkeypatch.setenv('KPS_PAYMENT_CHECKOUT_ENCRYPTION_KEY',Fernet.generate_key().decode())
+    monkeypatch.setenv(payment_gateways.credential_prefix('moyasar','ops-brand','fixture-seller')+'_TEST_PUBLIC_KEY','pk_test_synthetic_only')
+    a=attempt(post,oid,accept(post,oid))
+    calls=[]
+    def create(context):
+        calls.append(context)
+        return payment_intents.CheckoutIntent('moyasar',str(uuid4()),context,
+            datetime.now(timezone.utc)+timedelta(hours=1),
+            'https://fixture.invalid/payment-return?attempt='+context.attempt_id,'pi_secret_synthetic_checkout')
+    monkeypatch.setattr(payment_intents,'create_moyasar_sandbox_intent',create)
+    return actor,post,oid,a,calls
+
+
+def test_checkout_reuses_encrypted_session_and_never_marks_paid(checkout_case):
+    actor,post,oid,a,calls=checkout_case
+    url='/api/branch-payments/attempts/'+a['id']+'/checkout'
+    first=actor('customer').post(url)
+    assert first.status_code==200,first.text
+    assert first.headers['cache-control']=='no-store'
+    assert post('customer',url)==first.json()
+    assert len(calls)==1
+    with db.tx() as c:
+        row=c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()
+        assert b'pi_secret_synthetic_checkout' not in bytes(row['encrypted_secret'])
+        assert c.execute('SELECT payment_status FROM orders WHERE id=%s',(oid,)).fetchone()['payment_status']=='unpaid'
+        assert c.execute('SELECT count(*) n FROM branch_online_receipts').fetchone()['n']==0
+    post('owner',url,status=403)
+    other=actor('other')
+    assert other.post(url).status_code==403
+
+
+def test_concurrent_checkout_creates_only_one_provider_intent(checkout_case):
+    actor,post,oid,a,calls=checkout_case
+    client=actor('customer')
+    def submit(_):return client.post('/api/branch-payments/attempts/'+a['id']+'/checkout')
+    with ThreadPoolExecutor(max_workers=4) as pool:responses=list(pool.map(submit,range(4)))
+    assert all(r.status_code in {200,409} for r in responses)
+    assert any(r.status_code==200 for r in responses)
+    assert len(calls)==1
+    ready=post('customer','/api/branch-payments/attempts/'+a['id']+'/checkout')
+    assert all(r.json()==ready for r in responses if r.status_code==200)
+
+
+def test_uncertain_creation_is_not_automatically_repeated(checkout_case,monkeypatch):
+    actor,post,oid,a,calls=checkout_case
+    def fail(context):
+        calls.append(context)
+        raise db.error(503,'PAYMENT_INTENT_UNCONFIRMED','Synthetic timeout')
+    monkeypatch.setattr(payment_intents,'create_moyasar_sandbox_intent',fail)
+    url='/api/branch-payments/attempts/'+a['id']+'/checkout'
+    post('customer',url,status=503)
+    post('customer',url,status=409)
+    assert len(calls)==1
+    with db.tx() as c:
+        assert c.execute('SELECT state FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()['state']=='uncertain'
+
+
+def test_cancelled_order_cannot_obtain_prepared_secret(checkout_case):
+    actor,post,oid,a,calls=checkout_case
+    url='/api/branch-payments/attempts/'+a['id']+'/checkout'
+    post('customer',url)
+    with db.tx() as c:version=c.execute('SELECT version FROM orders WHERE id=%s',(oid,)).fetchone()['version']
+    post('owner','/api/orders/'+oid+'/preparation',{'status':'cancelled','reason':'Test cancellation','version':version})
+    post('customer',url,status=409)
+    assert len(calls)==1
+
+
+@pytest.mark.parametrize('key',['KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED','KPS_PAYMENT_CHECKOUT_ENCRYPTION_KEY'])
+def test_missing_configuration_does_not_contact_provider(checkout_case,monkeypatch,key):
+    actor,post,oid,a,calls=checkout_case
+    monkeypatch.delenv(key)
+    post('customer','/api/branch-payments/attempts/'+a['id']+'/checkout',status=409 if key.endswith('ENABLED') else 503)
+    assert not calls
+
+
+from test_backup import independent_restore_database
+
+
+def test_encrypted_checkout_full_restore_and_business_export_exclusion(checkout_case, independent_restore_database, tmp_path):
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive, restore_archive
+    actor,post,oid,a,calls=checkout_case
+    post('customer','/api/branch-payments/attempts/'+a['id']+'/checkout')
+    with db.tx() as c:
+        before=c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()
+        contents,manifest=build_archive(c,full=True)
+        business,public_manifest=build_archive(c,brand_id='ops-brand')
+    assert 'branch_checkout_sessions' not in public_manifest['table_order']
+    assert 'branch_checkout_sessions' in public_manifest['excluded_tables']
+    assert manifest['counts']['branch_checkout_sessions']==1
+    schema='kps_restore_'+uuid4().hex
+    result=restore_archive(contents,target_url=independent_restore_database,target_schema=schema,asset_directory=tmp_path/'assets')
+    assert result['verified']
+    with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
+        c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+        assert c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()==before
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()==before
+
+
+def test_payment_page_authorization_and_narrow_csp(checkout_case,monkeypatch):
+    actor,post,oid,a,calls=checkout_case
+    page=actor('customer').get('/branch-payment?attempt='+a['id'])
+    assert page.status_code==200
+    assert page.headers['cache-control']=='no-store'
+    assert 'https://api.moyasar.com' in page.headers['content-security-policy']
+    normal=actor('customer').get('/')
+    assert 'https://api.moyasar.com' not in normal.headers['content-security-policy']
+    assert actor('owner').get('/branch-payment').status_code==403
+    # Provider returns do not carry Strict cookies. The neutral shell is public;
+    # protected reconciliation still requires a valid customer session and CSRF.
+    from app import auth
+    anonymous=actor('customer')
+    saved=anonymous.app.dependency_overrides.pop(auth.current_user)
+    try:
+        shell=anonymous.get('/payment-return?status=paid&attempt='+a['id'])
+        assert shell.status_code==200
+        assert 'pi_secret_' not in shell.text and 'pk_test_' not in shell.text
+        assert anonymous.post('/api/branch-payments/attempts/'+a['id']+'/reconcile').status_code==401
+    finally:
+        anonymous.app.dependency_overrides[auth.current_user]=saved
+    monkeypatch.delenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED')
+    assert actor('customer').get('/branch-payment').status_code==404
+    assert not calls

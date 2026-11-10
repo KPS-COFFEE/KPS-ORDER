@@ -1,0 +1,1 @@
+Nairyah delivery envelope covers all 8 city-115 district polygons and intervening streets. Source: https://github.com/homaily/Saudi-Arabia-Regions-Cities-and-Districts (GPL-2.0; original data maps.address.gov.sa). This is an operational coverage envelope, not an administrative governorate boundary. City approval: owner, 2026-10-27.
