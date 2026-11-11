@@ -644,7 +644,8 @@ def make_pdf(report, paper='A3', *, compact=False):
     cv = NumberedCanvas(out, pagesize=size, invariant=1)
     cv.saved_pages = []
     cv.setTitle(report['filename'][:-4])
-    margin = 22
+    day_layout = compact and report['scope'] == 'day'
+    margin = 16 if day_layout else 22
     usable = width - 2 * margin
     y = height - margin
     def text(value, right, baseline, pts=9, color='#232d34'):
@@ -660,7 +661,7 @@ def make_pdf(report, paper='A3', *, compact=False):
     operating_day = date.fromisoformat(str(report['day']))
     text(f"{DAYS[operating_day.weekday()]}، {operating_day:%d-%m-%Y} · {report['manager']}", width-margin, y, 10)
     text("اليوم التشغيلي · الصباحي والمسائي" if report["scope"] == "day" else "شفتي", width-margin, y-14, 8, "#687078")
-    y -= 32
+    y -= 25 if day_layout else 32
     for i, (value, label) in enumerate([(str(report['count']), 'طلب'),
                                       (str(len(report['rows'])), 'عدد السائقين'),
                                       (money(report['net']) + ' ر.س', 'صافي الطلبات')]):
@@ -671,7 +672,7 @@ def make_pdf(report, paper='A3', *, compact=False):
         cv.rect(right-cell, y-43, cell, 43, stroke=1, fill=1)
         text(value, right-12, y-18, 13)
         text(label, right-12, y-34, 8, '#687078')
-    y -= 58
+    y -= 49 if day_layout else 58
     # Wrap logical Arabic before shaping. Measure all rows before drawing.
     def wrapped(value, max_width, pts):
         result, line = [], ''
@@ -685,16 +686,20 @@ def make_pdf(report, paper='A3', *, compact=False):
                 line += char
             line += ' '
         return result + [line.strip()]
-    row_padding = 4 if compact else 8
+    row_padding = 3 if day_layout else 4 if compact else 8
+    line_spacing = 2 if day_layout else 3
     def layout(data, widths, pts):
-        return [(cells, max(len(x) for x in cells)*(pts+3)+row_padding) for cells in [[wrapped(v, w-8, pts) for v,w in zip(row,widths)] for row in data]]
-    weights = [100,51,89,35,62,35,62,77,63,63,51,51,86,83]
+        return [(cells, max(len(x) for x in cells)*(pts+line_spacing)+row_padding) for cells in [[wrapped(v, w-8, pts) for v,w in zip(row,widths)] for row in data]]
+    weights = ([112,60,108,37,55,37,60,78,56,56,45,49,82,104] if day_layout
+               else [100,51,89,35,62,35,62,77,63,63,51,51,86,83])
     widths = [usable*x/sum(weights) for x in weights]
     case_widths = [usable*x for x in (.15,.07,.12,.10,.12,.29,.15)]
     city_widths = [usable*x for x in (.25,.10,.17,.12,.12,.12,.12)]
-    pts = 10
-    leading = pts + 3
-    bottom = margin + 34  # Reserve the footer on every page.
+    pts = 12 if day_layout else 10
+    leading = pts + line_spacing
+    cell_baseline = pts + (1 if day_layout else 4)
+    title_height = 19 if day_layout else 25
+    bottom = margin + (24 if day_layout else 34)  # Reserve the footer on every page.
     main_layout = layout([head, *rows, total], widths, pts)
     case_layout = layout([['السائق','البراند','النوع','القيمة المرجعية','المرجع','السبب','الحالة'], *cases], case_widths, pts) if cases else []
     city_layout = layout([city_head, *city_rows], city_widths, pts)
@@ -719,7 +724,7 @@ def make_pdf(report, paper='A3', *, compact=False):
         for col, cell in zip(cols, cells):
             color = '#ffffff' if dark else '#b42318' if timing and ' '.join(cell).endswith('متأخر') else '#232d34'
             for j,line in enumerate(cell):
-                text(line, x-4, y-pts-4-j*leading, pts, color)
+                text(line, x-4, y-cell_baseline-j*leading, pts, color)
             cv.setStrokeColor(colors.HexColor('#cfd6de'))
             cv.rect(x-col,y-rh,col,rh,stroke=1,fill=0)
             x -= col
@@ -731,12 +736,12 @@ def make_pdf(report, paper='A3', *, compact=False):
         def table_header():
             nonlocal y
             if heading:
-                text(heading,width-margin,y-11,10)
-                y -= 25
+                text(heading,width-margin,y-11,12 if day_layout else 10)
+                y -= title_height
             if grouped:
                 draw_groups()
             draw_row(header, cols, dark=True)
-        header_space = header_height + (25 if heading else 0) + (group_height if grouped else 0)
+        header_space = header_height + (title_height if heading else 0) + (group_height if grouped else 0)
         # Keep a section title and headings with at least one body line.
         ensure(header_space + leading + 8)
         table_header()
@@ -760,13 +765,13 @@ def make_pdf(report, paper='A3', *, compact=False):
                 if any(remaining):
                     new_page()
                     table_header()
-        y -= 12
+        y -= 8 if day_layout else 12
     # Grouped brand headings preserve the two-brand comparison on paper.
     x=width-margin
     groups = [(head[i], widths[i], '#edf2f6') for i in range(3)]
     groups += [('كبز', sum(widths[3:5]), '#fff0e3'), ('عنبيشن', sum(widths[5:7]), '#e6f7f7')]
     groups += [(head[i], widths[i], '#edf2f6') for i in range(7, len(head))]
-    group_height = max(len(wrapped(label, span-8, pts)) for label,span,_ in groups)*(pts+3)+8
+    group_height = max(len(wrapped(label, span-8, pts)) for label,span,_ in groups)*leading+(5 if day_layout else 8)
     def draw_groups():
         nonlocal y
         x = width-margin
@@ -774,7 +779,7 @@ def make_pdf(report, paper='A3', *, compact=False):
             cv.setFillColor(colors.HexColor(fill))
             cv.rect(x-span,y-group_height,span,group_height,stroke=0,fill=1)
             for j,line in enumerate(wrapped(label,span-8,pts)):
-                text(line,x-4,y-pts-4-j*leading,pts)
+                text(line,x-4,y-cell_baseline-j*leading,pts)
             x-=span
         y-=group_height
     main_layout[0]=layout([['','','','عدد','قيمة','عدد','قيمة','','','','','','','']],widths,pts)[0]
@@ -787,8 +792,10 @@ def make_pdf(report, paper='A3', *, compact=False):
     if cases:
         draw_table(case_layout,case_widths,heading='حالات التشغيل')
     else:
-        ensure(20)
-        text('لا توجد ضيافة أو تعويضات أو حالات مسجلة.',width-margin,y-10,9);y-=20
+        note_height = 15 if day_layout else 20
+        ensure(note_height)
+        text('لا توجد ضيافة أو تعويضات أو حالات مسجلة.',width-margin,y-10,9)
+        y -= note_height
     approved = report['accounting']['approved']
     normal_lines=[line for line in lines if not line.startswith('معتمد محاسبيًا')]
     approval_lines=[line for line in lines if line.startswith('معتمد محاسبيًا')]
