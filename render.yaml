@@ -19,6 +19,8 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /ready
+    # Validate the candidate's actual runtime environment before rollout.
+    preDeployCommand: python -m app.release_preflight
     maxShutdownDelaySeconds: 30
     envVars:
       - key: DATABASE_URL
