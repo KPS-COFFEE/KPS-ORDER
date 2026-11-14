@@ -495,11 +495,11 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         expect(ops.locator('#content')).to_contain_text(banner_title)
         assert len(context.request.get(live_app+'/api/banners?brand_id=kps&branch_id=kps-branch-1').json()['banners'])==1
         assert context.request.get(live_app+'/api/banners?brand_id=kps&branch_id=kps-branch-5').json()['banners']==[]
-        ops.locator('[data-action=edit-banner]').first.click()
+        ops.locator('article').filter(has=ops.get_by_role('heading', name=banner_title, exact=True)).locator('[data-action=edit-banner]').click()
         expect(ops.locator('#modal')).to_be_visible()
         ops.keyboard.press('Escape')
         expect(ops.locator('#modal')).not_to_be_visible()
-        ops.locator('[data-action=edit-banner]').first.click()
+        ops.locator('article').filter(has=ops.get_by_role('heading', name=banner_title, exact=True)).locator('[data-action=edit-banner]').click()
         ops.locator('#banner-form input[name=active]').uncheck()
         ops.locator('#banner-form button[type=submit]').click()
         expect(ops.locator('#modal')).not_to_be_visible()
