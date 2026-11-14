@@ -38,7 +38,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: node --check public/customer.js && node --test tests/test_london_banner.cjs
       - name: Canonical price, idempotence, advertising and gift regressions
-        run: python -m pytest -q tests/test_enbishan_london_campaign.py tests/test_storefront_advertising.py tests/test_storefront_advertising_postgres.py tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py tests/test_multibrand_final_boundary.py tests/test_enbishan_dual_brand.py tests/test_enbishan_sms_boundary.py tests/test_enbishan_mandatory_customer_sms.py tests/test_runtime_revision.py --junitxml=test-results/london-campaign.xml
+        run: python -m pytest -q tests/test_london_campaign.py tests/test_storefront_advertising.py tests/test_storefront_advertising_postgres.py tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py tests/test_multibrand_final_boundary.py tests/test_enbishan_dual_brand.py tests/test_enbishan_sms_boundary.py tests/test_enbishan_mandatory_customer_sms.py tests/test_runtime_revision.py --junitxml=test-results/london-campaign.xml
       - run: npm install --no-save --package-lock=false playwright
       - run: npx playwright install --with-deps chromium
       - name: Responsive campaign action and reduced motion
@@ -50,3 +50,4 @@ jobs:
         with:
           name: london-campaign-acceptance
           path: test-results/
+
