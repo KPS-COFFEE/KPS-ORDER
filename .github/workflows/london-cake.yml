@@ -5,7 +5,6 @@ on:
   pull_request:
     paths:
       - app/london_campaign.py
-      - migrations/138_london_cake_combo.sql
       - public/assets/london-cake-*
       - tests/test_london_*
       - tests/london_banner_browser.cjs
@@ -50,4 +49,3 @@ jobs:
         with:
           name: london-campaign-acceptance
           path: test-results/
-

@@ -13,10 +13,12 @@ BANNER = 'kps-london-cake-20261114'
 def apply(conn):
     if not conn.execute("SELECT 1 FROM brands WHERE id='kps'").fetchone():
         return
-    inserted = conn.execute(
-        "INSERT INTO owner_campaign_decisions(decision_id,brand_id) VALUES(%s,'kps') "
-        'ON CONFLICT DO NOTHING RETURNING decision_id', (DECISION,)).fetchone()
-    if not inserted:
+    row = conn.execute("SELECT settings FROM app_settings WHERE brand_id='kps' FOR UPDATE").fetchone()
+    if not row:
+        return
+    configuration = row['settings']
+    decisions = configuration.get('owner_campaign_decisions') or {}
+    if decisions.get(DECISION):
         return
     settings = {
         'enabled': True, 'source_verified': True, 'lifecycle': 'active',
@@ -35,6 +37,9 @@ def apply(conn):
         "VALUES(%s,'kps',%s,%s,%s,%s,true,-10) ON CONFLICT DO NOTHING",
         (BANNER, 'كيكة لندن مع قهوة اليوم', '15.5 ريال بدل 20 ريال', 'اطلب الآن',
          db.json({'kind': 'product', 'id': PRODUCT})))
+    conn.execute("UPDATE app_settings SET settings=%s,updated_at=now() WHERE brand_id='kps'",
+                 (db.json(configuration | {'owner_campaign_decisions': decisions | {
+                     DECISION: {'product_id': PRODUCT, 'banner_id': BANNER, 'applied': True}}}),))
     db.audit(conn, None, 'catalog.owner_campaign_installed', 'product', PRODUCT,
              {'decision_id': DECISION, 'price_halalas': 1550, 'advertising_policy_unchanged': True,
               'gift_policy_unchanged': True})

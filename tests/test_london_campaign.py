@@ -33,4 +33,4 @@ def test_combo_is_server_priced_and_campaign_does_not_grant_gifts(database):
         assert c.execute('SELECT price_halalas FROM products WHERE id=%s', (product['id'],)).fetchone()['price_halalas'] == 1600
         assert c.execute('SELECT active FROM banners WHERE id=%s', (banner['id'],)).fetchone()['active'] is False
         assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'] == before
-        assert c.execute('SELECT count(*) AS n FROM owner_campaign_decisions WHERE decision_id=%s', (london_campaign.DECISION,)).fetchone()['n'] == 1
+        assert settings['owner_campaign_decisions'][london_campaign.DECISION]['applied'] is True
