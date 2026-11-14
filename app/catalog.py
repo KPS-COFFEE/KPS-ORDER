@@ -70,7 +70,9 @@ def collapse_menu_aliases(products):
 
 
 def menu_display_order(products, brand_id):
-    """Keep Enbishan beverages last, preserving every other relative position."""
+    """Show KPS new arrivals first and Enbishan beverages last, stably."""
+    if brand_id == 'kps' and any(p.get('category') == '✨ جديدنا' for p in products):
+        return sorted(products, key=lambda product: product.get('category') != '✨ جديدنا')
     if brand_id != 'enbishan':
         return products
     beverages = {'المشروبات', 'مشروبات', 'beverages', 'beverage', 'drinks', 'المشروبات - beverage'}
