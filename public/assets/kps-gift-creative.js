@@ -2,7 +2,30 @@
 (() => {
   'use strict';
   const TITLE = 'البدايات الحلوة… لها هدية من كبز 🎁';
-  function render(container, {brandId, banner}) {
+  function render(container, {brandId, banner, openProduct, products: catalogProducts = []}) {
+    if (brandId === 'kps' && banner?.id === 'kps-london-cake-20261114') {
+      const product = catalogProducts.find(p => p.id === 'kps-london-cake-combo');
+      if (!product || typeof openProduct !== 'function') return false;
+      const ad = document.createElement('section');
+      ad.className = 'kps-london-ad';
+      const image = document.createElement('img');
+      image.src = '/assets/london-cake-banner.webp';
+      image.alt = document.documentElement.lang === 'en'
+        ? 'New: London cake with coffee of the day. SAR 15.5 instead of SAR 20.'
+        : 'جديدنا: كيكة لندن مع قهوة اليوم، 15.5 ريال بدل 20 ريال';
+      image.width = 1774; image.height = 887; image.decoding = 'async';
+      const action = document.createElement('button');
+      action.type = 'button'; action.className = 'kps-london-order';
+      action.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Order London cake with coffee of the day' : 'اطلب الآن: كيكة لندن مع قهوة اليوم');
+      action.addEventListener('click', () => openProduct(product));
+      const titleLight = document.createElement('span');
+      titleLight.className = 'kps-london-title-light';
+      titleLight.setAttribute('aria-hidden', 'true');
+      ad.append(image, titleLight, action);
+      container.className = 'kps-london-host';
+      container.replaceChildren(ad);
+      return true;
+    }
     if (brandId !== 'kps' || banner?.title !== TITLE) return false;
     const make = (tag, className, text) => {
       const element = document.createElement(tag);

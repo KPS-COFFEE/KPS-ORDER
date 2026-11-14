@@ -471,6 +471,8 @@ def apply_migrations(conn, seed=True, owner_decisions=True):
     if owner_decisions:
         from . import branch_locations, catalog, service_hours
         catalog.apply_final_catalog_approval(conn)
+        from . import london_campaign
+        london_campaign.apply(conn)
         apply_owner_display_decisions(conn)
         service_hours.apply_default_branch_hours(conn)
         service_hours.apply_default_delivery_hours(conn)

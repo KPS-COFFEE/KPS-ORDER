@@ -118,6 +118,10 @@ def database(monkeypatch, safe_test_environment):
         # Production has no fixture override and defaults KPS to required SMS.
         with db.tx() as c:
             c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":false}'::jsonb WHERE brand_id='kps'")
+        # Keep legacy banner journeys independent of the newly seeded campaign.
+        # Campaign-specific acceptance explicitly enables its own synthetic row.
+        with db.tx() as c:
+            c.execute("UPDATE banners SET active=false WHERE id='kps-london-cake-20261114'")
         yield isolated_url
     finally:
         db.close_pools(isolated_url)
