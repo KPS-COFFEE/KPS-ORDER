@@ -14,7 +14,7 @@ def apply(conn):
     if not conn.execute("SELECT 1 FROM brands WHERE id='kps'").fetchone():
         return
     inserted = conn.execute(
-        'INSERT INTO owner_campaign_decisions(decision_id) VALUES(%s) '
+        "INSERT INTO owner_campaign_decisions(decision_id,brand_id) VALUES(%s,'kps') "
         'ON CONFLICT DO NOTHING RETURNING decision_id', (DECISION,)).fetchone()
     if not inserted:
         return
