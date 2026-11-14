@@ -15,3 +15,17 @@
 @keyframes kps-gift-product-shimmer{0%{mask-position:0% 0;-webkit-mask-position:0% 0;opacity:0}2%,23%{opacity:.7}25%,100%{mask-position:100% 0;-webkit-mask-position:100% 0;opacity:0}}
 @keyframes kps-gift-shimmer{0%{mask-position:0% 0;-webkit-mask-position:0% 0;opacity:0}2%,18%{opacity:.7}20%,100%{mask-position:100% 0;-webkit-mask-position:100% 0;opacity:0}}
 @media(prefers-reduced-motion:reduce){.kps-gift-glint{animation:none!important;opacity:0!important}}
+
+/* The artwork's CTA is a real keyboard-accessible product action. */
+.kps-london-host{width:100%;overflow:hidden;border-radius:18px;background:#f8e6d3}
+.kps-london-ad{position:relative;width:100%;aspect-ratio:2/1}
+.kps-london-ad>img{display:block;width:100%;height:100%;max-height:none;object-fit:contain}
+.kps-london-order{position:absolute;left:72.5%;top:81%;width:22.5%;height:11.8%;border:0;border-radius:2cqw;background:transparent;cursor:pointer;animation:kps-london-pulse .8s ease-in-out infinite}
+.kps-london-order:focus-visible{outline:3px solid #48220c;outline-offset:4px}
+@keyframes kps-london-pulse{0%,100%{box-shadow:0 0 0 0 #ff7b0040;background:#fff0}50%{box-shadow:0 0 0 5px #ff7b0055;background:#ffffff26}}
+@media(prefers-reduced-motion:reduce){.kps-london-order{animation:none}}
+
+.kps-london-title-light{position:absolute;left:54%;top:26%;width:41%;height:19%;pointer-events:none;overflow:hidden}
+.kps-london-title-light::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,transparent 35%,#fff7 50%,transparent 65%);transform:translateX(-110%);animation:kps-london-title-shine .8s ease-in-out infinite}
+@keyframes kps-london-title-shine{to{transform:translateX(110%)}}
+@media(prefers-reduced-motion:reduce){.kps-london-title-light::after{animation:none;display:none}}
