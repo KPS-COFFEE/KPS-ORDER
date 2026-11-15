@@ -130,6 +130,13 @@ jobs:
         CHECK
 
         '
+    - name: Retain rendered staff cards for visual review
+      uses: actions/upload-artifact@v4
+      with:
+        name: staff-cards-${{ github.event.pull_request.head.sha || github.sha }}
+        path: test-artifacts/focused-staff-cards-*.png
+        retention-days: 7
+        if-no-files-found: error
     - name: Focused tests on PostgreSQL18
       env:
         PYTHONPATH: ci-safety:.
