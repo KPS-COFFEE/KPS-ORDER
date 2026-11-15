@@ -472,7 +472,7 @@
     }
     return data;
   }
-  async function mutation(path, body = {}, button, options = {}) { if (button) button.disabled = true; try { const data = await api(path, { ...options, method: 'POST', body }); setStatus(tr('تم حفظ العملية.', 'Operation saved.')); if(/^\/api\/(accounting|cash-bags|shared-driver-closures|aggregate-driver-closure|financial-treatments)(\/|$)/.test(path)){accountingFollowupStamp=0;void refreshOperationalAlerts();} return data; } finally { if (button) button.disabled = false; } }
+  async function mutation(path, body = {}, button, options = {}) { if (button) button.disabled = true; try { const data = await api(path, { ...options, method: 'POST', body }); setStatus(tr('تم حفظ العملية.', 'Operation saved.')); if(/^\/api\/(accounting|cash-bags|shared-driver-closures|aggregate-driver-closure|financial-treatments)(\/|$)/.test(path)){accountingFollowupStamp=0;} return data; } finally { if (button) button.disabled = false; } }
   async function ownerOperationalConfirm(title) {
     if(state.user?.role!=='owner')throw new Error(tr('للمالك فقط.','Owner only.'));
     if(!window.confirm(title+'\n'+tr('تأكيد الحفظ والاعتماد؟ يُسجّل الإجراء باسمك.','Confirm saving and approval? This action is recorded under your name.')))
@@ -3273,6 +3273,7 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
   }
   document.addEventListener('submit',async e=>{if(e.target.id!=='filters-form')return;e.preventDefault();let filters;try{filters=validatedFilters(e.target);}catch(error){let message=e.target.querySelector('.filter-error');if(!message){message=document.createElement('p');message.className='filter-error form-error';message.setAttribute('role','alert');e.target.append(message);}message.textContent=error.message;return;}state.filters=filters;await loadPage();});
   document.addEventListener('click',async e=>{
+    const page=e.target.closest('[data-page]');
     const accountingFocus=e.target.closest('[data-accounting-focus]');
     if(accountingFocus){
       if(!can('accounting_reports')||state.loading)return;
@@ -3281,7 +3282,7 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
       state.accountingViews[key]={...(state.accountingViews[key]||{}),tab:'settlements',managerCardOffset:0,managerCardFocus:accountingFocus.dataset.accountingFocus,managerCardOpenIds:[accountingFocus.dataset.accountingFocus]};
       state.page='accounting';await loadPage();return;
     }
-    const page=e.target.closest('[data-page]');if(page){if(state.loading){state.pendingPage=page.dataset.page;setStatus(tr('جارٍ فتح الصفحة المختارة بعد اكتمال التحميل الحالي.','Opening the selected page after the current load completes.'));return;}state.page=page.dataset.page;await loadPage();return;}
+    if(page){if(state.loading){state.pendingPage=page.dataset.page;setStatus(tr('جارٍ فتح الصفحة المختارة بعد اكتمال التحميل الحالي.','Opening the selected page after the current load completes.'));return;}state.page=page.dataset.page;await loadPage();return;}
     const button=e.target.closest('[data-action]');if(!button)return;const a=button.dataset.action,id=button.dataset.id;const permission=actionPermission(button);if(permission&&!can(permission))return;const lock=`${a}:${id||''}`;if(state.busy.has(lock))return;state.busy.add(lock);
     try{
       if(a==='manager-work-view'){if(state.user.role!=='delivery_manager')return;const history=button.dataset.history==='1';state.page=button.dataset.target==='orders'?'orders':'shifts';if(state.page==='orders'){state.managerOrdersHistory=history;state.filters={sort:history?'newest':'active_oldest'};}else state.managerShiftsHistory=history;await loadPage();return;}

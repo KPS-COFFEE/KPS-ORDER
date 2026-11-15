@@ -9,6 +9,7 @@ function harness(role,permissions,{failOperations=false}={}){
   const calls=[],channels=[],apiOptions=[];
   const host={dataset:{},innerHTML:'',textContent:'',hidden:false,contains:()=>false,
     querySelectorAll:()=>[],replaceChildren(fragment){this.innerHTML=fragment.html;}};
+  const followup={innerHTML:'',hidden:false,isConnected:true,remove(){this.isConnected=false;}};
   const ctx={state:{user:{id:'delegate',role,effective_permissions:permissions}},trialMode:false,
     alertAudio:{state:'running'},operationalAlertScope:'',alertChannels:new Map(),alertBusy:false,
     stopAlertChannel(){},refreshAlertPolicy:async()=>{},ensureMandatoryAlertSound:async()=>{},
@@ -16,7 +17,7 @@ function harness(role,permissions,{failOperations=false}={}){
     syncAlertChannel:(kind,ids)=>channels.push({kind,ids:[...ids]}),concealAlertControls(){},
     navigator:{onLine:true},window:{scrollY:0},document:{hidden:false,documentElement:{hasAttribute:()=>false},activeElement:null,querySelectorAll:()=>[],
       createElement(tag){assert.equal(tag,'template');return {innerHTML:'',get content(){return {html:this.innerHTML};}};}},
-    $:selector=>selector==='#operational-alerts'?host:selector==='#content'?{getBoundingClientRect:()=>({top:0})}:null,
+    $:selector=>selector==='#accounting-followup-alerts'?followup:selector==='#operational-alerts'?host:selector==='#content'?{getBoundingClientRect:()=>({top:0})}:null,
     can:permission=>role==='owner'||permissions.includes(permission),
     api:async (path,options)=>{
       calls.push(path);apiOptions.push(options);
@@ -44,7 +45,7 @@ function harness(role,permissions,{failOperations=false}={}){
   const helperStart=source.indexOf('  function accountingNotificationsOnly('),helperEnd=source.indexOf('  async function refreshAlertPolicy(',helperStart);
   vm.runInContext(source.slice(helperStart,helperEnd),ctx);
   vm.runInContext(source.slice(start,end),ctx);
-  return {ctx,host,calls,channels,apiOptions};
+  return {ctx,host,followup,calls,channels,apiOptions};
 }
 
 test('a cancellation delegate without break permission keeps order and chat alerts working',async()=>{
