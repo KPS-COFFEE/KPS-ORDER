@@ -32,8 +32,8 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/ops.js && node --check public/assets/accounting-alerts.js && node --check public/assets/accounting.js
-      - run: node --test tests/test_accounting_alerts_ui.cjs tests/test_accounting_workspace_ui.cjs tests/test_accounting_treatment_ui.cjs tests/test_shift_reconciliation_ui.cjs tests/test_accounting_manager_card_state.cjs
-      - run: python -m pytest -q tests/test_accounting_shift_hub_browser.py tests/test_cash_bag_custody_scope_unit.py --junitxml=test-artifacts/accounting-notifications.xml
+      - run: node --test tests/test_accounting_alerts_ui.cjs tests/test_accounting_workspace_ui.cjs tests/test_accounting_treatment_ui.cjs tests/test_shift_reconciliation_ui.cjs tests/test_accounting_manager_card_state.cjs tests/test_alert_permission_poll.cjs tests/test_intervention_reachability.cjs tests/test_work_request_sharing.cjs
+      - run: python -m pytest -q tests/test_accounting_shift_hub_browser.py tests/test_cash_bag_custody_scope_unit.py tests/test_financial_integrity_generated.py --junitxml=test-artifacts/accounting-notifications.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
