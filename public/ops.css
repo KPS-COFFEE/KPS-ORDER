@@ -766,5 +766,5 @@ html[data-work-access-pending] dialog:not(#work-access-recovery) { visibility: h
  .side.compact-navigation #navigation .review-nav-title{margin:5px 8px;font-size:12px}
 }
 
-.staff-card .data-grid>div:first-child dd{direction:ltr;text-align:start;unicode-bidi:plaintext;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:.9rem}
+.staff-card .data-grid>div:first-child dd{direction:ltr;text-align:start;unicode-bidi:plaintext;white-space:normal;font-variant-numeric:tabular-nums;font-size:.9rem}
 .staff-card .data-grid>div:has(dt) dd{min-width:0}
