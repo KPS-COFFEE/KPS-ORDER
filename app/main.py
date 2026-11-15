@@ -341,3 +341,6 @@ app.include_router(owner_employee_activity.router)
 
 from . import owner_driver_intervention
 app.include_router(owner_driver_intervention.router)
+
+from . import staff_transfers
+app.include_router(staff_transfers.router)

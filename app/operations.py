@@ -400,6 +400,15 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
     if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
     if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+target['id'],))
+    # A delegated branch move may have committed while admission waited.
+    # Re-read after the shared lock; never open from the stale pre-lock profile.
+    target=c.execute('SELECT * FROM users WHERE id=%s',(target['id'],)).fetchone()
+    if multibrand.enabled():
+        target=multibrand.project(c,target,user['brand_id'])
+    if not target or not target['active'] or not same_scope(user,target):
+        fail(409,'تغير نطاق الموظف؛ حدّث الشاشة قبل فتح الشفت.')
+    if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner':
+        fail(403,'الدور غير مطابق للشفت')
     if body.kind == 'manager':
         from .manager_admission import retire_previous_days
         retire_previous_days(c, user, target)
