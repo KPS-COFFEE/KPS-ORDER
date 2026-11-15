@@ -52,7 +52,8 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
                         e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1;
                 }),pageOverflow:document.documentElement.scrollWidth>innerWidth};
             }''')
-            assert layout=={'nameReadableWidth':True,'readable':True,'pageOverflow':False}
+            diagnostics=page.locator('.staff-directory').evaluate("""root=>[...root.querySelectorAll('.staff-card h2,.staff-card dd,.staff-card button')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden').map(e=>{const s=getComputedStyle(e);return {tag:e.tagName,text:e.textContent,className:e.className,whiteSpace:s.whiteSpace,textOverflow:s.textOverflow,font:s.font,width:e.clientWidth,scrollWidth:e.scrollWidth,height:e.clientHeight,scrollHeight:e.scrollHeight};}).filter(e=>e.whiteSpace!=='normal'||e.textOverflow==='ellipsis'||e.scrollWidth>e.width+1||e.scrollHeight>e.height+1)""")
+            assert layout=={'nameReadableWidth':True,'readable':True,'pageOverflow':False}, {'language':language,'width':listing_width,'bad_cells':diagnostics}
             page.screenshot(path=str(ARTIFACTS/f'focused-staff-cards-{language}-{listing_width}.png'),full_page=True)
         page.set_viewport_size({'width':width,'height':900})
         page.locator('[data-action=invite-staff]').click()

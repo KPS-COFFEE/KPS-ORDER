@@ -384,7 +384,7 @@ dialog:has(.order-detail-events){width:min(1180px,calc(100vw - 24px))}
 .staff-card .card-head{align-items:flex-start;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 .staff-card h2{font-size:1.15rem;margin:0;white-space:normal;overflow-wrap:anywhere}
 .staff-card h3{font-size:1rem;margin:0 0 8px}
-.staff-card .data-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0}.staff-card .data-grid>div{padding:10px;border-radius:10px;background:#f5f6f7;min-width:0}.staff-card .staff-contact dd,.staff-card .staff-email dd{direction:ltr;unicode-bidi:plaintext;font-size:.9rem}.staff-card .data-grid>.staff-email{grid-column:1/-1}.staff-card dt{font-size:.8rem;color:var(--muted);margin-bottom:6px}.staff-card dd{font-weight:600;line-height:1.6}.staff-card>section{padding-top:12px;border-top:1px solid var(--line)}
+.staff-card .data-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0}.staff-card .data-grid>div{padding:10px;border-radius:10px;background:#f5f6f7;min-width:0}.staff-card .staff-contact dd,.staff-card .staff-email dd{direction:ltr;unicode-bidi:plaintext}.staff-card .data-grid>.staff-email{grid-column:1/-1}.staff-card dt{font-size:.8rem;color:var(--muted);margin-bottom:6px}.staff-card dd{line-height:1.8}.staff-card>section{padding-top:12px;border-top:1px solid var(--line)}
 .staff-card dt,.staff-card dd,.staff-card p{white-space:normal;overflow-wrap:anywhere}
 .staff-card dd{margin-inline-start:0}
 .staff-card footer{margin-top:auto;display:flex;flex-wrap:wrap;gap:8px}
@@ -766,5 +766,5 @@ html[data-work-access-pending] dialog:not(#work-access-recovery) { visibility: h
  .side.compact-navigation #navigation .review-nav-title{margin:5px 8px;font-size:12px}
 }
 
-.staff-card .data-grid>div:first-child dd{direction:ltr;text-align:start;unicode-bidi:plaintext;white-space:normal;font-variant-numeric:tabular-nums;font-size:.9rem}
+.staff-card .data-grid>div:first-child dd{direction:ltr;text-align:start;unicode-bidi:plaintext;white-space:normal;font-variant-numeric:tabular-nums}
 .staff-card .data-grid>div:has(dt) dd{min-width:0}
