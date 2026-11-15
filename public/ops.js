@@ -3076,9 +3076,9 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     return ({draft:tr('مسودة — البريد غير مهيأ','Draft — email unconfigured'),pending_email:tr('بانتظار إثبات البريد','Awaiting email proof'),active:tr('مفعل','Active'),paused:tr('متوقف','Paused'),revoked:tr('الدعوة ملغاة','Invitation revoked')})[u.invitation_status]||tr('بانتظار الدعوة','Invitation pending');
   }
   function staffCards(users) {
-    return users.length ? `<div class="staff-cards">${users.map(u=>`<article class="panel staff-card" data-staff-id="${esc(u.id)}">
-      <header class="card-head"><div><h2>${esc(u.display_name)}</h2><p class="muted">${esc((u.job_title || roleName(u.role)))}</p></div><span class="pill ${u.active?'good':'warn'}">${esc(u.active?tr('مفعل','Active'):tr('متوقف','Paused'))}</span></header>
-      <dl class="data-grid">${dataItem(tr('الجوال','Mobile'),u.phone||'—','staff-contact')}${dataItem(tr('الشفت','Shift'),u.open_shift?statusName(u.open_shift.status):tr('لا يوجد شفت مفتوح','No open shift'))}${u.email?dataItem(tr('البريد — اختياري','Email — optional'),u.email,'staff-email'):''}
+    return users.length ? `<div class="staff-cards">${users.map(u=>`<article class="panel branch-card staff-card" data-staff-id="${esc(u.id)}">
+      <header class="branch-card-head"><div><h2>${esc(u.display_name)}</h2><p class="muted">${esc((u.job_title || roleName(u.role)))}</p></div><span class="pill ${u.active?'good':'warn'}">${esc(u.active?tr('مفعل','Active'):tr('متوقف','Paused'))}</span></header>
+      <dl class="data-grid branch-services">${dataItem(tr('الجوال','Mobile'),u.phone||'—','staff-contact')}${dataItem(tr('الشفت','Shift'),u.open_shift?statusName(u.open_shift.status):tr('لا يوجد شفت مفتوح','No open shift'))}${u.email?dataItem(tr('البريد — اختياري','Email — optional'),u.email,'staff-email'):''}
       ${dataItem(tr('حالة التسجيل','Registration status'),staffIdentityStatus(u))}${dataItem(tr('التوفر','Availability'),u.available?tr('متاح','Available'):tr('غير متاح','Unavailable'))}${u.role==='driver'?dataItem(tr('السيارة','Vehicle'),u.vehicle?.plate||tr('يلزم إسناد سيارة','Vehicle assignment required')):''}</dl>
       <section><h3>${esc(tr('الفروع','Branches'))}</h3>${staffBranchCell(u)}</section>
       <section><h3>${esc(tr('الصلاحيات','Permissions'))}</h3>${staffPermissionSummary(u)}</section>

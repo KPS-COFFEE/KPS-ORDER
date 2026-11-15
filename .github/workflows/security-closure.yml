@@ -166,7 +166,9 @@ jobs:
       if: always()
       with:
         name: security-host-${{ github.event.pull_request.head.sha || github.sha }}
-        path: evidence/
+        path: |
+          evidence/
+          test-artifacts/focused-staff-cards-*.png
         retention-days: 7
         if-no-files-found: error
   exact-image-candidate:

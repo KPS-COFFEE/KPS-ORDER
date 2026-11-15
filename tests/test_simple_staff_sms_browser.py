@@ -46,14 +46,25 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
                 const cells=[...root.querySelectorAll('.staff-card h2,.staff-card dd,.staff-card button')];
                 const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
                 const name=root.querySelector('.staff-card h2');
-                return {nameReadableWidth:name.clientWidth>=140,readable:cells.filter(visible).every(e=>{
+                const cards=[...root.querySelectorAll('.staff-card')];
+                const framed=cards.every(e=>{
+                    const s=getComputedStyle(e);
+                    return parseFloat(s.borderTopWidth)>=3&&parseFloat(s.paddingInlineStart)>=16;
+                });
+                const actionsFullWidth=cards.every(e=>{
+                    const footer=e.querySelector('footer');
+                    const action=footer.querySelector('.staff-actions>summary');
+                    const s=getComputedStyle(action);
+                    return action.clientWidth>=footer.clientWidth-4&&s.backgroundColor!=='rgba(0, 0, 0, 0)';
+                });
+                return {framed,actionsFullWidth,nameReadableWidth:name.clientWidth>=140,readable:cells.filter(visible).every(e=>{
                     const s=getComputedStyle(e);
                     return s.whiteSpace==='normal'&&s.textOverflow!=='ellipsis'&&
                         e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1;
                 }),pageOverflow:document.documentElement.scrollWidth>innerWidth};
             }''')
             diagnostics=page.locator('.staff-directory').evaluate("""root=>[...root.querySelectorAll('.staff-card h2,.staff-card dd,.staff-card button')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden').map(e=>{const s=getComputedStyle(e);return {tag:e.tagName,text:e.textContent,className:e.className,whiteSpace:s.whiteSpace,textOverflow:s.textOverflow,font:s.font,width:e.clientWidth,scrollWidth:e.scrollWidth,height:e.clientHeight,scrollHeight:e.scrollHeight};}).filter(e=>e.whiteSpace!=='normal'||e.textOverflow==='ellipsis'||e.scrollWidth>e.width+1||e.scrollHeight>e.height+1)""")
-            assert layout=={'nameReadableWidth':True,'readable':True,'pageOverflow':False}, {'language':language,'width':listing_width,'bad_cells':diagnostics}
+            assert layout=={'framed':True,'actionsFullWidth':True,'nameReadableWidth':True,'readable':True,'pageOverflow':False}, {'language':language,'width':listing_width,'layout':layout,'bad_cells':diagnostics}
             page.screenshot(path=str(ARTIFACTS/f'focused-staff-cards-{language}-{listing_width}.png'),full_page=True)
         page.set_viewport_size({'width':width,'height':900})
         page.locator('[data-action=invite-staff]').click()

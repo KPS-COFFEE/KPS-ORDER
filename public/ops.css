@@ -379,21 +379,26 @@ dialog:has(.order-detail-events){width:min(1180px,calc(100vw - 24px))}
 .conversation-card-footer small{font-size:11px}
 .chat-layout #chat-detail{min-width:0}
 @media(max-width:900px){.chat-layout{grid-template-columns:minmax(0,1fr)}.chat-layout:not(.inbox-only) .conversation-list{max-height:300px;overflow:auto}.conversation{margin-bottom:10px}}
-.staff-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
-.staff-card{display:flex;flex-direction:column;min-width:0;gap:16px;margin:0;padding:20px;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 4px 16px #18202a0a}
-.staff-card .card-head{align-items:flex-start;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.staff-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:18px;align-items:stretch}
+.staff-card{min-width:0;margin:0;background:var(--surface)}
 .staff-card h2{font-size:1.15rem;margin:0;white-space:normal;overflow-wrap:anywhere}
 .staff-card h3{font-size:1rem;margin:0 0 8px}
-.staff-card .data-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0}.staff-card .data-grid>div{padding:10px;border-radius:10px;background:#f5f6f7;min-width:0}.staff-card .staff-contact dd,.staff-card .staff-email dd{direction:ltr;unicode-bidi:plaintext}.staff-card .data-grid>.staff-email{grid-column:1/-1}.staff-card dt{font-size:.8rem;color:var(--muted);margin-bottom:6px}.staff-card dd{line-height:1.8}.staff-card>section{padding-top:12px;border-top:1px solid var(--line)}
+.staff-card .data-grid{grid-template-columns:minmax(0,1fr);gap:0;margin:0}
+.staff-card .data-grid>div{display:grid;grid-template-columns:minmax(75px,.7fr) minmax(0,1.3fr);align-items:start;gap:10px;padding:10px 0;border:0;border-radius:0;background:transparent;min-width:0}
+.staff-card .data-grid>div+div{border-block-start:1px solid var(--line)}
+.staff-card .staff-contact dd,.staff-card .staff-email dd{direction:ltr;unicode-bidi:plaintext}
+.staff-card dt{font-size:13px;line-height:1.8;color:var(--muted);margin:0}.staff-card dd{line-height:1.8;min-width:0}.staff-card>section{padding-top:12px;border-top:1px solid var(--line)}
 .staff-card dt,.staff-card dd,.staff-card p{white-space:normal;overflow-wrap:anywhere}
 .staff-card dd{margin-inline-start:0}
-.staff-card footer{margin-top:auto;display:flex;flex-wrap:wrap;gap:8px}
+.staff-card footer{margin-top:auto;display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
 .staff-card footer details{min-width:0;max-width:100%}
+.staff-card footer .staff-actions{width:100%}
+.staff-card footer .staff-actions>summary{width:100%;text-align:center;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}
+.staff-card footer .staff-actions-menu{min-width:0}
 .staff-card button,.staff-card summary{white-space:normal;overflow-wrap:anywhere;max-width:100%}
 .staff-card .branch-picker{max-width:100%}
 .customer-contact-card{min-width:0}
 .customer-contact-card h2{overflow-wrap:anywhere;white-space:normal}
-@media(max-width:480px){.staff-card .data-grid{grid-template-columns:1fr}.staff-card footer>button{flex:1 1 100%}}
 
 /* Printer directories use the same complete-text cards in the page and dialog. */
 .printer-directory{margin-block:20px}
