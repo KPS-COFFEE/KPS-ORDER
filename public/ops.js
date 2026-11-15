@@ -127,6 +127,27 @@
     modal(tr('معالجة تنبيه الطباعة','Handle printing alert'),`<form><p>${esc(tr('تحقق من الفرع قبل التأكيد أو إعادة الطباعة. هذا الإجراء لا يغير حالة الطلب.','Check with the branch before confirming or reprinting. This does not change order status.'))}</p><label>${esc(tr('الإجراء','Action'))}<select name="action"><option value="confirmed">${esc(tr('تم التحقق من الطباعة','Paper output verified'))}</option><option value="reprint">${esc(tr('إعادة الطباعة — لم تخرج الورقة','Reprint — paper did not print'))}</option><option value="escalated">${esc(tr('تعذّر الحل — تصعيد للإدارة','Unresolved — escalate to management'))}</option></select></label>${textarea(tr('سبب الإجراء ونتيجة التحقق','Reason and verification result'),'reason','',true)}<label><input type="checkbox" name="paper_checked">${esc(tr('تحققت من خروج الورقة أو عدم خروجها لدى الفرع','I checked whether paper printed at the branch'))}</label>${formEnd(tr('تنفيذ الإجراء','Apply action'))}</form>`,async fd=>{await mutation('/api/printing/jobs/'+encodeURIComponent(id)+'/resolve-alert',{action:fd.get('action'),reason:fd.get('reason'),paper_checked:fd.get('paper_checked')==='on'});closeModal();await refreshOperationalAlerts();});
   }
   function currentAlertScope(){return JSON.stringify([state.user?.id,state.user?.delivery_context?.period,state.user?.delivery_context?.shift_id,!!state.user?.delivery_context?.bootstrap,trialMode]);}
+  let accountingFollowupBusy=false,accountingFollowupStamp=0,accountingFollowupScope='';
+  async function refreshAccountingFollowup(){
+    const identity=JSON.stringify([state.user?.id,state.user?.effective_permissions,state.accountingBrand||state.user?.brand_id]);
+    let host=$('#accounting-followup-alerts');
+    if(!state.user||accountingNotificationsOnly()||!can('accounting_reports')||!['owner','admin'].includes(state.user.role)){
+      if(host)host.remove();accountingFollowupScope='';return;
+    }
+    if(!host){host=document.createElement('section');host.id='accounting-followup-alerts';$('#operational-alerts').after(host);}
+    if(accountingFollowupBusy)return;
+    if(identity===accountingFollowupScope&&Date.now()-accountingFollowupStamp<60000&&host.innerHTML)return;
+    accountingFollowupBusy=true;
+    // Clear a previous user's/brand's financial data before any asynchronous read.
+    if(identity!==accountingFollowupScope)host.innerHTML='';
+    accountingFollowupScope=identity;
+    const current=()=>host.isConnected&&identity===JSON.stringify([state.user?.id,state.user?.effective_permissions,state.accountingBrand||state.user?.brand_id])&&can('accounting_reports');
+    try{
+      await window.KPSAccountingAlerts?.refresh(host,{api:path=>api(path,{brand:state.user.operations_brands?.length?(state.accountingBrand||state.user.brand_id):undefined}),can,user:state.user,tr,esc,isCurrent:current});
+      accountingFollowupStamp=Date.now();
+    }catch(error){if(current())host.innerHTML=`<p class="notice warn" role="status">${esc(tr('تعذر تحديث إجراءات المحاسبة؛ تحقق من السجلات قبل الإقفال.','Accounting actions could not refresh; check records before closure.'))}</p>`;}
+    finally{accountingFollowupBusy=false;}
+  }
   async function refreshOperationalAlerts(){
     if(document.hidden||!navigator.onLine||document.documentElement.hasAttribute('data-work-access-pending'))return;
     const scope=currentAlertScope();
@@ -135,6 +156,7 @@
     let host=$('#operational-alerts');
     if(!host){host=document.createElement('section');host.id='operational-alerts';$('#page-heading').after(host);}
     if(state.user?.delivery_context?.bootstrap){host.innerHTML='';syncAlertChannel('morning-orders',[]);return;}
+    void refreshAccountingFollowup();
     if(!accountingNotificationsOnly()){
       if(state.user&&!alertAudio)void ensureMandatoryAlertSound();
       await refreshAlertPolicy();
@@ -450,7 +472,7 @@
     }
     return data;
   }
-  async function mutation(path, body = {}, button, options = {}) { if (button) button.disabled = true; try { const data = await api(path, { ...options, method: 'POST', body }); setStatus(tr('تم حفظ العملية.', 'Operation saved.')); return data; } finally { if (button) button.disabled = false; } }
+  async function mutation(path, body = {}, button, options = {}) { if (button) button.disabled = true; try { const data = await api(path, { ...options, method: 'POST', body }); setStatus(tr('تم حفظ العملية.', 'Operation saved.')); if(/^\/api\/(accounting|cash-bags|shared-driver-closures|aggregate-driver-closure|financial-treatments)(\/|$)/.test(path)){accountingFollowupStamp=0;void refreshOperationalAlerts();} return data; } finally { if (button) button.disabled = false; } }
   async function ownerOperationalConfirm(title) {
     if(state.user?.role!=='owner')throw new Error(tr('للمالك فقط.','Owner only.'));
     if(!window.confirm(title+'\n'+tr('تأكيد الحفظ والاعتماد؟ يُسجّل الإجراء باسمك.','Confirm saving and approval? This action is recorded under your name.')))
@@ -3251,6 +3273,14 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
   }
   document.addEventListener('submit',async e=>{if(e.target.id!=='filters-form')return;e.preventDefault();let filters;try{filters=validatedFilters(e.target);}catch(error){let message=e.target.querySelector('.filter-error');if(!message){message=document.createElement('p');message.className='filter-error form-error';message.setAttribute('role','alert');e.target.append(message);}message.textContent=error.message;return;}state.filters=filters;await loadPage();});
   document.addEventListener('click',async e=>{
+    const accountingFocus=e.target.closest('[data-accounting-focus]');
+    if(accountingFocus){
+      if(!can('accounting_reports')||state.loading)return;
+      const brand=state.user.operations_brands?.length?(state.accountingBrand||state.user.brand_id):state.user.brand_id;
+      state.accountingViews??={};const key=[state.user.id,brand,'accounting'].join(':');
+      state.accountingViews[key]={...(state.accountingViews[key]||{}),tab:'settlements',managerCardOffset:0,managerCardFocus:accountingFocus.dataset.accountingFocus,managerCardOpenIds:[accountingFocus.dataset.accountingFocus]};
+      state.page='accounting';await loadPage();return;
+    }
     const page=e.target.closest('[data-page]');if(page){if(state.loading){state.pendingPage=page.dataset.page;setStatus(tr('جارٍ فتح الصفحة المختارة بعد اكتمال التحميل الحالي.','Opening the selected page after the current load completes.'));return;}state.page=page.dataset.page;await loadPage();return;}
     const button=e.target.closest('[data-action]');if(!button)return;const a=button.dataset.action,id=button.dataset.id;const permission=actionPermission(button);if(permission&&!can(permission))return;const lock=`${a}:${id||''}`;if(state.busy.has(lock))return;state.busy.add(lock);
     try{

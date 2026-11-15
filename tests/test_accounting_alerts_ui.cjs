@@ -49,3 +49,41 @@ test('accounting-only staff never initialize order sound or poll its timing poli
  vm.createContext(context);vm.runInContext(ops.slice(a,b),context);
  await context.refreshAlertPolicy();await context.ensureMandatoryAlertSound();
 });
+
+test('counted bags retain allocation work and cannot request a second cash collection',()=>{
+ const {closureTasks,renderTasks}=setup();
+ const card={id:'m1',manager_name:'Ali',day:'2026-11-13',financial_ledger_closed:false,pending_drivers:[{id:'s1',driver_name:'Driver',responsible:'accounting',overdue:true,due_at:'2026-11-14T16:00:00+03:00'}],drivers:[]};
+ const bag={id:'b1',manager_shift_ids:['m1'],shift_ids:['s1'],count_id:'n1',received_cash_halalas:0,declared_cash_halalas:0,declared_card_halalas:5500};
+ const tasks=closureTasks([card],[bag]);assert.equal(tasks.length,1);assert.equal(tasks[0].kind,'allocate');assert.equal(tasks[0].received_cash_halalas,0);
+ const html=renderTasks(tasks,{tr,esc,local:true,lang:'en'});
+ assert.match(html,/Bag counted; complete attribution/);assert.match(html,/Recorded receipt.*0.00/);assert.match(html,/Overdue/);assert.match(html,/data-ac-work-card="m1"/);
+ assert.doesNotMatch(html,/Physically receive and count/);
+ assert.equal(closureTasks([{...card,approved_day:{id:'done'}}],[bag]).length,0);
+});
+test('bags cannot link by driver/date alone or by only one side of the shift relationship',()=>{
+ const {closureTasks}=setup();
+ const card={id:'m1',pending_drivers:[{id:'s1',responsible:'accounting'}],drivers:[]};
+ for(const bag of [{id:'wrong-manager',manager_shift_ids:['m2'],shift_ids:['s1'],count_id:'n'}, {id:'wrong-shift',manager_shift_ids:['m1'],shift_ids:['s2'],count_id:'n'}]){
+   const tasks=closureTasks([card],[bag]);assert.equal(tasks[0].kind,'source_review');assert.equal(tasks[0].bag_id,'');
+ }
+});
+test('custody differences and manager handover have explicit owners; shared physical bags do not double count',()=>{
+ const {closureTasks}=setup();const card={id:'m1',drivers:[],pending_drivers:[{id:'s1',responsible:'accounting'},{id:'s2',responsible:'accounting'}]};
+ const bag={id:'b',manager_shift_ids:['m1'],shift_ids:['s1','s2'],ready_to_count:true};
+ assert.equal(closureTasks([card],[bag]).length,1);
+ assert.equal(closureTasks([card],[bag])[0].kind,'bag_count');
+ assert.equal(closureTasks([card],[{...bag,ready_to_count:false}])[0].responsible,'delivery_manager');
+ assert.equal(closureTasks([card],[{...bag,count_id:'n',accounting_custody_difference_halalas:1}])[0].kind,'custody');
+ assert.equal(closureTasks([card],[{...bag,count_id:'n',accounting_custody_difference_halalas:1,custody_review:{financially_complete:true}}])[0].kind,'allocate');
+});
+test('recorded cash never creates a receipt task, but pending balances and independent variance review stay visible',()=>{
+ const {closureTasks}=setup();const row={id:'r',shift_id:'s',cash_recorded:true,cash_received_halalas:1200,balance_approved:false,variance_pending:true};
+ const card={id:'m',drivers:[row],pending_drivers:[]};const tasks=closureTasks([card]);
+ assert.deepEqual(Array.from(tasks,t=>t.kind),['balance','variance']);
+ assert.equal(tasks[0].received_cash_halalas,1200);
+ assert.equal(closureTasks([{...card,drivers:[{...row,period_approval_allowed:true}],ready:true}])[0].kind,'approve');
+});
+test('a counted bag with missing settlement receipt exposes linkage review, never another collection',()=>{
+ const {closureTasks}=setup();const tasks=closureTasks([{id:'m',drivers:[{id:'r',shift_id:'s',balance_approved:true,cash_recorded:false}],pending_drivers:[]}],[{id:'b',manager_shift_ids:['m'],shift_ids:['s'],count_id:'n'}]);
+ assert.equal(tasks[0].kind,'receipt_link');
+});

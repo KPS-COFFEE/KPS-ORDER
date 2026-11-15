@@ -773,3 +773,12 @@ html[data-work-access-pending] dialog:not(#work-access-recovery) { visibility: h
 
 .staff-card .data-grid>div:first-child dd{direction:ltr;text-align:start;unicode-bidi:plaintext;white-space:normal;font-variant-numeric:tabular-nums}
 .staff-card .data-grid>div:has(dt) dd{min-width:0}
+
+/* Accounting work cannot be dismissed while its canonical evidence is pending. */
+.ac-pending-work { border: 2px solid #b7791f; padding: 1rem; margin-block: 1rem; }
+.ac-pending-work > strong { font-size: 1.1rem; }
+.ac-pending-work ul { list-style: none; padding: 0; display: grid; gap: .75rem; }
+.ac-pending-work li { padding: .8rem; border: 1px solid #d6c7ac; border-radius: .6rem; overflow-wrap: anywhere; }
+.ac-pending-work li p { margin-block: .4rem; }
+.ac-pending-work li button { display: block; margin-block-start: .6rem; min-height: 44px; }
+.ac-pending-work .ac-work-overdue { border-inline-start: 5px solid #b42318; background: #fff1f0; color: #7a271a; }

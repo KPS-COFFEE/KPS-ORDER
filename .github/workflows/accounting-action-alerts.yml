@@ -1,0 +1,41 @@
+name: Accounting action notifications acceptance
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - public/assets/accounting*.js
+      - public/ops.js
+      - public/ops.css
+      - public/ops.html
+      - tests/test_accounting_alerts_ui.cjs
+      - tests/test_accounting_shift_hub_browser.py
+      - .github/workflows/accounting-action-alerts.yml
+permissions:
+  contents: read
+jobs:
+  accounting-action-notifications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      TEST_BROWSER: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: node --check public/ops.js && node --check public/assets/accounting-alerts.js && node --check public/assets/accounting.js
+      - run: node --test tests/test_accounting_alerts_ui.cjs tests/test_accounting_workspace_ui.cjs tests/test_accounting_treatment_ui.cjs tests/test_shift_reconciliation_ui.cjs tests/test_accounting_manager_card_state.cjs
+      - run: python -m pytest -q tests/test_accounting_shift_hub_browser.py tests/test_cash_bag_custody_scope_unit.py --junitxml=test-artifacts/accounting-notifications.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: accounting-action-notifications-evidence
+          path: test-artifacts/
