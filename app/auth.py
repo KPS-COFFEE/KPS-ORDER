@@ -106,6 +106,8 @@ def public_user(user: dict, conn=None) -> dict:
     output['employee_sms_email_retired'] = staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn)
     output['owner_session_approved'] = (owner_session_approved(conn, user) if conn is not None
                                          else bool(user.get('_owner_session_approved', False)))
+    from .staff_transfers import allowed as staff_transfer_allowed
+    output['can_staff_transfer'] = staff_transfer_allowed(user)
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     if user.get('_morning_manager_context'):
         output['delivery_context'] = user['_morning_manager_context']
@@ -1808,9 +1810,12 @@ def update_staff_in_tx(conn, identifier, body, user):
         if owner_phone_proven:
             raise db.error(409,'OWNER_PHONE_VERIFICATION_REQUIRED','غيّر جوال المالك عبر مسار التحقق المستقل من الرقم الجديد. / Use the owner mobile verification flow.')
         require_owner_sms_step_up(conn,user)
-        ensure_safe_staff_scope_change(conn,row,[],False)
-    elif row['phone_verified_at'] and phone_changed:
+        if row['role']=='owner':
+            ensure_safe_staff_scope_change(conn,row,[],False)
+    elif row['phone_verified_at'] and phone_changed and not (user['role']=='owner' and row['role']!='owner'):
         raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','رقم موثق يحتاج تحققًا مستقلًا لتغييره.')
+    if phone_changed and user['role']=='owner' and row['role']!='owner':
+        require_owner_step_up(conn,user)
     if phone and (body.phone is not None or email_changed):
         _assert_staff_phone_available(conn,user['brand_id'],normalize_phone(phone),identifier)
     vehicle=_vehicle(body.vehicle) if body.vehicle is not None else row['vehicle']
@@ -1822,6 +1827,7 @@ def update_staff_in_tx(conn, identifier, body, user):
         output=conn.execute('UPDATE users SET job_title=%s WHERE id=%s RETURNING *',
                             (job_title or None,identifier)).fetchone()
     if phone_changed:
+        conn.execute('UPDATE otp_challenges SET expires_at=LEAST(expires_at,now()) WHERE source_user_id=%s AND verified_at IS NULL',(identifier,))
         output=conn.execute('UPDATE users SET phone_verified_at=NULL,phone_sms_verified_at=NULL,phone_whatsapp_verified_at=NULL WHERE id=%s RETURNING *',(identifier,)).fetchone()
     if body.permissions is not None or role_changed:
         output=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
