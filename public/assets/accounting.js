@@ -291,6 +291,19 @@ host.querySelector('#ac-results').innerHTML=`<div class="ac-shift-filter"><label
       host.querySelector('#ac-results').insertAdjacentHTML('beforeend',`<nav class="ac-card-pages" aria-label="${text('صفحات شفتات المحاسبة','Accounting shift pages')}"><button type="button" data-manager-page="previous" ${!managerCardOffset?'disabled':''}>${text('السابق','Previous')}</button><span>${text('صفحة','Page')} ${Math.floor(managerCardOffset/20)+1} · ${text('المعلق أولا ثم الأرشيف','Pending first, then archive')}</span><button type="button" data-manager-page="next" ${!result.has_more?'disabled':''}>${text('التالي','Next')}</button></nav>`);
       host.querySelectorAll('[data-manager-page]').forEach(button=>button.onclick=async()=>{managerCardFocus='';managerCardOffset=Math.max(0,managerCardOffset+(button.dataset.managerPage==='next'?20:-20));await loadManagerCards();host.querySelector('#ac-results').scrollIntoView({block:'start'});});
     }
+    if(window.KPSAccountingAlerts){
+      const tasks=window.KPSAccountingAlerts.closureTasks(cards,host.__accountingBags||[]);
+      host.querySelector('#ac-results').insertAdjacentHTML('afterbegin',window.KPSAccountingAlerts.renderTasks(tasks,{tr,esc,money,lang,local:true}));
+      host.querySelectorAll('[data-ac-work-card]').forEach(button=>button.onclick=()=>{
+        const card=[...host.querySelectorAll('[data-manager-card]')].find(el=>el.dataset.managerCard===button.dataset.acWorkCard);
+        if(!card)return;
+        card.hidden=false;card.open=true;managerCardOpenIds.add(card.dataset.managerCard);saveManagerCardView();
+        // Only open evidence; never trigger a money/approval button implicitly.
+        const target=[...card.querySelectorAll('[data-pending-driver],[data-driver-row]')].find(el=>
+          el.dataset.pendingDriver===button.dataset.workDriver||el.dataset.driverRow===button.dataset.workReport)||card;
+        target.closest('details')?.setAttribute('open','');target.scrollIntoView({block:'center'});
+      });
+    }
     bindSettlementActions(rows);
     bindManagerBagActions(cards);
     host.querySelectorAll('[data-manager-day-split]').forEach(button=>button.onclick=()=>guarded(async()=>{
@@ -353,6 +366,7 @@ host.querySelector('#ac-results').innerHTML=`<div class="ac-shift-filter"><label
     let next;
     if(card.approved_day)next=tr('المراجعة معتمدة؛ تابع المبالغ المستحقة ومطابقة البنك إن وجدت.','Review approved; follow outstanding amounts and bank matching where applicable.');
     else if(card.operationally_closed===false)next=tr('مدير التوصيل يستكمل إجراءات نهاية شفته وشفتات السائقين؛ لا تعتبر المناوبة منتهية تلقائيا.','The delivery manager completes end-of-duty procedures for the manager and drivers; the duty is not ended automatically.');
+    else if((host.__accountingBags||[]).some(b=>(b.manager_shift_ids||[]).includes(card.id)&&b.count_id)&&(card.financial_ledger_closed===false||card.pending_drivers?.some(driver=>driver.responsible==='accounting')))next=tr('يوجد جرد مسجل؛ استكمل الإسناد والمطابقة من بطاقة السائق. لا تعِد سحب الكيس أو تسجيل الكاش.','A bag count is recorded; complete attribution and reconciliation from the driver card. Do not collect the bag or record cash twice.');
     else if(card.financial_ledger_closed===false||card.pending_drivers?.some(driver=>driver.responsible==='accounting'))next=tr('من بطاقة السائق أدناه: اسحب الكيس واجرده، ثم استكمل الإسناد والمطابقة.','From the driver card below: collect and count the bag, then complete accounting attribution.');
     else if(card.pending_drivers?.length)next=tr('مدير التوصيل يستكمل تقفيلات السائقين الموضحة أدناه.','The delivery manager completes the driver closures listed below.');
     else if(card.cash_completed<card.total)next=tr('وثق النقد المستلم فعليا لكل سائق؛ اترك غير المستلم بانتظار الاستلام.','Record actually received cash per driver; leave unreceived cash pending.');

@@ -7,8 +7,8 @@ ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(os.getenv('TEST_BROWSER') != '1', reason='Explicit browser acceptance')
 
 
-@pytest.mark.parametrize('width', [390, 1440])
-def test_manager_period_cards_bind_bags_and_actions_to_exact_shift(width):
+@pytest.mark.parametrize('width,lang', [(390,'ar'),(1440,'ar'),(390,'en'),(1440,'en')])
+def test_manager_period_cards_bind_bags_and_actions_to_exact_shift(width,lang):
     from playwright.sync_api import sync_playwright, expect
     with sync_playwright() as runtime:
         browser = runtime.chromium.launch(headless=True, executable_path=os.getenv('CHROMIUM_EXECUTABLE') or None, args=['--no-sandbox'])
@@ -17,21 +17,32 @@ def test_manager_period_cards_bind_bags_and_actions_to_exact_shift(width):
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.set_content('<html lang="ar" dir="rtl"><body><h1></h1><main id="content"></main><dialog><div id="modal-body"></div></dialog></body></html>')
         page.add_style_tag(content='*{box-sizing:border-box}body{margin:0;padding:20px;background:#faf8f5;font-family:Arial}main{max-width:1280px;margin:auto}button,input,textarea,select{font:inherit;padding:10px;border:1px solid #ddd;border-radius:8px}button{background:#a64116;color:#fff;cursor:pointer}dialog{width:min(600px,calc(100vw - 24px))}.ac-case-form{display:grid;gap:12px}.ac-case-form label{display:grid;gap:6px}')
+        page.add_style_tag(path=str(ROOT/'public/ops.css'))
         page.add_style_tag(path=str(ROOT/'public/assets/accounting.css'))
+        page.add_script_tag(path=str(ROOT/'public/assets/accounting-alerts.js'))
         page.add_script_tag(path=str(ROOT/'public/assets/accounting.js'))
-        page.evaluate('''async()=>{
+        page.evaluate('''async lang=>{
+          document.documentElement.lang=lang;document.documentElement.dir=lang==='en'?'ltr':'rtl';
           window.writes=[];window.allocations=[];window.counted=false;
           const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
           const card=(id,period,shift)=>({id,manager_name:'مدير اختبار',day:'2026-11-01',period,shift_no:id,opened_at:'2026-11-01T16:00:00+03:00',closed_at:'2026-11-02T04:00:00+03:00',branch_names:['فرع اختبار'],financial_ledger_closed:false,drivers:[],pending_drivers:[{id:shift,driver_name:'نفس السائق',responsible:'accounting',reason:'driver_accounting_pending'}],total:0,expected_driver_count:1,review_completed:0,completion_percent:0,balance_completed:0,cash_completed:0,review_needed_count:0,remaining_count:1,ready:false});
-          await KPSAccounting.open({lang:'ar',user:{id:'accountant',role:'admin'},tr:(ar,en)=>ar,esc,money:n=>(n/100).toFixed(2),cents:n=>Math.round(Number(n)*100),heading:t=>document.querySelector('h1').textContent=t,openSharedDriverClosure:async id=>window.allocations.push(id),closeModal:()=>document.querySelector('dialog').close(),modal:(title,html,submit)=>{const d=document.querySelector('dialog');d.querySelector('#modal-body').innerHTML=html;d.showModal();d.querySelector('form').onsubmit=async e=>{e.preventDefault();await submit(new FormData(e.target));};},mutation:async(path,body)=>{window.writes.push({path,body});window.counted=true;},api:async path=>{
+          await KPSAccounting.open({lang,user:{id:'accountant',role:'admin'},tr:(ar,en)=>lang==='en'?en:ar,esc,money:n=>(n/100).toFixed(2),cents:n=>Math.round(Number(n)*100),heading:t=>document.querySelector('h1').textContent=t,openSharedDriverClosure:async id=>window.allocations.push(id),closeModal:()=>document.querySelector('dialog').close(),modal:(title,html,submit)=>{const d=document.querySelector('dialog');d.querySelector('#modal-body').innerHTML=html;d.showModal();d.querySelector('form').onsubmit=async e=>{e.preventDefault();await submit(new FormData(e.target));};},mutation:async(path,body)=>{window.writes.push({path,body});window.counted=true;},api:async path=>{
             if(path.endsWith('/options'))return {today:'2026-11-01',can_report:true,can_review:true,branches:[],people:[],products:[],categories:{},states:{},responsibilities:{}};
             if(path==='/api/cash-bags')return {bags:[{id:'evening-bag',anchor_shift_id:'evening-driver',shift_ids:['evening-driver'],manager_shift_ids:['evening-manager'],driver_name:'نفس السائق',reference:'EVENING-ONLY',destination:'manager_vault',declared_cash_halalas:15000,ready_to_count:true,count_id:window.counted?'actual-count':null,received_cash_halalas:window.counted?15000:null,accounting_custody_difference_halalas:0,accounting_custody_card_difference_halalas:window.counted?100:0}]};
             if(path.includes('/manager-cards'))return {cards:[card('morning-manager','morning','morning-driver'),card('evening-manager','evening','evening-driver')]};
             throw Error(path);
           }});
-        }''')
+        }''',lang)
         morning = page.locator('[data-manager-card="morning-manager"]')
         evening = page.locator('[data-manager-card="evening-manager"]')
+        queue=page.locator('.ac-pending-work')
+        expect(queue).to_be_visible()
+        expect(queue.locator('[data-ac-work-card="evening-manager"]')).to_have_count(1)
+        queue.locator('[data-ac-work-card="evening-manager"]').click()
+        expect(evening).to_have_attribute('open','')
+        expect(evening.locator('[data-pending-driver="evening-driver"]')).to_be_visible()
+        assert page.evaluate('window.writes') == []
+        evening.locator('> summary').click()
         assert not morning.get_attribute('open')
         assert page.locator('.ac-workspace-help').get_attribute('open') is None
         page.locator('[data-manager-search]').fill('evening-manager')
@@ -53,7 +64,7 @@ def test_manager_period_cards_bind_bags_and_actions_to_exact_shift(width):
         assert page.evaluate('window.writes') == [], 'Opening shift cards must not receive bags or approve shifts'
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         output=ROOT/'test-artifacts';output.mkdir(exist_ok=True)
-        page.screenshot(path=str(output/f'accounting-shift-hub-{width}.png'),full_page=True)
+        page.screenshot(path=str(output/f'accounting-shift-hub-{width}-{lang}.png'),full_page=True)
         evening.locator('[data-manager-bag-count]').click()
         assert page.locator('dialog [name=cash]').input_value() == ''
         page.locator('dialog [name=cash]').fill('150')
@@ -65,6 +76,8 @@ def test_manager_period_cards_bind_bags_and_actions_to_exact_shift(width):
         expect(page.locator('[data-manager-card="evening-manager"]')).to_have_attribute('open','')
         expect(page.locator('[data-manager-card="evening-manager"] [data-manager-bag-count]')).to_have_count(0)
         expect(page.locator('[data-manager-card="evening-manager"] [data-manager-bag-custody]')).to_be_visible()
+        expect(queue).to_contain_text('Document bag custody difference' if lang=='en' else 'معالجة فرق عهدة الكيس')
+        expect(queue).not_to_contain_text('Physically receive and count bag' if lang=='en' else 'استلام الكيس وجرده فعليًا')
         assert page.evaluate('window.writes.length') == 1
         assert page.evaluate('window.writes[0].path') == '/api/cash-bags/evening-bag/count'
         expect(page.locator('[data-manager-card="evening-manager"] [data-day-approve]')).to_be_disabled()

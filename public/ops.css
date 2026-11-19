@@ -773,3 +773,61 @@ html[data-work-access-pending] dialog:not(#work-access-recovery) { visibility: h
 
 .staff-card .data-grid>div:first-child dd{direction:ltr;text-align:start;unicode-bidi:plaintext;white-space:normal;font-variant-numeric:tabular-nums}
 .staff-card .data-grid>div:has(dt) dd{min-width:0}
+
+/* Accounting work cannot be dismissed while its canonical evidence is pending. */
+.ac-pending-work { border: 2px solid #b7791f; padding: 1rem; margin-block: 1rem; }
+.ac-pending-work > strong { font-size: 1.1rem; }
+.ac-pending-work ul { list-style: none; padding: 0; display: grid; gap: .75rem; }
+.ac-pending-work li { padding: .8rem; border: 1px solid #d6c7ac; border-radius: .6rem; overflow-wrap: anywhere; }
+.ac-pending-work li p { margin-block: .4rem; }
+.ac-pending-work li button { display: block; margin-block-start: .6rem; min-height: 44px; }
+.ac-pending-work .ac-work-overdue { border-inline-start: 5px solid #b42318; background: #fff1f0; color: #7a271a; }
+
+/* Clear, responsive accounting action cards. Keep status and evidence readable. */
+.ac-pending-work.notice {
+  background:var(--surface,#fff);color:var(--ink,#1d2826);
+  border:1px solid var(--line,#dde4df);border-inline-start:5px solid #b7791f;
+  border-radius:16px;padding:clamp(14px,2vw,24px);
+  box-shadow:0 3px 14px #152b2110;
+}
+.ac-pending-work > strong {display:block;font-size:1.15rem;line-height:1.7}
+.ac-pending-work > p {color:var(--muted,#5a6863);max-width:85ch}
+.ac-pending-work > ul {
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch;
+  gap:14px;max-height:65vh;overflow:auto;overscroll-behavior:contain;
+  scrollbar-gutter:stable;padding:4px;margin-block:16px 0;
+}
+.ac-pending-work > ul > li {
+  display:flex;flex-direction:column;gap:8px;min-width:0;
+  background:var(--surface,#fff);border:1px solid var(--line,#dde4df);
+  border-radius:12px;padding:16px;line-height:1.8;
+}
+.ac-pending-work li > strong {
+  display:block;padding-block-end:10px;border-block-end:1px solid var(--line,#dde4df);
+  font-size:1rem;white-space:normal;overflow-wrap:anywhere;
+}
+.ac-pending-work li > p {margin:0;white-space:normal;overflow-wrap:anywhere}
+.ac-pending-work li > p + p {
+  background:var(--bg,#f7f8f6);padding:10px;border-radius:8px;font-size:.94rem;
+}
+.ac-pending-work li bdi {display:inline-block;font-weight:700;font-variant-numeric:tabular-nums}
+.ac-pending-work li > small {display:block;color:var(--muted,#5a6863)}
+.ac-pending-work li > button {
+  align-self:stretch;margin-block-start:auto;padding:10px 16px;min-height:46px;
+  white-space:normal;line-height:1.6;border-radius:9px;
+}
+.ac-pending-work li > button:focus-visible {outline:3px solid #165d9e;outline-offset:3px}
+.ac-pending-work li.ac-work-overdue {
+  border-inline-start:5px solid #b42318;background:#fff8f7;color:#7a271a;
+}
+.ac-pending-work li.ac-work-overdue > small {color:#9b1c1c;font-weight:700}
+@media(max-width:720px) {
+  .ac-pending-work > ul {grid-template-columns:minmax(0,1fr);max-height:70vh}
+  .ac-pending-work > ul > li {padding:13px}
+  .ac-pending-work.notice {margin-inline:0}
+}
+@media print {
+  .ac-pending-work > ul {max-height:none;overflow:visible;display:block}
+  .ac-pending-work li {break-inside:avoid;margin-block:10px}
+  .ac-pending-work li > button {display:none}
+}
