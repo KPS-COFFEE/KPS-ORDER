@@ -168,3 +168,85 @@ def test_real_browser_media_policy_allows_driver_capture_without_js_override(liv
         finally:
             for context in contexts:context.close()
             browser.close()
+
+
+
+@pytest.mark.parametrize('language', ['ar', 'en'])
+@pytest.mark.parametrize('width', [390, 1280])
+def test_driver_issue_language_reasons_conflict_and_followup(chromium_browser, tmp_path, language, width):
+    """Real delivery issue controls retain their codes and permissions in both languages."""
+    from pathlib import Path
+    from playwright.sync_api import expect
+    root = Path(__file__).resolve().parents[1]
+    page = chromium_browser.new_page(viewport={'width': width, 'height': 900})
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    reasons = {
+        'customer_cancel': 'طلب العميل الإلغاء', 'customer_change': 'طلب العميل التعديل',
+        'no_answer': 'العميل لا يرد', 'late_complaint': 'شكوى تأخير', 'wrong_address': 'مشكلة في العنوان',
+        'damaged': 'مشكلة في الطلب', 'customer_not_present': 'العميل غير موجود',
+        'amount_short': 'المبلغ ناقص', 'payment_failed': 'تعذر الدفع',
+        'missing_or_wrong_order': 'نقص أو خطأ بالطلب', 'other': 'مشكلة أخرى',
+        'branch_unavailable': 'تعذر تنفيذ الفرع', 'duplicate': 'طلب مكرر',
+    }
+    try:
+        styles = '\n'.join((root / p).read_text() for p in (
+            'public/ops.css', 'public/assets/order-amendments.css', 'public/assets/order-interventions.css'))
+        page.set_content('<html lang="' + language + '" dir="' + ('ltr' if language == 'en' else 'rtl') + '"><head><style>' + styles + '</style></head><body></body></html>')
+        page.add_script_tag(content=(root / 'public/assets/order-interventions.js').read_text())
+        page.evaluate("""async reasons=>{
+            window.qaData={enabled:true,version:7,requests:[],available_create_kinds:['problem'],reasons,pending_roles:{delivery_manager:'مدير التوصيل'}};
+            window.qaWrites=[];window.qaConflict=true;
+            window.openIssue=()=>KPSInterventions.open({oid:'TEST-issue',user:{id:'TEST-driver',role:'driver'},
+                api:async()=>structuredClone(qaData),mutation:async(path,body)=>{
+                    if(qaConflict)throw new Error('تغير الطلب؛ حدّث التفاصيل.');
+                    qaWrites.push({path,body});return {status:'saved'};
+                }});
+            await openIssue();
+        }""", reasons)
+        dialog = page.locator('.intervention-dialog')
+        expect(dialog).to_have_attribute('dir', 'ltr' if language == 'en' else 'rtl')
+        expect(dialog.locator('[name=reason_code] option')).to_have_count(13)
+        assert dialog.locator('[name=kind] option').evaluate_all('(els)=>els.map(e=>e.value)') == ['problem']
+        assert dialog.locator('[name=physical_resolution], [name=escalate], [name=evidence_image]').count() == 0
+        if language == 'en':
+            assert not any('\u0600' <= c <= '\u06ff' for c in dialog.inner_text())
+            expect(dialog.locator('[name=reason_code] option[value=no_answer]')).to_have_text('Customer not answering')
+        else:
+            expect(dialog.locator('[name=reason_code] option[value=no_answer]')).to_have_text('العميل لا يرد')
+        dialog.locator('[name=reason_code]').select_option('no_answer')
+        dialog.locator('[name=note]').fill('ملاحظة أصلية من السائق')
+        submit = dialog.locator('button').filter(has_text='Submit to responsible employee' if language == 'en' else 'رفع الطلب للمسؤول')
+        submit.click()
+        expect(dialog.locator('[role=alert]')).to_have_text('The order has changed. Refresh its details.' if language == 'en' else 'تغير الطلب؛ حدّث التفاصيل.')
+        expect(dialog.locator('[name=reason_code]')).to_have_value('no_answer')
+        expect(dialog.locator('[name=note]')).to_have_value('ملاحظة أصلية من السائق')
+        assert page.evaluate('qaWrites.length') == 0
+        page.evaluate('qaConflict=false')
+        submit.click()
+        page.wait_for_function('qaWrites.length===1')
+        write = page.evaluate('qaWrites[0]')
+        assert write['body'] == {
+            'version': 7, 'kind': 'problem', 'reason_code': 'no_answer', 'contact_result': 'no_answer',
+            'customer_request_id': None, 'evidence_attachment_id': None, 'note': 'ملاحظة أصلية من السائق',
+        }
+        assert write['path'] == '/api/order-interventions/orders/TEST-issue'
+        dialog.locator('[data-close]').click()
+        page.evaluate("""async()=>{
+            qaData.available_create_kinds=[];
+            qaData.requests=[{id:'TEST-request',requested_by_name:'Driver',created_at:'2026-11-19T12:00:00Z',
+                details:{kind:'problem',reason_code:'no_answer',note:'ملاحظة السائق <script>'},
+                workflow:{status:'requested',original_reason_code:'no_answer',reason_code:'no_answer',available_actions:[],current_responsible_role:'delivery_manager',next_action_label:'معالجة البلاغ وتوثيق الإجراء المتخذ',history:[]}}];
+            await openIssue();
+        }""")
+        dialog = page.locator('.intervention-dialog')
+        expect(dialog.locator('.intervention-next')).to_contain_text('Currently responsible: Delivery manager' if language == 'en' else 'المسؤول الحالي: مدير التوصيل')
+        expect(dialog.locator('.intervention-next')).to_contain_text('Resolve the reported problem and document the action taken' if language == 'en' else 'معالجة البلاغ وتوثيق الإجراء المتخذ')
+        expect(dialog.locator('.intervention-note')).to_have_text('ملاحظة السائق <script>')
+        assert dialog.locator('script, form').count() == 0
+        assert dialog.evaluate('(el)=>el.scrollWidth <= el.clientWidth+1')
+        assert page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth')
+        page.screenshot(path=str(tmp_path / ('driver-issue-' + language + '-' + str(width) + '.png')))
+        assert not errors
+    finally:
+        page.close()
