@@ -8,7 +8,7 @@ const base=()=>({enabled:true,printed:true,high_authority:true,version:7,
  customer_requests:[{id:'customer-proof',created_at:'2026-10-29T12:00:00Z',details:{note:'طلب العميل الموثق'}}],attachments:[{id:'image-proof',created_at:'2026-10-29T12:00:00Z'}],return_targets:[{id:'manager-1',display_name:'مدير التوصيل الأول'}],
  requests:[{id:'request/1',created_at:'2026-10-28T12:00:00Z',requested_by_name:'رافع المعاملة',details:{kind:'cancel',reason_code:'late_complaint',pending_role:'owner_or_cancel_delegate'},decision:null,
  workflow:{revision:0,status:'requested',original_reason_code:'late_complaint',reason_code:'late_complaint',current_responsible_role:'owner_or_cancel_delegate',current_responsible_name:null,next_action_label:'بانتظار اعتمادك أو إرجاعها للاستكمال',preferred_return_target_id:'manager-1',available_actions:['approve','reject','return'],history:[]}}]});
-function harness(initial,role='admin',{uploadEvidence}={}){
+function harness(initial,role='admin',{uploadEvidence,lang='ar'}={}){
  let data=structuredClone(initial),writes=[],attempts=[],reads=[],failure=null,afterWrite=null,dialog;
  class Element{
   constructor(tag){this.tag=tag;this.children=[];this.elements={};this.isConnected=true;this.alert={textContent:''};this.buttons=[];}
@@ -22,9 +22,9 @@ function harness(initial,role='admin',{uploadEvidence}={}){
   querySelector(q){if(q==='[data-close]')return {};if(q==='.amend-body')return this.body||(this.body=new Element('body'));if(q==='[role=alert]')return this.alert;return null;}
   querySelectorAll(q){return q==='button'?this.buttons:[];}
  }
- const ctx={window:{},document:{createElement:tag=>new Element(tag),body:{append:d=>dialog=d}},FormData:class{constructor(form){this.values=new Map(Object.entries(form.elements).map(([key,field])=>[key,field.files?field.files[0]||null:field.value]));}get(key){return this.values.get(key)??null;}}};vm.createContext(ctx);vm.runInContext(widget,ctx);
+ const ctx={window:{},document:{documentElement:{lang},createElement:tag=>new Element(tag),body:{append:d=>dialog=d}},FormData:class{constructor(form){this.values=new Map(Object.entries(form.elements).map(([key,field])=>[key,field.files?field.files[0]||null:field.value]));}get(key){return this.values.get(key)??null;}}};vm.createContext(ctx);vm.runInContext(widget,ctx);
  const all=root=>[root,...root.children.flatMap(all)];
- return {writes,attempts,reads,get data(){return data;},set data(value){data=structuredClone(value);},set failure(value){failure=value;},set afterWrite(value){afterWrite=value;},get text(){return all(dialog.body).map(n=>n.html||'').join('');},get alert(){return dialog.body.alert.textContent;},forms:()=>all(dialog.body).filter(n=>n.tag==='form'),
+ return {writes,attempts,reads,get dialog(){return dialog;},set language(value){ctx.document.documentElement.lang=value;},get data(){return data;},set data(value){data=structuredClone(value);},set failure(value){failure=value;},set afterWrite(value){afterWrite=value;},get text(){return all(dialog.body).map(n=>n.html||'').join('');},get alert(){return dialog.body.alert.textContent;},forms:()=>all(dialog.body).filter(n=>n.tag==='form'),
   open:()=>ctx.window.KPSInterventions.open({oid:'order/1',user:{id:role==='admin'?'delegate':'manager-1',role},uploadEvidence,api:async path=>{reads.push(path);return structuredClone(data);},mutation:async(path,body)=>{attempts.push({path,body});if(failure)throw failure;writes.push({path,body});if(afterWrite)afterWrite(path,body);return {status:'returned'};}}),
   submit:(form,action)=>form.onsubmit({target:form,preventDefault(){},submitter:action?{value:action}:undefined})};
 }
@@ -165,3 +165,38 @@ for(const mode of ['create','resubmit']){
   assert.equal(h.writes.length,0);assert.equal(h.forms()[0],form);assert.match(h.alert,/سبب تعذر الإرفاق/);
  });
 }
+
+
+const deliveryReasons={customer_cancel:'Customer requested cancellation',customer_change:'Customer requested an amendment',no_answer:'Customer not answering',late_complaint:'Delay complaint',wrong_address:'Address problem',damaged:'Order problem',customer_not_present:'Customer not present',amount_short:'Insufficient payment',payment_failed:'Payment failed',missing_or_wrong_order:'Missing or incorrect items',other:'Other problem',branch_unavailable:'Branch unable to fulfil order',duplicate:'Duplicate order'};
+test('English driver gets every structured delivery reason, LTR dialog and unchanged submission codes',async()=>{
+ const d=base();d.requests=[];d.available_create_kinds=['problem'];d.reasons=Object.fromEntries(Object.keys(deliveryReasons).map(k=>[k,'سبب عربي']));
+ const h=harness(d,'driver',{lang:'en'});await h.open();assert.equal(h.dialog.dir,'ltr');assert.equal(h.dialog.lang,'en');assert.match(h.dialog.html,/Order issue resolution/);assert.match(h.dialog.html,/aria-label="Close"/);
+ const f=h.forms()[0];assert.match(f.html,/Submit to responsible employee/);assert.match(f.html,/Required action details/);assert.doesNotMatch(h.text,/[\u0600-\u06ff]/);assert.doesNotMatch(f.html,/physical_resolution|customer_request_id|evidence_image|name="escalate"/);
+ for(const [code,label] of Object.entries(deliveryReasons)){
+  assert.ok(f.html.includes('value="'+code+'">'+label+'</option>'));
+  f.elements.reason_code.value=code;f.elements.note.value='ملاحظة السائق <script>do not alter</script>';
+  await h.submit(f);const w=h.writes.at(-1);assert.equal(w.body.reason_code,code);assert.equal(w.body.kind,'problem');assert.equal(w.body.contact_result,code==='no_answer'?'no_answer':'not_contacted');assert.equal(w.body.note,f.elements.note.value);assert.equal(w.body.version,7);
+ }
+});
+test('English tracking localizes system state, roles, history and next action but preserves names and notes',async()=>{
+ for(const [status,label] of Object.entries({requested:'Awaiting review',returned:'Returned to the delivery manager for completion',resubmitted:'Resubmitted for review',approved:'Approved',rejected:'Rejected',resolved:'Resolved'})){
+  const d=base(),r=d.requests[0];d.available_create_kinds=[];r.requested_by_name='اسم السائق <script>';r.details.note='مشكلة العميل بالعربي';r.workflow={...r.workflow,status,reason_code:'no_answer',current_responsible_role:'delivery_manager',next_action_label:'معالجة البلاغ وتوثيق الإجراء المتخذ',available_actions:[],history:[{id:'history',event_type:'intervention.returned',reason_code:'no_answer',actor_name:'اسم المدير',note:'ملاحظة أصلية <img>'}]};
+  const h=harness(d,'driver',{lang:'en'});await h.open();assert.ok(h.text.includes(label));assert.match(h.text,/Currently responsible: Delivery manager/);assert.match(h.text,/Resolve the reported problem and document the action taken/);assert.match(h.text,/Customer not answering/);assert.match(h.text,/Returned for correction and completion/);assert.match(h.text,/اسم السائق &lt;script&gt;/);assert.match(h.text,/مشكلة العميل بالعربي/);assert.match(h.text,/ملاحظة أصلية &lt;img&gt;/);
+ }
+});
+test('Arabic defaults and changing the page language before reopening update every system label',async()=>{
+ const d=base();d.requests=[];const h=harness(d,'driver');await h.open();assert.equal(h.dialog.dir,'rtl');assert.match(h.dialog.html,/معالجة الطلب/);assert.match(h.text,/العميل لا يرد/);
+ h.language='en';await h.open();assert.equal(h.dialog.dir,'ltr');assert.match(h.text,/Customer not answering/);assert.doesNotMatch(h.text,/[\u0600-\u06ff]/);
+ h.language='ar';await h.open();assert.match(h.text,/العميل لا يرد/);
+});
+test('English error and conflict messages retain the complete driver draft and do not create a task transition',async()=>{
+ const d=base();d.requests=[];const h=harness(d,'driver',{lang:'en'});await h.open();const f=h.forms()[0];f.elements.reason_code.value='no_answer';f.elements.note.value='Original driver detail';h.failure=new Error('تغير الطلب؛ حدّث التفاصيل.');await h.submit(f);assert.equal(h.alert,'The order has changed. Refresh its details.');assert.equal(f.elements.reason_code.value,'no_answer');assert.equal(f.elements.note.value,'Original driver detail');assert.equal(h.writes.length,0);assert.equal(h.attempts[0].body.status,undefined);
+ h.failure=null;await h.submit(f);assert.equal(h.writes.length,1);
+});
+test('English manager review translates contact, evidence, physical disposition and actions without granting permissions',async()=>{
+ const h=harness(base(),'admin',{lang:'en'});await h.open();assert.match(h.text,/Contact outcome/);assert.match(h.text,/Contacted and agreed/);assert.match(h.text,/Physically returned to branch/);assert.match(h.text,/Approve and execute cancellation/);assert.match(h.text,/Return request for completion/);assert.match(h.text,/Choose delivery manager/);assert.equal(h.writes.length,0);
+ const d=base();d.requests[0].workflow.available_actions=[];const readOnly=harness(d,'admin',{lang:'en'});await readOnly.open();assert.equal(readOnly.forms().length,0);
+});
+test('English keeps a decision note verbatim even if it matches a known system instruction',async()=>{
+ const d=base(),r=d.requests[0];r.decision={status:'resolved',note:'اكتملت المعالجة التشغيلية'};r.workflow={...r.workflow,status:'resolved',available_actions:[],next_action_label:r.decision.note};const h=harness(d,'driver',{lang:'en'});await h.open();assert.match(h.text,/اكتملت المعالجة التشغيلية/);
+});
