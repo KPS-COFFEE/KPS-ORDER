@@ -73,7 +73,7 @@ def test_mobile_car_checkout_and_cashier_without_mandatory_plate(live_app,chromi
         headers=_owner_login(owner,live_app,_staff())
         _configure_branches(owner,live_app,headers)
         page.goto('/')
-        expect(page.locator('.product-card:not([data-product-id="kps-london-cake-combo"])')).to_have_count(31)
+        expect(page.locator('.product-card:not([data-product-id="kps-london-cake-combo"]):not([data-product-id="kps-sahlab"]):not([data-product-id="kps-hot-chocolate"])')).to_have_count(31)
         if lang=='en':page.locator('#customer-language').click()
         page.locator('#branch-select').select_option('kps-branch-1')
         page.locator('input[name=service][value=car]').check()

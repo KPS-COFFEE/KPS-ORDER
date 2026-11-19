@@ -11,13 +11,13 @@ from app import catalog, db
 def test_menu_collapses_only_equivalent_placements_and_preserves_sources(client):
     response = client.get('/api/catalog?brand_id=kps&branch_id=kps-branch-2').json()
     products = {p['id']: p for p in response['products']}
-    assert len(set(products) - {'kps-london-cake-combo'}) == 31
+    assert len(set(products) - {'kps-london-cake-combo', 'kps-sahlab', 'kps-hot-chocolate'}) == 31
     for source, target in catalog.KPS_PRODUCT_ALIASES.items():
         assert source not in products and target in products
         assert response['legacy_item_mappings'][source]['product_id'] == target
         assert response['legacy_item_mappings'][source]['options'] == {}
     with db.tx() as conn:
-        assert conn.execute("SELECT count(*) n FROM products WHERE brand_id='kps' AND id<>'kps-london-cake-combo'").fetchone()['n'] == 35
+        assert conn.execute("SELECT count(*) n FROM products WHERE brand_id='kps' AND id NOT IN ('kps-london-cake-combo','kps-sahlab','kps-hot-chocolate')").fetchone()['n'] == 35
         # A branch stock difference must stay visible and must never be bypassed.
         conn.execute("UPDATE branches SET settings=settings||%s WHERE id='kps-branch-2'",
                      (db.json({'product_availability': {'kps-02': False}}),))

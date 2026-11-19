@@ -51,7 +51,7 @@ function load(saved=null,blocked=false){
     line('  const locale='),line('  const currency ='),line('  const money ='),line('  const number ='),
     line('  const node ='),line('  const text ='),line('  const safeImage ='),
     source.slice(source.indexOf('  const displayImage ='),source.indexOf('  const city =')),
-    line('  const restricted ='),line('  const isMug ='),
+    line('  const restricted ='),line('  const hafarOnly ='),line('  const isMug ='),
     // Include the shipped presentation helpers used by cards and category tabs.
     source.slice(source.indexOf('  function menuSection(product)'),source.indexOf('  function renderCart()'))].join('\n');
   vm.runInContext(prefix+extra+`
