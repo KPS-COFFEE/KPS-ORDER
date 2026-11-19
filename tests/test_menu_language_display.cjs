@@ -158,3 +158,17 @@ test('shipped menu rendering keeps source identities and images while translatin
   }
   assert.equal(JSON.stringify(state.products),before);
 });
+
+test('winter drinks is the third visible tab after all menu and new arrivals in both languages',()=>{
+  const {p,element,state}=load();
+  state.products.push({id:'kps-sahlab',brand_id:'kps',name:'السحلب',name_en:'Sahlab',category:'❄️ المشروبات الشتوية',category_en:'Beverages',price_halalas:650,option_groups:[]});
+  const before=JSON.stringify(state.products);
+  for(const lang of ['ar','en']){
+    p.lang(lang);p.renderCategories();
+    const labels=element('categories').children.map(tab=>tab.textContent);
+    assert.equal(labels[0],lang==='ar'?'كل المنيو':'Full menu');
+    assert.equal(labels[2],lang==='ar'?'❄️ المشروبات الشتوية':'❄️ Winter Drinks');
+    assert.equal(labels.filter(s=>s.includes(lang==='ar'?'الشتوية':'Winter')).length,1);
+  }
+  assert.equal(JSON.stringify(state.products),before);
+});
