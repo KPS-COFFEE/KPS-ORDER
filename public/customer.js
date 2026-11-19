@@ -1254,6 +1254,7 @@
   }
   const enbishanSections=['ورق العنب والملفوف','المحاشي','المقليات','عنبيشن','البوكسات','المسخن','الفتة والموهيتو','النودلز','المخبوزات','المشروبات'];
   function menuSectionLabel(section) {
+    if(requestedBrandId==='kps'&&section==='❄️ المشروبات الشتوية')return language==='en'?'❄️ Winter Drinks':'❄️ المشروبات الشتوية';
     const english={'عنبيشن':'Enbishan','ورق العنب والملفوف':'Grape leaves & cabbage','البوكسات':'Boxes','المحاشي':'Stuffed vegetables','المقليات':'Fried bites','النودلز':'Noodles','المسخن':'Musakhan','الفتة والموهيتو':'Fattah & Mojito','المخبوزات':'Bakery','المشروبات':'Drinks'};
     return requestedBrandId==='enbishan'?entryText(section,english[section]||section):sourceText(state.products.find(p=>p.category===section),'category');
   }
@@ -1314,7 +1315,7 @@
   function menuSizeLabel(product,size) {
     return [sourceText(size),menuSizeContents(product,size)].filter(Boolean).join(' — ');
   }
-  function renderCategories() { const tabs = $('categories'); tabs.replaceChildren(); const categories = [...new Set(state.products.map((p) => menuSection(p)).filter(Boolean))];if(requestedBrandId==='enbishan')categories.sort((a,b)=>(enbishanSections.indexOf(a)<0?99:enbishanSections.indexOf(a))-(enbishanSections.indexOf(b)<0?99:enbishanSections.indexOf(b))); for (const category of ['', ...categories]) { const button = node('button','category-tab',(category?menuSectionLabel(category):t("full_menu"))); button.type='button'; button.setAttribute('aria-current', String(state.category === category)); button.addEventListener('click', () => { state.category = category; renderCategories(); renderProducts(); }); tabs.append(button); } }
+  function renderCategories() { const tabs = $('categories'); tabs.replaceChildren(); const categories = [...new Set(state.products.map((p) => menuSection(p)).filter(Boolean))];if(requestedBrandId==='kps'){const winter=categories.indexOf('❄️ المشروبات الشتوية');if(winter>=0){categories.splice(winter,1);const arrivals=categories.indexOf('✨ جديدنا');categories.splice(arrivals>=0?arrivals+1:0,0,'❄️ المشروبات الشتوية');}}if(requestedBrandId==='enbishan')categories.sort((a,b)=>(enbishanSections.indexOf(a)<0?99:enbishanSections.indexOf(a))-(enbishanSections.indexOf(b)<0?99:enbishanSections.indexOf(b))); for (const category of ['', ...categories]) { const button = node('button','category-tab',(category?menuSectionLabel(category):t("full_menu"))); button.type='button'; button.setAttribute('aria-current', String(state.category === category)); button.addEventListener('click', () => { state.category = category; renderCategories(); renderProducts(); }); tabs.append(button); } }
   function renderFirstGift(container){
     const gift=state.quote?.first_order_gift;if(!gift||['inactive','not_applicable'].includes(gift.status))return;
     const card=node('section','notice first-order-gift');card.setAttribute('aria-live','polite');
