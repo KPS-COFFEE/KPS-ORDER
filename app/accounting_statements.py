@@ -240,6 +240,24 @@ def closure_deadline(row, local, extension=None):
     return dict(shift_end_at=end,deadline_policy=policy,original_due_at=original,due_at=due,extension=extension)
 
 
+def manager_scope(user, bids, manager_shift_ids=None):
+    """Shared eligibility for the work inbox, shift cards and direct links."""
+    q = """FROM shifts m JOIN users u ON u.id=m.user_id
+        WHERE m.kind='manager' AND m.brand_id=%s AND (m.status='closed' OR to_jsonb(m)->>'staffing_ended_at' IS NOT NULL
+          OR m.scheduled_end_at<=now()
+          OR (m.scheduled_end_at IS NULL AND coalesce(m.delivery_window_snapshot->>'period','evening')<>'morning'
+              AND ((coalesce(m.reporting_operational_date,m.delivery_operational_date,(m.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)+1)+time '04:00') AT TIME ZONE 'Asia/Riyadh'<=now()))
+        AND m.branch_ids ?| %s"""
+    args = [user['brand_id'], bids]
+    if manager_shift_ids is not None:
+        q += ' AND m.id=ANY(%s)'
+        args.append(manager_shift_ids)
+    if user['role'] != 'owner' or user.get('home_brand_id'):
+        q += ' AND m.branch_ids <@ %s::jsonb'
+        args.append(db.json(user.get('branch_ids', [])))
+    return q, args
+
+
 def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
     from .accounting import driver_settlement_values,variance_confirmation,cash_correction_requests,can_request_cash_correction,TZ
     from .catalog import normalize_city
@@ -249,23 +267,12 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
     branch_names={b['id']:b['name'] for b in branch_rows}
     local={b['id'] for b in branch_rows if normalize_city(b['city'])=='حفر الباطن'}
     approved={r['manager_shift_id']:r for r in c.execute('SELECT id,manager_shift_id,created_at FROM accounting_daily_closures WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
-    # Physical completion enters accounting immediately. A manager awaiting bag
-    # allocation must remain visible even without a final financial snapshot.
-    q="""SELECT m.id,m.status,(to_jsonb(m)->>'staffing_ended_at')::timestamptz staffing_ended_at,m.shift_no,m.delivery_window_snapshot,
+    scope, args = manager_scope(user, bids, manager_shift_ids)
+    q = """SELECT m.id,m.status,(to_jsonb(m)->>'staffing_ended_at')::timestamptz staffing_ended_at,m.shift_no,m.delivery_window_snapshot,
         m.branch_ids,m.opened_at,m.closed_at,m.scheduled_end_at,u.display_name manager_name,
         coalesce(m.reporting_operational_date,m.delivery_operational_date,(m.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) AS "day",
         (SELECT count(*) FROM shifts child WHERE child.manager_shift_id=m.id AND child.kind='driver') expected_driver_count,
-        (SELECT r.id FROM closure_reports r WHERE r.shift_id=m.id AND r.kind='manager' ORDER BY r.version DESC,r.created_at DESC LIMIT 1) manager_report_id
-        FROM shifts m JOIN users u ON u.id=m.user_id
-        WHERE m.kind='manager' AND m.brand_id=%s AND (m.status='closed' OR to_jsonb(m)->>'staffing_ended_at' IS NOT NULL
-          OR m.scheduled_end_at<=now()
-          OR (m.scheduled_end_at IS NULL AND coalesce(m.delivery_window_snapshot->>'period','evening')<>'morning'
-              AND ((coalesce(m.reporting_operational_date,m.delivery_operational_date,(m.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)+1)+time '04:00') AT TIME ZONE 'Asia/Riyadh'<=now()))
-        AND m.branch_ids ?| %s"""
-    args=[user['brand_id'],bids]
-    if manager_shift_ids is not None:q+=' AND m.id=ANY(%s)';args.append(manager_shift_ids)
-    if user['role']!='owner' or user.get('home_brand_id'):
-        q+=' AND m.branch_ids <@ %s::jsonb';args.append(db.json(user.get('branch_ids',[])))
+        (SELECT r.id FROM closure_reports r WHERE r.shift_id=m.id AND r.kind='manager' ORDER BY r.version DESC,r.created_at DESC LIMIT 1) manager_report_id """ + scope
     q+=' ORDER BY EXISTS(SELECT 1 FROM accounting_daily_closures a WHERE a.manager_shift_id=m.id),"day" DESC,m.id'
     if page_size is not None:q+=' LIMIT %s OFFSET %s';args.extend([page_size+1,offset])
     manager_rows=c.execute(q,args).fetchall()
@@ -468,3 +475,30 @@ def approve_day(c,user,manager_shift_id,note):
       VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id,created_at""",(identifier,manager_shift_id,user['brand_id'],db.json(manager['branch_ids']),ds,db.json(report),user['id'],note)).fetchone()
     db.audit(c,user['id'],'accounting.day.closed','accounting_day',identifier,{'manager_shift_id':manager_shift_id,'note':note})
     return safe(row)
+
+
+def outstanding_work(c, user, bids):
+    """Include receivables/payables even when the shift review has been approved."""
+    from .financial_treatments import PROPOSED, reviewed_values
+    scope, args = manager_scope(user, bids)
+    candidates = c.execute("""
+        SELECT m.id """ + scope + """
+        AND EXISTS (SELECT 1 FROM shifts s JOIN closure_reports r ON r.shift_id=s.id
+            WHERE s.manager_shift_id=m.id AND r.kind='driver' AND
+              (EXISTS (SELECT 1 FROM audit_events a WHERE a.entity_type='report'
+                AND a.entity_id=r.id AND a.action=%s AND a.details->>'kind'='outstanding')
+               OR r.snapshot->'shift'->'submission'->>'shared_treatment_id' IS NOT NULL))
+    """, [*args, PROPOSED]).fetchall()
+    if not candidates:
+        return []
+    reports = source_rows(c, user, bids, manager_shift_ids=[r['id'] for r in candidates],
+                          include_open_managers=True)
+    revisions = histories(c, user, reports)
+    work = []
+    for report in reports:
+        history = revisions[report['id']]
+        values = reviewed_values(c, report, history[-1] if history else None, user=user)
+        if values['outstanding_receivable_halalas'] or values['outstanding_payable_halalas']:
+            work.append({'id': report['manager_shift_id'], 'driver': report['driver_name'],
+                         'day': report['day'], 'due': values.get('followup_due_on')})
+    return work

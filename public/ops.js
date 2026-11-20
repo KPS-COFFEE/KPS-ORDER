@@ -126,26 +126,51 @@
   async function handlePrintAlert(id){
     modal(tr('معالجة تنبيه الطباعة','Handle printing alert'),`<form><p>${esc(tr('تحقق من الفرع قبل التأكيد أو إعادة الطباعة. هذا الإجراء لا يغير حالة الطلب.','Check with the branch before confirming or reprinting. This does not change order status.'))}</p><label>${esc(tr('الإجراء','Action'))}<select name="action"><option value="confirmed">${esc(tr('تم التحقق من الطباعة','Paper output verified'))}</option><option value="reprint">${esc(tr('إعادة الطباعة — لم تخرج الورقة','Reprint — paper did not print'))}</option><option value="escalated">${esc(tr('تعذّر الحل — تصعيد للإدارة','Unresolved — escalate to management'))}</option></select></label>${textarea(tr('سبب الإجراء ونتيجة التحقق','Reason and verification result'),'reason','',true)}<label><input type="checkbox" name="paper_checked">${esc(tr('تحققت من خروج الورقة أو عدم خروجها لدى الفرع','I checked whether paper printed at the branch'))}</label>${formEnd(tr('تنفيذ الإجراء','Apply action'))}</form>`,async fd=>{await mutation('/api/printing/jobs/'+encodeURIComponent(id)+'/resolve-alert',{action:fd.get('action'),reason:fd.get('reason'),paper_checked:fd.get('paper_checked')==='on'});closeModal();await refreshOperationalAlerts();});
   }
+  let accountingWorkScope='', accountingWorkAt=0, accountingWorkVersion=0, accountingWorkBusy=false;
+  function accountingScope(){
+    return JSON.stringify([pageLoadScope(),state.user?.operations_brands,state.lang]);
+  }
+  function refreshAccountingWork(force=false){
+    let host=$('#accounting-work-inbox');
+    const user=state.user;
+    const enabled=user && !trialMode && !user.delivery_context?.bootstrap &&
+      ((user.role==='admin' && (can('accounting_review')||accountingNotificationsOnly())) ||
+       (user.role==='owner' && state.page==='accounting'));
+    if(!enabled){if(host)host.remove();accountingWorkScope='';accountingWorkVersion++;accountingWorkBusy=false;return;}
+    const scope=accountingScope();
+    if(!host){host=document.createElement('section');host.id='accounting-work-inbox';$('#page-heading').after(host);}
+    if(scope!==accountingWorkScope){
+      accountingWorkScope=scope;accountingWorkVersion++;accountingWorkBusy=false;accountingWorkAt=0;
+      host.replaceChildren();delete host.dataset.workHtml;
+    }
+    if((accountingWorkBusy&&!force)||(!force&&Date.now()-accountingWorkAt<60000))return;
+    const version=++accountingWorkVersion;
+    accountingWorkBusy=true;
+    return window.KPSAccountingAlerts.refresh(host,{api:(path,brand)=>api(path,{brand:user.operations_brands?.length?brand:undefined}),can,user,tr,esc,
+      isCurrent:()=>version===accountingWorkVersion && host.isConnected && scope===accountingScope()
+    }).catch(()=>{if(version===accountingWorkVersion && host.isConnected){delete host.dataset.workHtml;host.hidden=false;
+      host.textContent=tr('تعذر تحديث شغلك المحاسبي. أعد فتح المحاسبة للتحقق.','Accounting work could not refresh. Reopen accounting to check.');}})
+    .finally(()=>{if(version===accountingWorkVersion){accountingWorkAt=Date.now();accountingWorkBusy=false;}});
+  }
   function currentAlertScope(){return JSON.stringify([state.user?.id,state.user?.delivery_context?.period,state.user?.delivery_context?.shift_id,!!state.user?.delivery_context?.bootstrap,trialMode]);}
   async function refreshOperationalAlerts(){
     if(document.hidden||!navigator.onLine||document.documentElement.hasAttribute('data-work-access-pending'))return;
     const scope=currentAlertScope();
     if(operationalAlertScope!==scope){for(const channel of alertChannels.values()){stopAlertChannel(channel);channel.items.clear();}operationalAlertScope=scope;}
-    if(trialMode){const host=$('#operational-alerts');if(host)host.innerHTML='';return;}
+    if(trialMode){refreshAccountingWork();const host=$('#operational-alerts');if(host)host.innerHTML='';return;}
     let host=$('#operational-alerts');
     if(!host){host=document.createElement('section');host.id='operational-alerts';$('#page-heading').after(host);}
-    if(state.user?.delivery_context?.bootstrap){host.innerHTML='';syncAlertChannel('morning-orders',[]);return;}
+    if(state.user?.delivery_context?.bootstrap){refreshAccountingWork();host.innerHTML='';syncAlertChannel('morning-orders',[]);return;}
     if(!accountingNotificationsOnly()){
       if(state.user&&!alertAudio)void ensureMandatoryAlertSound();
       await refreshAlertPolicy();
     }
     if(state.user?.role==='driver'){await refreshDriverAlerts(host);return;}
+    const workRefresh=refreshAccountingWork();
     if(accountingNotificationsOnly()){
       for(const name of ['orders','operations','messages','morning-orders'])syncAlertChannel(name,[]);
-      if(alertBusy)return;alertBusy=true;
-      const identity=JSON.stringify([state.user.id,state.user.effective_permissions,state.accountingBrand||state.user.brand_id]);
-      try{await window.KPSAccountingAlerts.refresh(host,{api:path=>api(path,{brand:state.user.operations_brands?.length?(state.accountingBrand||state.user.brand_id):undefined}),can,user:state.user,tr,esc,isCurrent:()=>accountingNotificationsOnly()&&identity===JSON.stringify([state.user.id,state.user.effective_permissions,state.accountingBrand||state.user.brand_id])});}
-      finally{alertBusy=false;}
+      host.hidden=true;
+      await workRefresh;
       return;
     }
     if(!state.user||(!['owner','delivery_manager','delivery_staff','branch_manager'].includes(state.user.role)&&!can('chat_view'))){host.hidden=true;return;}
@@ -241,18 +266,19 @@
   }
   function fixedFloatMarkup(s){return `<section class="notice"><strong>${esc(tr('العهدة الدائمة المعتمدة','Approved permanent float'))}: ${money(s.permanent_float?.amount||0)}</strong><p>${esc(tr('تبقى معك ولا تعدّلها. أدخل إجمالي الكاش شامل العهدة.','Keep this amount with you; it cannot be edited. Enter all cash including this float.'))}</p></section>`;}
   function floatSplit(s,counted){const retained=Math.min(counted,Number(s.permanent_float?.amount||0));return {handover_halalas:counted-retained,retained_halalas:retained};}
-  async function floatRegister(){
-    const d=await api('/api/driver-floats');state.floatRegister=d;
+  async function floatRegister(brand){
+    const d=await api('/api/driver-floats',{brand});state.floatRegister={...d,brand};
     const names=Object.fromEntries(d.drivers.map(x=>[x.id,x.display_name]));
     modal(tr('العهدة الدائمة للسائقين','Permanent driver floats'),`<div class="stack"><p>${esc(tr('يسجل المدير إجمالي العهدة المسلّمة فعليًا، ويعتمدها المحاسب بين الشفتات. لا تتغير التقفيلات السابقة.','The manager records the actual total float held; accounting approves between shifts. Past closures do not change.'))}</p>${state.user.role==='delivery_manager'?`<form><label>${esc(tr('السائق','Driver'))}<select name="driver_id" required>${d.drivers.map(x=>`<option value="${esc(x.id)}">${esc(x.display_name)} — ${money(x.current?.amount||0)}</option>`).join('')}</select></label>${amountField(tr('إجمالي العهدة الفعلي الجديد (وليس الزيادة)','New actual total float (not the increase)'),'amount',null)}${field(tr('مرجع التسليم أو الاسترداد','Handover or return reference'),'reference','',{required:true})}${textarea(tr('سبب التسجيل أو التغيير','Reason'),'reason','',true)}${formEnd(tr('إرسال للمحاسب','Send to accountant'))}</form>`:''}${table([tr('السائق','Driver'),tr('العهدة','Float'),tr('الحالة','Status'),tr('الإجراء','Action')],d.requests.map(r=>[esc(names[r.driver_id]),money(r.amount_halalas),esc(r.approved===true?tr('معتمدة','Approved'):r.approved===false?tr('مرفوضة','Rejected'):tr('بانتظار المحاسب','Awaiting accounting')),r.approved==null&&can('accounting_review')?`<button data-action="float-review" data-id="${esc(r.id)}">${esc(tr('مراجعة','Review'))}</button>`:'—']))}</div>`,async fd=>{
       const driver=d.drivers.find(x=>x.id===fd.get('driver_id'));
-      await mutation('/api/driver-floats',{driver_id:driver.id,base_request_id:driver.current?.request_id||null,amount_halalas:cents(fd.get('amount')),reference:fd.get('reference'),reason:fd.get('reason')});await floatRegister();
+      await mutation('/api/driver-floats',{driver_id:driver.id,base_request_id:driver.current?.request_id||null,amount_halalas:cents(fd.get('amount')),reference:fd.get('reference'),reason:fd.get('reason')},undefined,{brand});await floatRegister(brand);
     });
     const input=$('#modal [name=amount]');if(input)input.value='';
   }
   function floatReview(id){
-    const r=state.floatRegister.requests.find(x=>x.id===id);
-    modal(tr('مراجعة العهدة الدائمة','Review permanent float'),`<form><p><strong>${money(r.amount_halalas)}</strong></p><p>${esc(r.reference)} — ${esc(r.reason)}</p><label>${esc(tr('القرار','Decision'))}<select name="approved"><option value="1">${esc(tr('اعتماد','Approve'))}</option><option value="0">${esc(tr('رفض','Reject'))}</option></select></label>${field(tr('مرجع تحقق المحاسبة','Accounting verification reference'),'reference','',{required:true})}${check(tr('راجعت السند والمبلغ الفعلي لدى السائق؛ هذا ليس صرفًا جديدًا كل يوم','I verified the record and actual cash held; this is not a new daily payout'),'confirmed')}${formEnd(tr('حفظ القرار','Save decision'))}</form>`,async fd=>{await mutation('/api/driver-floats/'+encodeURIComponent(id)+'/decision',{approved:fd.get('approved')==='1',confirmed:fd.has('confirmed'),reference:fd.get('reference')});await floatRegister();});
+    const {requests,brand}=state.floatRegister;
+    const r=requests.find(x=>x.id===id);
+    modal(tr('مراجعة العهدة الدائمة','Review permanent float'),`<form><p><strong>${money(r.amount_halalas)}</strong></p><p>${esc(r.reference)} — ${esc(r.reason)}</p><label>${esc(tr('القرار','Decision'))}<select name="approved"><option value="1">${esc(tr('اعتماد','Approve'))}</option><option value="0">${esc(tr('رفض','Reject'))}</option></select></label>${field(tr('مرجع تحقق المحاسبة','Accounting verification reference'),'reference','',{required:true})}${check(tr('راجعت السند والمبلغ الفعلي لدى السائق؛ هذا ليس صرفًا جديدًا كل يوم','I verified the record and actual cash held; this is not a new daily payout'),'confirmed')}${formEnd(tr('حفظ القرار','Save decision'))}</form>`,async fd=>{await mutation('/api/driver-floats/'+encodeURIComponent(id)+'/decision',{approved:fd.get('approved')==='1',confirmed:fd.has('confirmed'),reference:fd.get('reference')},undefined,{brand});refreshAccountingWork(true);await floatRegister(brand);});
   }
   async function reportNoAnswer(id,oid){if(await openTaskIntervention(id,oid,'no_answer'))return;modal(tr('الزبون لا يرد','Customer not responding'),`<form><p>${esc(tr('سجّل محاولة فعلية. يبقى الطلب محفوظًا ويرفع البلاغ للمدير دون إلغاء.','Record an actual attempt. The order stays saved and the manager is alerted; it is not cancelled.'))}</p><label>${esc(tr('طريقة التواصل','Contact method'))}<select name="contact_method"><option value="call">${esc(tr('اتصال هاتفي','Phone call'))}</option><option value="message">${esc(tr('رسالة','Message'))}</option></select></label>${textarea(tr('تفاصيل المحاولة','Attempt details'),'reason','',true)}${formEnd(tr('تسجيل ورفع للمدير','Record and alert manager'))}</form>`,async fd=>{await mutation(`/api/tasks/${encodeURIComponent(id)}/transition`,{status:'problem',contact_method:fd.get('contact_method'),reason:tr('الزبون لا يرد: ','Customer not responding: ')+fd.get('reason')});closeModal();await loadPage();});}
   setInterval(refreshOperationalAlerts,15000);
@@ -647,10 +673,10 @@
     heading(tr('طلبات المعالجة','Processing requests'),tr('سبب الإحالة، المسؤول الحالي، والإجراء المطلوب لكل معاملة.','Referral reason, current responsibility and the next action for every request.'));
     $('#content').innerHTML=`<div class="stack"><p>${esc(assignedOnly?tr('المعاملات المعادة إليك للاستكمال، بما فيها الطلبات السابقة. راجع السبب المصحح والتوضيح، ثم أرفق الاستكمال وأعد الرفع.','Requests assigned back to you for completion, including historical orders. Review the corrected reason and note, complete the evidence, then resubmit.'):tr('المعاملات المفتوحة ضمن فروعك المخولة. المعاد لمدير التوصيل ينتظر استكماله وإعادة رفعه. اعتماد الإلغاء يبقي معالجة المبالغ لدى المحاسبة.','Open requests in your authorized branches. Returned requests await the delivery manager’s correction and resubmission. Cancellation approval leaves financial treatment with accounting.'))}</p><button class="quiet" data-action="refresh">${esc(tr('تحديث','Refresh'))}</button>${d.requests.length?table([tr('الطلب / الفرع','Order / branch'),tr('رافع المعاملة','Requested by'),tr('وقت الإحالة','Requested'),tr('سبب الإحالة الحالي','Current referral reason'),tr('المسؤول والإجراء المطلوب','Responsibility and next action'),tr('الإجراء','Action')],d.requests.map(r=>[esc(String(r.order_no))+'<br>'+esc(r.brand_name||r.brand_id)+' · '+esc(r.branch_name)+(r.kind_label?'<br><small>'+esc(r.kind_label)+'</small>':''),esc(r.requested_by_name||'—'),esc(datetime(r.created_at)),esc(r.reason_label)+(r.workflow?.original_reason_code&&r.workflow.original_reason_code!==r.workflow.reason_code?'<br><small>'+esc(tr('الأصلي: ','Original: ')+interventionReasonLabel(r.workflow.original_reason_code))+'</small>':''),'<strong>'+esc(r.pending_label)+'</strong>'+(r.workflow?.next_action_label?'<br>'+esc(r.workflow.next_action_label):''),`<button data-action="order-intervention" data-id="${esc(r.order_id)}" data-brand="${esc(r.brand_id||'')}">${esc(r.workflow?.status==='returned'?tr('متابعة الاستكمال','Follow up completion'):tr('مراجعة واتخاذ القرار','Review and decide'))}</button>`])):empty(tr('لا توجد معاملات مفتوحة ضمن نطاقك.','No open requests in your scope.'))}</div>`;
   }
-  async function accounting(){const pageLoad=arguments[0]||null,api=pageReadApi(pageLoad);
+  async function accounting(){refreshAccountingWork();const pageLoad=arguments[0]||null,api=pageReadApi(pageLoad);
     const brands=state.user.central_operations?.brands||[],brand=state.user.operations_brands?.length?(state.accountingBrand||state.user.brand_id):undefined;
     const accountingApi=(path,options={})=>api(path,{...options,brand});
-    const accountingMutation=(path,body,button)=>mutation(path,body,button,{brand});
+    const accountingMutation=async(path,body,button)=>{const result=await mutation(path,body,button,{brand});refreshAccountingWork(true);return result;};
     state.accountingViews??={};const viewKey=[state.user.id,brand||state.user.brand_id,state.page].join(':');const view=state.accountingViews[viewKey]??={};
     await window.KPSAccounting.open({view,api:accountingApi,mutation:accountingMutation,tr,esc,money,heading,modal,closeModal,cents,csrf:state.csrf,user:state.user,lang:state.lang,brand,initialStatement:state.page==='driverStatements',openSharedAccounting:sharedDriverAccountingInbox,openSharedDriverClosure:shiftDetail,openSharedManagerClosure:sharedManagerClosure});
     if(can('accounting_review')||['owner','delivery_manager'].includes(state.user.role))$('#page-heading').insertAdjacentHTML('beforeend',financialCasesButton(brand));
@@ -1289,7 +1315,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     }});
   }
   function financialCasesButton(brand){
-    return `<button class="quiet" data-action="financial-cases" data-brand="${esc(brand||'')}">${esc(tr('المعالجات المحاسبية المعلقة','Pending accounting treatment'))}</button>`;
+    return `<button class="quiet" data-action="financial-cases" data-brand="${esc(brand||'')}">${esc(tr('معالجات الطلبات والاسترداد','Order cases and refunds'))}</button>`;
   }
   async function openOrderIntervention(oid,initialReason){
     let conversationId;
@@ -1339,10 +1365,10 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     const d=await api(`/api/order-financial-cases/orders/${encodeURIComponent(id)}/journey`,{brand});
     modal(tr('رحلة الطلب','Order journey')+' · '+(d.order_no||id),`<div class="stack"><dl class="data-grid">${dataItem(tr('التجهيز','Preparation'),statusName(d.preparation_status))}${dataItem(tr('التوصيل','Delivery'),statusName(d.delivery_status))}${dataItem(tr('الدفع','Payment'),statusName(d.payment_status))}</dl>${window.KPSAdministrativeGuidance?.render(d.guidance)||''}${financialCasePanel(d.financial_case)}${state.user.order_source_treatments_enabled&&can('accounting_review')?`<button class="quiet" data-action="order-source-treatment" data-id="${esc(id)}" data-brand="${esc(brand||'')}">${esc(tr('تطوير: معالجة أصل السعر أو الذمة','Development: source price or receivable treatment'))}</button>`:''}${can('accounting_review')?`<button class="quiet" data-action="refund-item-allocation" data-id="${esc(id)}" data-brand="${esc(brand||'')}">${esc(tr('المحاسبة: توثيق أصناف مرتجع سابق','Accounting: document items of a prior refund'))}</button>`:''}${d.financial_case&&(can('accounting_review')||can('support_manage'))?`<button class="quiet" data-action="financial-clarifications" data-id="${esc(id)}" data-brand="${esc(brand||'')}">${esc(tr('استكمال المعلومات بين المحاسبة والتوصيل','Accounting and delivery clarification'))}</button>`:''}${['owner','delivery_manager'].includes(state.user.role)&&can('support_manage')&&(d.free_items||[]).some(x=>x.remaining>0)?`<button class="quiet" data-action="free-item-return" data-id="${esc(id)}" data-brand="${esc(brand||'')}">${esc(tr('توثيق إرجاع صنف مجاني','Record free item return'))}</button>`:''}${(d.operational_followups||[]).length?`<section class="panel"><h3>${esc(tr('إجراء تشغيلي متبقٍ','Remaining operational action'))}</h3>${notice(tr('مدير التوصيل يراجع مسؤولية الطلب لاستحقاق السائق قبل التقفيلة.','The delivery manager reviews responsibility for driver entitlement before closure.'))}${state.user.role==='delivery_manager'?(d.operational_followups||[]).map(x=>`<button data-action="shift-detail" data-id="${esc(x.shift_id)}">${esc(tr('فتح المراجعة','Open review'))}</button>`).join(''):''}</section>`:''}${journeyFinancialRecords(d,brand)}<h3>${esc(tr('سجل إسناد السائقين — محفوظ بعد الإلغاء','Driver assignment history — retained after cancellation'))}</h3>${table([tr('السائق','Driver'),tr('الشفت','Shift'),tr('الحالة','Status'),tr('السبب','Reason')],(d.tasks||[]).map(t=>[esc(t.driver_name||t.driver_id),esc(shiftLabel(t.shift_id,'driver')),badge(t.status),esc(t.reason||'—')]))}<h3>${esc(tr('من نفّذ ومتى ولماذا','Who acted, when and why'))}</h3>${orderHistoryTimeline(d.timeline)}</div>`);
   }
-  async function financialCases(brand){
+  async function financialCases(brand,orderId){
     const d=await api('/api/order-financial-cases',{brand});
     const review=state.user.role==='owner'||can('accounting_review');
-    modal(tr('المعالجات المحاسبية المعلقة','Pending accounting treatment'),`<div class="stack">${notice(tr('طلبات تحتاج مراجعة طلب عميل أو معالجة تحصيل أو استرداد. الملاحظة أو رفض الإلغاء لا يعالج الفرق المالي.','Orders awaiting customer request review, collection or refund treatment. A note or rejected cancellation does not settle the difference.'))}${(d.cases||[]).map(row=>`<section class="panel"><h3>${esc(row.order_no||row.id)}</h3>${financialCasePanel(row.financial_case)}<div class="actions"><button data-action="order-journey" data-id="${esc(row.id)}" data-brand="${esc(brand||'')}">${esc(tr('عرض رحلة الطلب','View order journey'))}</button>${review?`${row.financial_case?.kind!=='customer_request_review'&&Number(row.financial_case?.pending_amount_halalas)>0?`<button data-action="${row.financial_case?.kind==='collection_shortfall'?'case-recover':'case-refund'}" data-id="${esc(row.id)}" data-brand="${esc(brand||'')}">${esc(row.financial_case?.kind==='collection_shortfall'?tr('تسجيل تحصيل المتبقي','Record recovered payment'):tr('تسجيل الاسترداد الفعلي','Record actual refund'))}</button>`:''}<button data-action="resolve-financial-case" data-id="${esc(row.id)}" data-brand="${esc(brand||'')}" data-kind="${esc(row.financial_case?.kind||'')}">${esc(row.financial_case?.kind==='customer_request_review'?tr('توثيق مراجعة طلب العميل','Document customer request review'):tr('مراجعة وإقفال المعالجة','Review and resolve case'))}</button>`:''}</div></section>`).join('')||empty(tr('لا توجد معالجات معلقة ضمن نطاقك.','No pending cases in your scope.'))}</div>`);
+    modal(tr('معالجات الطلبات والاسترداد','Order cases and refunds'),`<div class="stack">${notice(tr('طلبات تحتاج مراجعة طلب عميل أو معالجة تحصيل أو استرداد. الملاحظة أو رفض الإلغاء لا يعالج الفرق المالي.','Orders awaiting customer request review, collection or refund treatment. A note or rejected cancellation does not settle the difference.'))}${(d.cases||[]).filter(row=>!orderId||row.id===orderId).map(row=>`<section class="panel"><h3>${esc(row.order_no||row.id)}</h3>${financialCasePanel(row.financial_case)}<div class="actions"><button data-action="order-journey" data-id="${esc(row.id)}" data-brand="${esc(brand||'')}">${esc(tr('عرض رحلة الطلب','View order journey'))}</button>${review?`${row.financial_case?.kind!=='customer_request_review'&&Number(row.financial_case?.pending_amount_halalas)>0?`<button data-action="${row.financial_case?.kind==='collection_shortfall'?'case-recover':'case-refund'}" data-id="${esc(row.id)}" data-brand="${esc(brand||'')}">${esc(row.financial_case?.kind==='collection_shortfall'?tr('تسجيل تحصيل المتبقي','Record recovered payment'):tr('تسجيل الاسترداد الفعلي','Record actual refund'))}</button>`:''}<button data-action="resolve-financial-case" data-id="${esc(row.id)}" data-brand="${esc(brand||'')}" data-kind="${esc(row.financial_case?.kind||'')}">${esc(row.financial_case?.kind==='customer_request_review'?tr('توثيق مراجعة طلب العميل','Document customer request review'):tr('مراجعة وإقفال المعالجة','Review and resolve case'))}</button>`:''}</div></section>`).join('')||empty(tr('لا توجد طلبات تحصيل أو استرداد أو مراجعة عميل معلقة ضمن هذا النطاق.','No collection, refund or customer review cases are pending in this scope.'))}</div>`);
   }
   async function freeItemReturn(id,brand){
     const d=await api(`/api/order-financial-cases/orders/${encodeURIComponent(id)}/journey`,{brand});
@@ -3254,6 +3280,32 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
     const page=e.target.closest('[data-page]');if(page){if(state.loading){state.pendingPage=page.dataset.page;setStatus(tr('جارٍ فتح الصفحة المختارة بعد اكتمال التحميل الحالي.','Opening the selected page after the current load completes.'));return;}state.page=page.dataset.page;await loadPage();return;}
     const button=e.target.closest('[data-action]');if(!button)return;const a=button.dataset.action,id=button.dataset.id;const permission=actionPermission(button);if(permission&&!can(permission))return;const lock=`${a}:${id||''}`;if(state.busy.has(lock))return;state.busy.add(lock);
     try{
+      if(a==='accounting-work'){
+        if(state.loading||!canPage('accounting'))return;
+        const kind=button.dataset.work, brand=button.dataset.brand||state.user.brand_id;
+        if(![state.user.brand_id,...(state.user.operations_brands||[]).map(b=>b.id)].includes(brand))return;
+        state.accountingBrand=brand;
+        state.page='accounting';
+        const key=[state.user.id,brand,'accounting'].join(':');
+        state.accountingViews??={};
+        const view=state.accountingViews[key]??={};
+        if(kind==='shift'){view.tab='settlements';view.frozen='';view.openWorkShift=id;}
+        if(!await loadPage()||state.page!=='accounting'||state.accountingBrand!==brand)return;
+        if(kind==='float')await floatRegister(state.user.operations_brands?.length?brand:undefined);
+        if(['bags','bag-count','bag-review'].includes(kind)){
+          const data=await api('/api/cash-bags?pending_only=true');
+          const bag=data.bags.find(row=>row.id===id);
+          if(!bag){refreshAccountingWork(true);return;}
+          state.cashBags=[bag];
+          if(kind==='bag-review')await view.openWorkItem?.(kind,id,[],bag);
+          else if(kind==='bag-count' && !bag.count_id && bag.ready_to_count)await cashBagCount(id);
+          else modal(tr('حالة الكيس','Bag status'),cashBagCard(bag));
+        }
+        if(kind==='shared')await sharedDriverAccountingInbox();
+        if(kind==='order')await financialCases(state.user.operations_brands?.length?brand:undefined,id);
+        if(['bank','incident','month'].includes(kind))await view.openWorkItem?.(kind,id,JSON.parse(button.dataset.branches||'[]'));
+        return;
+      }
       if(a==='manager-work-view'){if(state.user.role!=='delivery_manager')return;const history=button.dataset.history==='1';state.page=button.dataset.target==='orders'?'orders':'shifts';if(state.page==='orders'){state.managerOrdersHistory=history;state.filters={sort:history?'newest':'active_oldest'};}else state.managerShiftsHistory=history;await loadPage();return;}
       if(a==='staff-geo-access'){await staffGeoAccess(id);return;}
       if(a==='maintenance-create'){await maintenanceCreate();return;}

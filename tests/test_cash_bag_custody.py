@@ -53,7 +53,13 @@ def test_actual_count_required_even_when_manager_received_then_matching_count_al
     with db.tx() as c:
         assert not c.execute('SELECT 1 FROM shared_driver_closure_allocations').fetchone()
         assert not c.execute('SELECT 1 FROM custody_transfers').fetchone()
+    def pending_bags():
+        response=actor('accountant').get('/api/cash-bags?pending_only=true')
+        assert response.status_code==200,response.text
+        return {r['id'] for r in response.json()['bags']}
+    assert bid in pending_bags()
     counted=count_bag(central,bid,700)
+    assert bid not in pending_bags()
     done=post('accountant',path+'/physical-allocation',allocation)
     assert done['allocation_id']
     assert actor('accountant').get(review).json()['financial_state']=='matched'

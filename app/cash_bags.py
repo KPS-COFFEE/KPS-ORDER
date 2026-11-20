@@ -79,12 +79,23 @@ class Count(ops.OperationBody):
 
 
 @router.get('')
-def inbox(user=Depends(auth.current_user)):
+def inbox(user=Depends(auth.current_user), pending_only:bool=False):
     if not accounting(user):raise db.error(403,'ACCOUNTANT_REQUIRED','جرد الأكياس للمحاسبة المخولة.')
     with db.tx() as c:
         days.require_enabled(user,'accounting_review')
         result=[]
-        for b in c.execute('SELECT b.*,d.anchor_shift_id,u.display_name driver_name,br.name branch_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id WHERE NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id) ORDER BY b.deposited_at DESC LIMIT 500').fetchall():
+        query = "SELECT b.*,d.anchor_shift_id,u.display_name driver_name,br.name branch_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id WHERE NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id)"
+        if pending_only:
+            # Include uncounted bags and counted bags with a custody difference.
+            query += """ AND NOT EXISTS (
+                SELECT 1 FROM driver_cash_bag_counts n
+                LEFT JOIN shared_driver_closure_receipts r ON r.declaration_id=b.declaration_id
+                WHERE n.bag_id=b.id AND n.card_halalas=b.declared_card_halalas
+                  AND (r.id IS NULL OR n.received_cash_halalas=r.received_halalas))"""
+        query += ' ORDER BY b.deposited_at DESC'
+        if not pending_only:
+            query += ' LIMIT 500'
+        for b in c.execute(query).fetchall():
             try:day,legs=authorize(c,user,b['anchor_shift_id'])
             except HTTPException as exc:
                 if exc.status_code in (403,404):continue
@@ -104,7 +115,8 @@ def inbox(user=Depends(auth.current_user)):
                 from .cash_bag_custody import projection
                 row['custody_review']=projection(c,b['id'],{'id':row['count_id'],'received_cash_halalas':row['received_cash_halalas'],'card_halalas':row['card_halalas'],'declared_card_halalas':row['declared_card_halalas']},full_receipt)
                 row['accounting_custody_review_required']=not row['custody_review']['period_approval_allowed']
-            result.append(row)
+            if not pending_only or not row['count_id'] or not (row.get('custody_review') or {}).get('financially_complete', True):
+                result.append(row)
         return ops.safe({'bags':result})
 
 

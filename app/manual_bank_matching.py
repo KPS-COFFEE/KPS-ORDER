@@ -438,3 +438,43 @@ def decide_bank_line(pid:str,body:Decision,request:Request,user=Depends(access))
             db.audit(c,user['id'],'accounting.bank_line_'+body.decision,'bank_line_proposal',pid,{'bank_line_id':line_id,**body.model_dump(mode='json')})
             return safe({'id':pid,'decision':body.decision,'bank_line_id':line_id})
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.bank_line.decision:'+pid,body.model_dump(mode='json'),perform)
+
+
+def pending_work(c, user, bids):
+    """Count work across operating days without assigning bank timing differences to cash."""
+    scope = (user['brand_id'], unrestricted(user), db.json(user.get('branch_ids', [])))
+    result = {}
+    for kind, table in (('collection', 'effective_collections'), ('refund', 'refunds')):
+        row = c.execute(f"""
+            SELECT count(*) AS count, min(x.created_at) AS oldest
+            FROM {table} x JOIN orders o ON o.id=x.order_id
+            WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND x.method='card' AND x.amount_halalas>0
+              AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_source_claims claim
+                              WHERE claim.source_kind=%s AND claim.source_id=x.id)
+        """, (user['brand_id'], bids, kind)).fetchone()
+        result[kind] = row
+    result['batches'] = c.execute("""
+        SELECT count(*) AS count, min(b.created_at) AS oldest FROM bank_reconciliation_batches b
+        LEFT JOIN bank_reconciliation_decisions d ON d.batch_id=b.id AND d.receipt_id IS NULL
+        WHERE b.brand_id=%s AND (%s OR b.branch_ids <@ %s::jsonb)
+          AND (d.id IS NULL OR (d.decision='approved' AND b.expected_net_halalas <>
+            (SELECT coalesce(sum(r.amount_halalas),0) FROM bank_reconciliation_receipts r
+             JOIN bank_reconciliation_decisions rd ON rd.receipt_id=r.id AND rd.decision='approved'
+             WHERE r.batch_id=b.id)))
+    """, scope).fetchone()
+    result['receipts'] = c.execute("""
+        SELECT count(*) AS count, min(b.created_at) AS oldest FROM bank_reconciliation_receipts r
+        JOIN bank_reconciliation_batches b ON b.id=r.batch_id
+        WHERE b.brand_id=%s AND (%s OR b.branch_ids <@ %s::jsonb)
+          AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_decisions d WHERE d.receipt_id=r.id)
+    """, scope).fetchone()
+    result['lines'] = c.execute("""
+        SELECT count(*) AS count, min(p.created_at) AS oldest FROM bank_reconciliation_line_proposals p
+        WHERE p.brand_id=%s AND (%s OR p.branch_ids <@ %s::jsonb)
+          AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_line_decisions d WHERE d.proposal_id=p.id)
+    """, scope).fetchone()
+    from .accounting import opday
+    for row in result.values():
+        oldest = row.pop('oldest')
+        row['oldest_day'] = opday(oldest) if oldest else None
+    return result

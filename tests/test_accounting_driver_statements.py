@@ -114,6 +114,10 @@ def test_manager_card_independent_driver_receipts_day_snapshot_and_audit(ops):
     assert not second_closure['financially_complete'] and second_closure['outstanding_payable_halalas']==200
     approved=post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST reviewed all drivers'},key='day-final')
     assert post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST reviewed all drivers'},key='day-final')==approved
+    inbox=actor('accountant').get('/api/accounting/work-inbox')
+    assert inbox.status_code==200, inbox.text
+    assert 'settlement-manager' not in {r['id'] for r in inbox.json()['shifts']}
+    assert 'settlement-manager' in {r['id'] for r in inbox.json()['outstanding']}
     saved=actor('accountant').get('/api/accounting/days/'+approved['id']).json()
     assert saved['frozen'] and saved['totals']['completed_orders']==1
     assert all(r['approval_references']==approved['id'] and r['approved_closure_count']==r['closure_count'] for r in saved['rows'] if r['closure_count'])

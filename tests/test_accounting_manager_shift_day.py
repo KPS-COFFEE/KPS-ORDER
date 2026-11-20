@@ -191,6 +191,11 @@ def test_accounting_shift_cards_page_without_losing_archive_or_scope(ops):
     assert len(second['cards'])==3 and not second['has_more']
     assert not ({row['id'] for row in first['cards']}&{row['id'] for row in second['cards']})
     assert actor('other').get('/api/accounting/manager-cards').json()['cards']==[]
+    inbox=actor('accountant').get('/api/accounting/work-inbox')
+    assert inbox.status_code==200, inbox.text
+    assert {r['id'] for r in inbox.json()['shifts']}=={r['id'] for r in first['cards']+second['cards']}
+    assert actor('other').get('/api/accounting/work-inbox').json()['shifts']==[]
+    assert actor('driver').get('/api/accounting/work-inbox').status_code==403
     focus=first['cards'][0]['id']
     focused=actor('accountant').get('/api/accounting/manager-cards',params={'offset':20,'focus_id':focus}).json()
     assert len(focused['cards'])==4 and focused['cards'][-1]['id']==focus
@@ -238,3 +243,35 @@ def test_released_driver_financial_record_is_accounting_not_manager_work(ops,dri
     assert actor('other').get('/api/accounting/manager-cards').json()['cards']==[]
     with db.tx() as c:
         assert c.execute("SELECT id,status,staffing_ended_at,submission FROM shifts WHERE manager_shift_id='test-manager-released' ORDER BY id").fetchall()==before
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('runtime_environment', ['testing', 'production'])
+def test_work_inbox_tracks_unallocated_card_sources_and_unsettled_bank_work(ops, monkeypatch, runtime_environment):
+    from test_manual_bank_matching import setup_sources, decision, receipt
+
+    monkeypatch.setenv('KPS_MANUAL_BANK_MATCHING_ENABLED', 'true')
+    actor, post, _, _ = ops
+    _, body, _, _ = setup_sources(ops)
+    monkeypatch.setenv('APP_ENV', runtime_environment)
+    base = '/api/accounting/bank-reconciliation'
+
+    def bank_work():
+        response = actor('accountant').get('/api/accounting/work-inbox')
+        assert response.status_code == 200, response.text
+        return response.json()['bank']
+
+    initial = bank_work()
+    assert initial['collection']['count'] == initial['refund']['count'] == 1
+    batch = post('accountant', base, body)
+    assert bank_work()['batches']['count'] == 1
+    path = base + '/' + batch['id']
+    post('bankreviewer', path + '/decision', decision())
+    approved = bank_work()
+    assert approved['collection']['count'] == approved['refund']['count'] == 0
+    pending = post('accountant', path + '/receipts', receipt(780))
+    assert bank_work()['receipts']['count'] == 1
+    receipt_id = pending['receipts'][0]['id']
+    post('bankreviewer', path + '/receipts/' + receipt_id + '/decision', decision())
+    cleared = bank_work()
+    assert cleared['receipts']['count'] == cleared['batches']['count'] == 0
