@@ -210,3 +210,10 @@
 @media(max-width:480px){.ac-shift-filter{grid-template-columns:minmax(0,1fr);padding:12px}}
 .accounting .ac-tabs>button:not(.ac-section-card){display:flex;align-items:center;justify-content:center;min-height:70px;background:#fff;color:#51463d;border:1px solid #e6ddd3;border-radius:14px;font-weight:650}
 @media(max-width:480px){.accounting .ac-tabs>button:not(.ac-section-card){min-height:64px}}
+
+#accounting-work-inbox { margin-block: .75rem; }
+#accounting-work-inbox h3 { margin-block: .55rem .25rem; }
+#accounting-work-inbox summary { cursor: pointer; padding-block: .45rem; }
+#accounting-work-inbox .ac-work-list { max-height: 16rem; overflow: auto; padding-inline-start: 1.5rem; }
+#accounting-work-inbox button { margin: .2rem; }
+.ac-manager-card summary .ac-next-action { grid-column: 1 / -1; margin: 0; }

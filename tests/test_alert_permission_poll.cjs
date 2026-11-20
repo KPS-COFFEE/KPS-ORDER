@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('public/ops.js','utf8');
-const start=source.indexOf('  function currentAlertScope(');
+const start=source.indexOf('  let accountingWorkScope=');
 const end=source.indexOf('  // A narrow order read is sufficient:',start);
 assert.ok(start>=0&&end>start);
 
@@ -9,18 +9,19 @@ function harness(role,permissions,{failOperations=false}={}){
   const calls=[],channels=[],apiOptions=[];
   const host={dataset:{},innerHTML:'',textContent:'',hidden:false,contains:()=>false,
     querySelectorAll:()=>[],replaceChildren(fragment){this.innerHTML=fragment.html;}};
-  const ctx={state:{user:{id:'delegate',role,effective_permissions:permissions}},trialMode:false,
+  const financialHost={dataset:{},innerHTML:'',isConnected:true,replaceChildren(){},querySelectorAll:()=>[]};
+  const ctx={pageLoadScope:()=>JSON.stringify(ctx.state.user),state:{user:{id:'delegate',role,effective_permissions:permissions}},trialMode:false,
     alertAudio:{state:'running'},operationalAlertScope:'',alertChannels:new Map(),alertBusy:false,
     stopAlertChannel(){},refreshAlertPolicy:async()=>{},ensureMandatoryAlertSound:async()=>{},
     tr:(_ar,en)=>en,esc:value=>String(value??''),num:String,orderLabel:row=>row.id,printAlertRow:()=>'',
     syncAlertChannel:(kind,ids)=>channels.push({kind,ids:[...ids]}),concealAlertControls(){},
     navigator:{onLine:true},window:{scrollY:0},document:{hidden:false,documentElement:{hasAttribute:()=>false},activeElement:null,querySelectorAll:()=>[],
       createElement(tag){assert.equal(tag,'template');return {innerHTML:'',get content(){return {html:this.innerHTML};}};}},
-    $:selector=>selector==='#operational-alerts'?host:selector==='#content'?{getBoundingClientRect:()=>({top:0})}:null,
+    $:selector=>selector==='#accounting-work-inbox'?(role==='admin'?financialHost:null):selector==='#operational-alerts'?host:selector==='#content'?{getBoundingClientRect:()=>({top:0})}:null,
     can:permission=>role==='owner'||permissions.includes(permission),
     api:async (path,options)=>{
       calls.push(path);apiOptions.push(options);
-      if(path==='/api/accounting/manager-cards?page_size=20&offset=0')return {cards:[{approved_day:null}]};
+      if(path==='/api/accounting/work-inbox')return {shifts:[{id:'open'}],outstanding:[],incidents:[],months:[]};
       if(path==='/api/order-financial-cases')return {cases:[]};
       if(path==='/api/driver-floats')return {requests:[]};
       if(path==='/api/driver-breaks'){
@@ -44,7 +45,7 @@ function harness(role,permissions,{failOperations=false}={}){
   const helperStart=source.indexOf('  function accountingNotificationsOnly('),helperEnd=source.indexOf('  async function refreshAlertPolicy(',helperStart);
   vm.runInContext(source.slice(helperStart,helperEnd),ctx);
   vm.runInContext(source.slice(start,end),ctx);
-  return {ctx,host,calls,channels,apiOptions};
+  return {ctx,host,financialHost,calls,channels,apiOptions};
 }
 
 test('a cancellation delegate without break permission keeps order and chat alerts working',async()=>{
@@ -79,9 +80,9 @@ test('an unrelated operational-alert failure remains visible and does not clear 
 
 
 test('accounting admin with chat access gets only actionable financial reads and clears order ringing',async()=>{
-  const {ctx,host,calls,channels}=harness('admin',['accounting_reports','accounting_review','chat_view','orders_view']);
+  const {ctx,financialHost:host,calls,channels}=harness('admin',['accounting_reports','accounting_review','chat_view','orders_view']);
   await ctx.refreshOperationalAlerts();
-  assert.deepEqual(calls,['/api/accounting/manager-cards?page_size=20&offset=0','/api/order-financial-cases','/api/driver-floats']);
+  assert.deepEqual(calls,['/api/accounting/work-inbox','/api/order-financial-cases','/api/driver-floats']);
   assert.match(host.innerHTML,/Closures needing completion or approval/);
   for(const channel of channels)assert.deepEqual(channel.ids,[]);
   assert.doesNotMatch(host.innerHTML,/order-detail|alert-sound|Messages awaiting reply/);
@@ -94,5 +95,5 @@ for(const central of [false,true])test(`accounting alert brand header follows ac
  if(central)ctx.state.user.operations_brands=[{id:'kps'},{id:'enbishan'}];
  await ctx.refreshOperationalAlerts();
  assert.ok(apiOptions.length);
- for(const options of apiOptions)assert.equal(options?.brand,central?'enbishan':undefined);
+ assert.deepEqual([...new Set(apiOptions.map(o=>o?.brand))],central?['kps','enbishan']:[undefined]);
 });

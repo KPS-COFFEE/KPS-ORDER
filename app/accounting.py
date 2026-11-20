@@ -1202,3 +1202,48 @@ def accounting_day_report(identifier:str,format:Literal['json','pdf','xlsx']='js
         if not row or not set(row['branch_ids'])<={b['id'] for b in branches(c,user)}:fail('DAY_SCOPE','الكشف غير متاح.',404)
         data=row['snapshot'];data.update(frozen=True,closed_at=row['created_at'].isoformat(),approved_by=row['approved_by'],approval_note=row['note'])
         return export(data,format,lang)
+
+
+@router.get('/work-inbox')
+def work_inbox(response: Response, user=Depends(access)):
+    """All eligible shifts, without loading the full accounting cards during polling."""
+    from .accounting_statements import manager_scope
+    from . import manual_bank_matching
+    response.headers['Cache-Control'] = 'no-store'
+    with db.tx() as c:
+        bids = [row['id'] for row in branches(c, user)]
+        scope, args = manager_scope(user, bids)
+        shifts = c.execute("""
+            SELECT m.id, m.shift_no, u.display_name AS manager,
+                coalesce(m.reporting_operational_date, m.delivery_operational_date,
+                    (m.opened_at AT TIME ZONE 'Asia/Riyadh' - interval '4 hours')::date) AS day
+            """ + scope + """
+            AND NOT EXISTS (SELECT 1 FROM accounting_daily_closures a
+                            WHERE a.brand_id=m.brand_id AND a.manager_shift_id=m.id)
+            ORDER BY day, m.opened_at, m.id
+        """, args).fetchall()
+        bank = None
+        if manual_bank_matching.enabled() and user['role'] in ('owner','admin') and auth.has_permission(user, REVIEW):
+            bank = manual_bank_matching.pending_work(c, user, bids)
+        incidents = c.execute("""
+            SELECT id, case_no, occurred_on FROM accounting_cases
+            WHERE brand_id=%s AND branch_id=ANY(%s) AND status IN ('open','in_progress')
+            ORDER BY occurred_on, case_no
+        """, (user['brand_id'], bids)).fetchall()
+        # A month is due for branches with activity and no approved statement covering that branch.
+        months = c.execute("""
+            WITH active AS (
+                SELECT DISTINCT date_trunc('month',coalesce(m.reporting_operational_date,
+                    m.delivery_operational_date,(m.opened_at AT TIME ZONE 'Asia/Riyadh' - interval '4 hours')::date))::date AS month,
+                    leg.branch_id FROM shifts m CROSS JOIN LATERAL jsonb_array_elements_text(m.branch_ids) leg(branch_id)
+                WHERE m.kind='manager' AND m.brand_id=%s AND leg.branch_id=ANY(%s)
+            )
+            SELECT month, array_agg(branch_id ORDER BY branch_id) AS branch_ids FROM active
+            WHERE month < date_trunc('month',%s::date)::date AND NOT EXISTS (
+                SELECT 1 FROM accounting_months a WHERE a.brand_id=%s AND a.month=active.month
+                    AND a.branch_ids ? active.branch_id)
+            GROUP BY month ORDER BY month
+        """, (user['brand_id'], bids, service_hours.delivery_operational_date(), user['brand_id'])).fetchall() if auth.has_permission(user, REVIEW) else []
+        from .accounting_statements import outstanding_work
+        return safe({'shifts': shifts, 'bank': bank, 'incidents': incidents, 'months': months,
+                     'outstanding': outstanding_work(c, user, bids)})

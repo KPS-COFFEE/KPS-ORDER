@@ -191,6 +191,11 @@ def test_accounting_shift_cards_page_without_losing_archive_or_scope(ops):
     assert len(second['cards'])==3 and not second['has_more']
     assert not ({row['id'] for row in first['cards']}&{row['id'] for row in second['cards']})
     assert actor('other').get('/api/accounting/manager-cards').json()['cards']==[]
+    inbox=actor('accountant').get('/api/accounting/work-inbox')
+    assert inbox.status_code==200, inbox.text
+    assert {r['id'] for r in inbox.json()['shifts']}=={r['id'] for r in first['cards']+second['cards']}
+    assert actor('other').get('/api/accounting/work-inbox').json()['shifts']==[]
+    assert actor('driver').get('/api/accounting/work-inbox').status_code==403
     focus=first['cards'][0]['id']
     focused=actor('accountant').get('/api/accounting/manager-cards',params={'offset':20,'focus_id':focus}).json()
     assert len(focused['cards'])==4 and focused['cards'][-1]['id']==focus
