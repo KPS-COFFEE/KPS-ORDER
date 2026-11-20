@@ -1,0 +1,4 @@
+Noto Kufi Arabic - SIL Open Font License 1.1.
+Official upstream: https://github.com/google/fonts/tree/main/ofl/notokufiarabic
+The official variable font is instantiated at genuine design weights 400, 600 and 700; no synthetic emboldening.
+TTF assets are self-hosted and embedded in new PDF templates. See OFL.txt.

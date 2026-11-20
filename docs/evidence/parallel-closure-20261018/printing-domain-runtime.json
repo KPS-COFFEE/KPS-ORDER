@@ -1,0 +1,84 @@
+{
+  "source_sha": "80a1d727f6695c4ce3685e726ab5b34674e1cfa0",
+  "observation_date": "2026-10-18",
+  "method": "Read-only urllib HTTPS GET through environment-configured proxy; direct DNS unavailable",
+  "probes": [
+    {
+      "url": "https://order.kps.sa/health",
+      "http_status": 200,
+      "response": {
+        "status": "alive",
+        "revision": "466bb9868768002d35f277a8aa4628fefc431126",
+        "application": "kps-order-independent-v5"
+      },
+      "response_capture": "complete health body; sanitized readiness subset"
+    },
+    {
+      "url": "https://order.kps.sa/ready",
+      "http_status": 200,
+      "response": {
+        "status": "ready",
+        "revision": "466bb9868768002d35f277a8aa4628fefc431126",
+        "database": "connected",
+        "applied_migrations": 59,
+        "data_preservation": {
+          "verified": true,
+          "checked_tables": 60,
+          "revision": "466bb9868768002d35f277a8aa4628fefc431126"
+        }
+      },
+      "response_capture": "complete health body; sanitized readiness subset"
+    },
+    {
+      "url": "https://kps-order-emergency-v4.onrender.com/health",
+      "http_status": 200,
+      "response": {
+        "status": "alive",
+        "revision": "466bb9868768002d35f277a8aa4628fefc431126",
+        "application": "kps-order-independent-v5"
+      },
+      "response_capture": "complete health body; sanitized readiness subset"
+    },
+    {
+      "url": "https://kps-order-emergency-v4.onrender.com/ready",
+      "http_status": 200,
+      "response": {
+        "status": "ready",
+        "revision": "466bb9868768002d35f277a8aa4628fefc431126",
+        "database": "connected",
+        "applied_migrations": 59,
+        "data_preservation": {
+          "verified": true,
+          "checked_tables": 60,
+          "revision": "466bb9868768002d35f277a8aa4628fefc431126"
+        }
+      },
+      "response_capture": "complete health body; sanitized readiness subset"
+    },
+    {
+      "url": "https://admin.kps.sa/health",
+      "http_status": 502,
+      "state": "unverified: access path returned Bad Gateway"
+    },
+    {
+      "url": "https://admin.kps.sa/ready",
+      "http_status": 502,
+      "state": "unverified: access path returned Bad Gateway"
+    },
+    {
+      "url": "https://staff.kps.sa/health",
+      "http_status": 502,
+      "state": "unverified: access path returned Bad Gateway"
+    },
+    {
+      "url": "https://staff.kps.sa/ready",
+      "http_status": 502,
+      "state": "unverified: access path returned Bad Gateway"
+    }
+  ],
+  "limits": [
+    "Point-in-time public endpoints only; no authenticated staff or physical-printer acceptance",
+    "Direct DNS/TLS certificate inspection blocked: EAI_AGAIN",
+    "One extra four-second official ready probe timed out; completed fifteen-second probe returned 200"
+  ]
+}

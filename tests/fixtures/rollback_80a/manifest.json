@@ -1,0 +1,61 @@
+{
+  "kind": "isolated_prior_application_rollback_compatibility_candidate",
+  "baseline_sha": "80a1d727f6695c4ce3685e726ab5b34674e1cfa0",
+  "compatibility_source_sha": "4ff09320ae956a146ece8f3a1697f39ed43b572d",
+  "production_tested": false,
+  "image_certified": false,
+  "retained": [
+    "secure runtime and hashes",
+    "SMS and owner proof",
+    "fiscal/collections/printing code baseline unchanged",
+    "trip schema/evidence/return and close guards",
+    "extra permission registry",
+    "contact reuse/replay current authorization",
+    "manager-free ordering policy",
+    "portable export schema coverage",
+    "migration preservation hashes for trips, printing and accounting settlements",
+    "narrow prior-UI driver trip departure and pending return panel",
+    "scoped named branch transition history without public actor disclosure",
+    "Explicit current payment, engagement and membership export/preservation coverage; restore using matching current source only",
+    "Explicit courtesy authorization and driver support export/preservation coverage; no new lifecycle mutation routes in prior application",
+    "Explicit immutable unused courtesy revocation export and preservation coverage",
+    "Immutable operational-day correction export and preservation coverage; restored by matching current source",
+    "Immutable prior-delivery grant, revocation and record export/preservation coverage; no prior-delivery mutation routes in rollback application",
+    "Immutable completed-driver attribution correction export/preservation coverage only; operational rollback after a correction requires an attribution-aware build",
+    "Immutable legacy delivery attestations preserved/exported; no attestation mutation route in rollback application",
+    "Prior application reports recognize immutable historical delivery attestations without fabricating delivery timestamps or payment",
+    "Explicit staff geographic grant inventory and brand scope; excluded from business exports and retired after isolated restore verification; foreign staff enforcement requires a geo-aware application build",
+    "Explicit new-table export registry for empty new schema only; prior writer refuses startup after any duty/shared physical/clarification contract use",
+    "Immutable legacy source invoice import records preserved/exported; prior reports recognize unknown-time delivery proof without importing new invoices",
+    "Explicit bank reconciliation archive and preservation registry; prior writer refuses any new bank rows or independent financial treatment evidence",
+    "Source-price and factual administrative workflow evidence uses existing audit ledger; prior writer refuses these new contracts after use",
+    "Prior writer refuses pending duplicate review, duplicate decisions and partial-return evidence before migration; recovery requires a current-aware application",
+    "Cash bag originals, immutable counts and manager vault closures retained in full private archives only; prior writer refuses startup after any of these contracts is used"
+  ],
+  "fallbacks": [
+    "80a prior operations UI",
+    "80a prior order search/listing and location-edit surface",
+    "new driver-hours PDF/XLSX and delegated operations routes absent"
+  ],
+  "files": {
+    "app/admin.py": "b4870d67c8aa12b32ac23ff6b2622efd161ef89a4cd4fa1e77d9186f2ffb8dc2",
+    "app/db.py": "1766f5c71ac2be2d25d4e80ec0d7c33e471fe0f5f771ac36db55a91e993facc6",
+    "app/driver_work_hours.py": "4490cd9ab275b78a8b9be3ac2bc387537f3383b6b51aadf88bc4faf0f2e78ad5",
+    "app/employee_permissions.py": "605843c9677bbf0d7c86c55fcd199ba4959ea9b73e3700b17d4622c80b3121e5",
+    "app/exports.py": "fa13ebc9bfcb7186db0c914c9a62c79ed56063054b024bb2d53c677aaa1499d9",
+    "app/http_security.py": "7d449b91f1f6c69c1a1d97473a6bf047f9915419cfb187f22bc51f910665158a",
+    "app/main.py": "7e9bda6b289ff60d956d17dda0718e371f8368403fa10f5fc4e41ae907a6da3a",
+    "app/operations.py": "b85a442aefbe54dd7f90c7eabfb68714be2fb2d86ff3bde788a1220c279169d9",
+    "app/orders.py": "11cffe1a1c77cf170a3682e32afc041b08de5b4bdca5decf6fa0a7a851fba8f0",
+    "migrations/081_driver_work_hours.sql": "698f1717097745bffa4162a69d515fbedbdf48fab4e2983aaafe241139af33a1",
+    "migrations/082_operational_customer_search.sql": "11694524f4d1f06f74d93371b9c0fce01f0eea840087c7d20f5c276754579b2b",
+    "public/ops.js": "3915907d7ab9acababb2b52703fb4e734f8a77bf970fdf7df2ca5ac73a7b9418",
+    "app/reporting.py": "582b73b57c8d99be560fbe8eef987cbf21b50cd9376584ff3326fb8acdbfb2d1"
+  },
+  "rollback_feature_policy": {
+    "operational_after_feature_use": false,
+    "current_aware_image_certified": false,
+    "behavior": "Fail before migrations or request workers if duty, shared physical closure, financial clarification, manual bank or independent financial treatment records exist. Preserve database; keep a current-aware application. Pending duplicate review, duplicate decisions and partial-return events also require a current-aware application. Physical cash bag, count and manager vault records likewise require a current-aware application.",
+    "certification": "Source guard and isolated PostgreSQL witnesses must pass on candidate; no prior image operational support claimed for these states."
+  }
+}

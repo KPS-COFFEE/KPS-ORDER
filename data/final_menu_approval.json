@@ -1,0 +1,762 @@
+{
+  "decision_id": "owner-final-2026-10-10",
+  "source_commit": "b9d4f523c18981032151f5ab5dad57bd23f946c5",
+  "source_html_sha256": "2e5f31fc8ad2d0a3a46ae98dd50ae2c8018ab9963b9eb4d2ae60a49f722041d6",
+  "products": [
+    {
+      "product_id": "kps-01",
+      "brand_id": "kps",
+      "source_digest": "565d5bba3312518da3fe24997134f7d91162e8c05aea09729b602beef166a5cd",
+      "source_snapshot": {
+        "id": "kps-01",
+        "brand_id": "kps",
+        "name": "كولد برو",
+        "category": "✨ جديدنا",
+        "price_halalas": 950,
+        "source_id": "kps-01",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-01-36c27597bfd3.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-02",
+      "brand_id": "kps",
+      "source_digest": "e7f6be95cb0678af73ba1333af9da2df38a9fbec0481d756fe98d3405e9baf10",
+      "source_snapshot": {
+        "id": "kps-02",
+        "brand_id": "kps",
+        "name": "قهوة اليوم بارد",
+        "category": "⭐ الأكثر مبيعاً",
+        "price_halalas": 550,
+        "source_id": "kps-02",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-02-d9135faa0a84.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-03",
+      "brand_id": "kps",
+      "source_digest": "e42d68161b1a209fed6ebe020030441cd181e392a7fd48a732e37241f5715c2c",
+      "source_snapshot": {
+        "id": "kps-03",
+        "brand_id": "kps",
+        "name": "كوكيز شوكليت",
+        "category": "⭐ الأكثر مبيعاً",
+        "price_halalas": 550,
+        "source_id": "kps-03",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-03-c64514169334.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-04",
+      "brand_id": "kps",
+      "source_digest": "bb9a6db13446ca64ec6553ac88faf7e643ee4a113f9cc71a98412e791c01cb0f",
+      "source_snapshot": {
+        "id": "kps-04",
+        "brand_id": "kps",
+        "name": "قهوة اليوم حار",
+        "category": "☕ المشروبات",
+        "price_halalas": 550,
+        "source_id": "kps-04",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-04-6ee5fe34cceb.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-05",
+      "brand_id": "kps",
+      "source_digest": "97646145d5b967d8e75191c4833aadb36096758c3535bed76160bb9be1f55090",
+      "source_snapshot": {
+        "id": "kps-05",
+        "brand_id": "kps",
+        "name": "قهوة اليوم بارد",
+        "category": "☕ المشروبات",
+        "price_halalas": 550,
+        "source_id": "kps-05",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-05-d9135faa0a84.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-06",
+      "brand_id": "kps",
+      "source_digest": "bf77d5d11c54bebf56baeb82ac6189f95f320a1a9aefd0230c945bf1be5014d3",
+      "source_snapshot": {
+        "id": "kps-06",
+        "brand_id": "kps",
+        "name": "V60 حار",
+        "category": "☕ المشروبات",
+        "price_halalas": 750,
+        "source_id": "kps-06",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-06-3c7dd5131d53.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-07",
+      "brand_id": "kps",
+      "source_digest": "0c24b7e09c560675618a4516be829746acccef03bf0e9c0a8d95e4d4805f420b",
+      "source_snapshot": {
+        "id": "kps-07",
+        "brand_id": "kps",
+        "name": "V60 بارد",
+        "category": "☕ المشروبات",
+        "price_halalas": 750,
+        "source_id": "kps-07",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-07-c7697290eec9.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-08",
+      "brand_id": "kps",
+      "source_digest": "983a44cbf530b95eb6eff05067d404f4ed7a33e32c50333d1c99932f39459d8c",
+      "source_snapshot": {
+        "id": "kps-08",
+        "brand_id": "kps",
+        "name": "كولد برو",
+        "category": "☕ المشروبات",
+        "price_halalas": 950,
+        "source_id": "kps-08",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-08-36c27597bfd3.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-32",
+      "brand_id": "kps",
+      "source_digest": "7634012904251b16216c66537cec201ad2d249d2d24f40175c5ee1a70d16d5e0",
+      "source_snapshot": {
+        "id": "kps-32",
+        "brand_id": "kps",
+        "name": "ماء نوفا 330 مل",
+        "category": "☕ المشروبات",
+        "price_halalas": 100,
+        "source_id": "kps-32",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-32-362d6590ff73.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-09",
+      "brand_id": "kps",
+      "source_digest": "113b6760563ce6ee97d1aac6931a5c4ad3466a93bc7426b56a7ab51dd2047ac6",
+      "source_snapshot": {
+        "id": "kps-09",
+        "brand_id": "kps",
+        "name": "آيس تي خوخ",
+        "category": "🍹 المنعشات",
+        "price_halalas": 600,
+        "source_id": "kps-09",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-09-a1399dc0069b.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-10",
+      "brand_id": "kps",
+      "source_digest": "3d1287e52085843d0488e6bfe27db3fccdd166fd0a0be5160c52f2b91916b4e1",
+      "source_snapshot": {
+        "id": "kps-10",
+        "brand_id": "kps",
+        "name": "آيس كركديه",
+        "category": "🍹 المنعشات",
+        "price_halalas": 650,
+        "source_id": "kps-10",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-10-c8d7dfc33583.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-11",
+      "brand_id": "kps",
+      "source_digest": "f62ae5b203458e28dd7f8ab4c3d6df705404ae8211b287bdf4749e01a7fe4e19",
+      "source_snapshot": {
+        "id": "kps-11",
+        "brand_id": "kps",
+        "name": "موهيتو",
+        "category": "🍹 المنعشات",
+        "price_halalas": 900,
+        "source_id": "kps-11",
+        "option_groups": [
+          {
+            "id": "FLAVOUR",
+            "source_id": "FLAVOUR",
+            "source_db_id": null,
+            "code": "FLAVOUR",
+            "name": "نكهة الموهيتو",
+            "type": "flavour",
+            "unit_scope": "per_unit",
+            "required": true,
+            "per_unit": true,
+            "min_select": 1,
+            "max_select": 1,
+            "values": [
+              {
+                "id": "BLACKBERRY",
+                "source_id": "BLACKBERRY",
+                "source_db_id": null,
+                "code": "BLACKBERRY",
+                "name": "توت أسود",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "BLUE_LAGOON",
+                "source_id": "BLUE_LAGOON",
+                "source_db_id": null,
+                "code": "BLUE_LAGOON",
+                "name": "توت أزرق",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "PASSION_FRUIT",
+                "source_id": "PASSION_FRUIT",
+                "source_db_id": null,
+                "code": "PASSION_FRUIT",
+                "name": "باشن فروت",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "POMEGRANATE",
+                "source_id": "POMEGRANATE",
+                "source_db_id": null,
+                "code": "POMEGRANATE",
+                "name": "رمان",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "RASPBERRY",
+                "source_id": "RASPBERRY",
+                "source_db_id": null,
+                "code": "RASPBERRY",
+                "name": "توت أحمر",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "STRAWBERRY",
+                "source_id": "STRAWBERRY",
+                "source_db_id": null,
+                "code": "STRAWBERRY",
+                "name": "فراولة",
+                "price_delta_halalas": 0
+              }
+            ]
+          }
+        ],
+        "variants": [],
+        "image_url": "/assets/kps-11-4199ba05a8e3.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-12",
+      "brand_id": "kps",
+      "source_digest": "9aacb4ac6f0a06492da17a4bfccf806e75b5565a7da327c4d3f8d9f7648f8b2b",
+      "source_snapshot": {
+        "id": "kps-12",
+        "brand_id": "kps",
+        "name": "آيس شوكليت",
+        "category": "🍹 المنعشات",
+        "price_halalas": 850,
+        "source_id": "kps-12",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-12-0e6bf5c8757f.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-13",
+      "brand_id": "kps",
+      "source_digest": "0345affec77ecd0010f256e564934c74905a3d51f137a96ce0731d8c2240bbc6",
+      "source_snapshot": {
+        "id": "kps-13",
+        "brand_id": "kps",
+        "name": "سموذي شمام",
+        "category": "🍹 المنعشات",
+        "price_halalas": 800,
+        "source_id": "kps-13",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-13-5174dfb18609.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-14",
+      "brand_id": "kps",
+      "source_digest": "abc470e5aa5d1ddb86e734d9668b8fa0afb65d5b3babaf7c05b1f1f9909b996e",
+      "source_snapshot": {
+        "id": "kps-14",
+        "brand_id": "kps",
+        "name": "ماتشا",
+        "category": "🍹 المنعشات",
+        "price_halalas": 850,
+        "source_id": "kps-14",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-14-299cbe64131a.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-15",
+      "brand_id": "kps",
+      "source_digest": "7098389758a4f4b8ab5678bc3384ce430e05435e85c7a24592fd140ef36dcdd7",
+      "source_snapshot": {
+        "id": "kps-15",
+        "brand_id": "kps",
+        "name": "تيراميسو",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 800,
+        "source_id": "kps-15",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-15-edbe35424de5.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-16",
+      "brand_id": "kps",
+      "source_digest": "2a081fc4a61dddda6d813e8d13767be1e831f818d7624e76341c9807b5d24862",
+      "source_snapshot": {
+        "id": "kps-16",
+        "brand_id": "kps",
+        "name": "سينابون",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 550,
+        "source_id": "kps-16",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-16-cbd6789f65cf.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-17",
+      "brand_id": "kps",
+      "source_digest": "aa802f147ec836742cf5c99ddeb8e7ce0de7ef5c640569bfac8931d41a4b02f6",
+      "source_snapshot": {
+        "id": "kps-17",
+        "brand_id": "kps",
+        "name": "ترايفل مانجو",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 650,
+        "source_id": "kps-17",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-17-c0dcd65b4428.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-18",
+      "brand_id": "kps",
+      "source_digest": "7c33cbe28f2898fbf89b580ca0788e2ece39a4d2d659342e4c0f0d7a7bd07f01",
+      "source_snapshot": {
+        "id": "kps-18",
+        "brand_id": "kps",
+        "name": "كروسان رول",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 550,
+        "source_id": "kps-18",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-18-86e0de248b0c.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-19",
+      "brand_id": "kps",
+      "source_digest": "c54990c7733a359b678f2e02d6246c7e6cbaa4afbd444e941a80dc8a85f3382d",
+      "source_snapshot": {
+        "id": "kps-19",
+        "brand_id": "kps",
+        "name": "كيكة دبي",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 550,
+        "source_id": "kps-19",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-19-228371132e37.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-20",
+      "brand_id": "kps",
+      "source_digest": "806a856cd87cc9e21c174bbe99a511241062dbc57896645be14b02428aefe85b",
+      "source_snapshot": {
+        "id": "kps-20",
+        "brand_id": "kps",
+        "name": "براونيز كراميل",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 550,
+        "source_id": "kps-20",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-20-37a1f50ac7b1.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-21",
+      "brand_id": "kps",
+      "source_digest": "2651c9df348cbd7d096d1be5455cad3d7483bda955514be83b44f12412d2e17b",
+      "source_snapshot": {
+        "id": "kps-21",
+        "brand_id": "kps",
+        "name": "كوكيز شوكليت",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 550,
+        "source_id": "kps-21",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-21-ce26825955c8.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-22",
+      "brand_id": "kps",
+      "source_digest": "40123384f55b142c98e2ac25cd62e4f5a4a8c78d02b83227c2f9c4736c205d45",
+      "source_snapshot": {
+        "id": "kps-22",
+        "brand_id": "kps",
+        "name": "كرانشي",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 550,
+        "source_id": "kps-22",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-22-df12ad5156f0.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-23",
+      "brand_id": "kps",
+      "source_digest": "65caf73f26405bb30bedacb3ab08f879f7998ade3c329adc020aac89856d2719",
+      "source_snapshot": {
+        "id": "kps-23",
+        "brand_id": "kps",
+        "name": "كوكونت",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 650,
+        "source_id": "kps-23",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-23-86b341e362b5.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-24",
+      "brand_id": "kps",
+      "source_digest": "109916cec48f89f4178eecfbfe6efbd475f38ca49cdfdce215afc887364d7c5d",
+      "source_snapshot": {
+        "id": "kps-24",
+        "brand_id": "kps",
+        "name": "كرانش شوكو",
+        "category": "🍪 السناكس والحلويات",
+        "price_halalas": 700,
+        "source_id": "kps-24",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-24-1951cbc39afc.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-35",
+      "brand_id": "kps",
+      "source_digest": "163e338561e6e0db95cb4b3c485b25ab847ce013a494bbbfebd5c544bf41206f",
+      "source_snapshot": {
+        "id": "kps-35",
+        "brand_id": "kps",
+        "name": "كوب إضافي",
+        "category": "🥤 الملحقات",
+        "price_halalas": 100,
+        "source_id": "kps-35",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-35-fc3d1c4bfde4.svg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-25",
+      "brand_id": "kps",
+      "source_digest": "a7abb3ed12333aae9046d3e5b50bcb8fffbe002e662c6624088489376042696e",
+      "source_snapshot": {
+        "id": "kps-25",
+        "brand_id": "kps",
+        "name": "بوكس قهوة",
+        "category": "📦 بوكسات الضيافة",
+        "price_halalas": 3600,
+        "source_id": "kps-25",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-25-9e207505d29a.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-26",
+      "brand_id": "kps",
+      "source_digest": "19dc0de8558a4a0070f1fd2b6bfce1f66049a4c3955b961bf008f340ba9d33e9",
+      "source_snapshot": {
+        "id": "kps-26",
+        "brand_id": "kps",
+        "name": "بوكس كوكيز",
+        "category": "📦 بوكسات الضيافة",
+        "price_halalas": 3400,
+        "source_id": "kps-26",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-26-75f8ef11d0c8.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-27",
+      "brand_id": "kps",
+      "source_digest": "7b62c3390af5e1dd81cf61e22d0c0f8491558320f7d43d5dc2e693d0a88c77b3",
+      "source_snapshot": {
+        "id": "kps-27",
+        "brand_id": "kps",
+        "name": "بوكس كرانشي",
+        "category": "📦 بوكسات الضيافة",
+        "price_halalas": 3400,
+        "source_id": "kps-27",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-27-a5e37fbf3d1e.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-28",
+      "brand_id": "kps",
+      "source_digest": "7917787d7656878ef6019c4fde97d564f6236e281dd4b0f7c1d0679270a6cbfc",
+      "source_snapshot": {
+        "id": "kps-28",
+        "brand_id": "kps",
+        "name": "بوكس سينابون",
+        "category": "📦 بوكسات الضيافة",
+        "price_halalas": 2450,
+        "source_id": "kps-28",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-28-f502910fe5e1.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-29",
+      "brand_id": "kps",
+      "source_digest": "f7858060fa3ee057411b24cea7142cab29486c5ce602ca0edb51bfc0526d1398",
+      "source_snapshot": {
+        "id": "kps-29",
+        "brand_id": "kps",
+        "name": "بوكس براونيز",
+        "category": "📦 بوكسات الضيافة",
+        "price_halalas": 3400,
+        "source_id": "kps-29",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-29-794aa64d8e88.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-33",
+      "brand_id": "kps",
+      "source_digest": "df354274cfe8b91427c8f1fa19a72e87da40c84f0e848aeebfc66dc0e50ba721",
+      "source_snapshot": {
+        "id": "kps-33",
+        "brand_id": "kps",
+        "name": "خلية بيكان",
+        "category": "📦 بوكسات الضيافة",
+        "price_halalas": 1950,
+        "source_id": "kps-33",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-33-9ed7f1cc098a.svg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-34",
+      "brand_id": "kps",
+      "source_digest": "334645561b7644b47df114ac48455f883439c507447abae4763c3aec7d769530",
+      "source_snapshot": {
+        "id": "kps-34",
+        "brand_id": "kps",
+        "name": "خلية كلاسيك",
+        "category": "📦 بوكسات الضيافة",
+        "price_halalas": 1950,
+        "source_id": "kps-34",
+        "option_groups": [],
+        "variants": [],
+        "image_url": "/assets/kps-34-8c01e210be90.svg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-30",
+      "brand_id": "kps",
+      "source_digest": "d33d97dfaec6849260b76e82f1b4cec088bad9ec8b142dca551d911cdfba8e84",
+      "source_snapshot": {
+        "id": "kps-30",
+        "brand_id": "kps",
+        "name": "كوب حراري",
+        "category": "☕ الأكواب الحرارية",
+        "price_halalas": 2100,
+        "source_id": "kps-30",
+        "option_groups": [
+          {
+            "id": "COLOR",
+            "source_id": "COLOR",
+            "source_db_id": null,
+            "code": "COLOR",
+            "name": "لون الكوب الحراري",
+            "type": "color",
+            "unit_scope": "per_unit",
+            "required": true,
+            "per_unit": true,
+            "min_select": 1,
+            "max_select": 1,
+            "values": [
+              {
+                "id": "PNK",
+                "source_id": "PNK",
+                "source_db_id": null,
+                "code": "PNK",
+                "name": "وردي",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "BLK",
+                "source_id": "BLK",
+                "source_db_id": null,
+                "code": "BLK",
+                "name": "أسود",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "BLU",
+                "source_id": "BLU",
+                "source_db_id": null,
+                "code": "BLU",
+                "name": "أزرق",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "MAU",
+                "source_id": "MAU",
+                "source_db_id": null,
+                "code": "MAU",
+                "name": "موف",
+                "price_delta_halalas": 0
+              }
+            ]
+          }
+        ],
+        "variants": [],
+        "image_url": "/assets/kps-30-8037793c7cf2.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    },
+    {
+      "product_id": "kps-31",
+      "brand_id": "kps",
+      "source_digest": "f07c60c8297991e77184252d50ab6d2235c704e8066e462f82d37d0ff7cd5120",
+      "source_snapshot": {
+        "id": "kps-31",
+        "brand_id": "kps",
+        "name": "كوب حراري",
+        "category": "☕ الأكواب الحرارية",
+        "price_halalas": 1800,
+        "source_id": "kps-31",
+        "option_groups": [
+          {
+            "id": "COLOR",
+            "source_id": "COLOR",
+            "source_db_id": null,
+            "code": "COLOR",
+            "name": "لون الكوب الحراري",
+            "type": "color",
+            "unit_scope": "per_unit",
+            "required": true,
+            "per_unit": true,
+            "min_select": 1,
+            "max_select": 1,
+            "values": [
+              {
+                "id": "BLK",
+                "source_id": "BLK",
+                "source_db_id": null,
+                "code": "BLK",
+                "name": "أسود",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "BLU",
+                "source_id": "BLU",
+                "source_db_id": null,
+                "code": "BLU",
+                "name": "أزرق",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "MAU",
+                "source_id": "MAU",
+                "source_db_id": null,
+                "code": "MAU",
+                "name": "موف",
+                "price_delta_halalas": 0
+              },
+              {
+                "id": "OFW",
+                "source_id": "OFW",
+                "source_db_id": null,
+                "code": "OFW",
+                "name": "أوف وايت",
+                "price_delta_halalas": 0
+              }
+            ]
+          }
+        ],
+        "variants": [],
+        "image_url": "/assets/kps-31-d8ece8dd82af.jpg",
+        "source_url": "https://kps-order-test.onrender.com/"
+      }
+    }
+  ]
+}

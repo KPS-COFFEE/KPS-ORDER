@@ -1,0 +1,78 @@
+{
+  "date": "2026-10-20",
+  "instruction": "Remove only التوصيل مجانا and old delivery phone 0533845550; preserve product, logo, price and remaining artwork.",
+  "method": "image_gen precise-object-edit",
+  "additional_batch_prompt": "Use case: precise-object-edit. Remove only the free-delivery claim and old phone 0533845550 / 053 384 5550, including their phone pill/border and associated delivery badge/truck. Restore the background. Preserve food, logos, titles, prices, counts and framing. Do not substitute a new phone. Retain source row41 numeral11 and khaliya price19.50 and all4flavor panels.",
+  "images": [
+    {
+      "original": "approved-1d5c846f506902b7.jpg",
+      "source": "https://ibb.co/4wRJsqqK",
+      "source_sha256": "a8a91f2e36e72845813c0399680056b9b7a67021eab1b56ff810a5da0f57a485",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-fd7f5643-2dd9-45da-8656-794228f97bc3.png",
+      "asset": "clean-1d5c846f506902b7.png",
+      "visual_review": "PASS: delivery claim and old phone absent; supplied food, title, price18 and source numeral11 retained. Approved menu quantity10 remains a documented source-art discrepancy."
+    },
+    {
+      "original": "approved-0591372cd12d8df4.jpg",
+      "source": "https://ibb.co/7LnvyRw",
+      "source_sha256": "14dc5ebcdeafcf962961833094a8520eb4ccc29d54d32004baba1aedad9f25b9",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-6b587e7e-2677-490f-836b-589976cba391.png",
+      "asset": "clean-0591372cd12d8df4.png",
+      "visual_review": "PASS: delivery claim and old phone absent; supplied food, title, price16.50 and numeral17 retained."
+    },
+    {
+      "original": "approved-b73f213d553708c1.jpg",
+      "source": "https://ibb.co/Y71svMLq",
+      "source_sha256": "b8637d8fb97d35041aee88a581e36ac8ec3b7a2829a7c1b4555d54d62d5c854a",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-c75a9eba-5cf0-42a1-9789-7e3c79c1f810.png",
+      "asset": "clean-b73f213d553708c1.png",
+      "visual_review": "PASS: delivery claim and old phone absent; supplied food, title, price18 and numeral17 retained."
+    },
+    {
+      "original": "approved-52333d1391dafeb1.jpg",
+      "source": "https://ibb.co/Z6zn17hk",
+      "source_sha256": "c263c205b3357d358a0626fabd3a498eafa1add8fdd9aaf57a8f1f2d49104035",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-358ca5f5-66c2-4641-b6ea-398a4379cca4.png",
+      "asset": "clean-52333d1391dafeb1.png",
+      "visual_review": "PASS: delivery claim and old phone absent; supplied food, title, price20 and numeral15 retained."
+    },
+    {
+      "original": "approved-9d13311fbb324706.jpg",
+      "source": "https://ibb.co/xtjQpZXH",
+      "source_sha256": "bc6e74acac85128c987d08343405793d9d7ebcefcf2755bd9b1d77ab4f0bfc7c",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-1de2dc1f-5af0-4137-9330-3144559473ff.png",
+      "asset": "clean-9d13311fbb324706.png",
+      "visual_review": "PASS: delivery badge and old phone absent; supplied khaliya photos, four flavor panels and price19.50 retained."
+    },
+    {
+      "original": "source-d325d61dca922cdc.jpg",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-890babb9-12e1-4dda-b811-b6eeb4f18ce4.png",
+      "asset": "clean-d325d61dca922cdc.png"
+    },
+    {
+      "original": "source-20b3ac765178214e.jpg",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-5998d934-2069-40d0-ab75-bb1f1d009cee.png",
+      "asset": "clean-20b3ac765178214e.png"
+    },
+    {
+      "original": "source-66eb1ff184914477.jpg",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-24905a80-3eb2-458c-baae-ce9e781d86d0.png",
+      "asset": "clean-66eb1ff184914477.png"
+    },
+    {
+      "original": "source-67b2e8e24e1d8217.jpg",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-f8c40d3a-5dfc-47c3-97bd-1d230442fe50.png",
+      "asset": "clean-67b2e8e24e1d8217.png"
+    },
+    {
+      "original": "source-9b941b822c5ea952.jpg",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-bcf4873d-6fa6-4179-a470-fdee78926b85.png",
+      "asset": "clean-9b941b822c5ea952.png"
+    },
+    {
+      "original": "source-9ef21f8e8294e1f1.jpg",
+      "edited": "/workspace/scratch/ab614471d15c/generated_images/exec-424483d3-e406-4f1b-b15a-97496fdf9627.png",
+      "asset": "clean-9ef21f8e8294e1f1.png"
+    }
+  ]
+}

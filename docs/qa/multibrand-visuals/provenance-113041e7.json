@@ -1,0 +1,24 @@
+{
+  "head": "113041e7e716c13cf47d22c0f5bf3a6f2a8222f8",
+  "workflow_run": 39894859054,
+  "browser_job": 120222810294,
+  "browser_result": "success:131passed",
+  "overall_workflow_result": "failure:startup-upgrade synthetic followup collection fixture",
+  "artifact_id": 12476378584,
+  "artifact_sha256": "7e2028ba9c45065398942b71e4359c08f1371bcd688de870bc3687498e5e9f51",
+  "production_activation": false,
+  "screenshots": [
+    {
+      "file": "kps-approved-gift-390-113041e7.png",
+      "source_artifact_path": "test-results/gift-creative-390.png",
+      "sha256": "a899197d15ff934d2fca1c03912f3e04e91bf4b68a6bf607555ca6263e732d89",
+      "description": "Approved unchanged KPS creative at390px"
+    },
+    {
+      "file": "campaign-report-ar-1366-113041e7.png",
+      "source_artifact_path": "test-results/campaign-report-ar-1366.png",
+      "sha256": "5c688d838cd637ade474cf57d92e606a668ceadb6bc518ff96fbe2341d18c430",
+      "description": "Arabic report at1366px; synthetic ENBISHAN report responses, no activated offer or real sales"
+    }
+  ]
+}
