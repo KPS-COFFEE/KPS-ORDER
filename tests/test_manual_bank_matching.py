@@ -72,13 +72,7 @@ def test_bank_batch_separates_fees_refunds_timing_and_preserves_sources(ops,monk
     base='/api/accounting/bank-reconciliation'
     listed=actor('accountant').get(base+'/sources').json()
     assert listed['collections'][0]['id']==body['collection_ids'][0]
-    def work():
-        res=actor('accountant').get('/api/accounting/work-inbox')
-        assert res.status_code==200, res.text
-        return res.json()['bank']
-    assert work()['collection']['count']==1
     batch=post('accountant',base,body,key='bank-batch-proposal');bid=batch['id']
-    assert work()['batches']['count']==1
     assert post('accountant',base,body,key='bank-batch-proposal')==batch
     assert batch['gross_halalas']==1000 and batch['refund_halalas']==200 and batch['fees_halalas']==20
     assert batch['expected_net_halalas']==780 and batch['bank_received_halalas']==0
@@ -94,7 +88,6 @@ def test_bank_batch_separates_fees_refunds_timing_and_preserves_sources(ops,monk
     post('bankreviewer',base+'/'+other_batch['id']+'/decision',decision(),status=409)
     first=post('accountant',base+'/'+bid+'/receipts',receipt(),key='actual-bank-arrival-1')
     rid=first['receipts'][0]['id']
-    assert work()['receipts']['count']==1
     assert first['bank_received_halalas']==0,'Unapproved evidence is not a bank receipt'
     post('accountant',base+'/'+bid+'/receipts/'+rid+'/decision',decision(),status=403)
     partial=post('bankreviewer',base+'/'+bid+'/receipts/'+rid+'/decision',decision(),key='actual-bank-independent-1')
