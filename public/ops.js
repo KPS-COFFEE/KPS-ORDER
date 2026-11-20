@@ -266,18 +266,19 @@
   }
   function fixedFloatMarkup(s){return `<section class="notice"><strong>${esc(tr('العهدة الدائمة المعتمدة','Approved permanent float'))}: ${money(s.permanent_float?.amount||0)}</strong><p>${esc(tr('تبقى معك ولا تعدّلها. أدخل إجمالي الكاش شامل العهدة.','Keep this amount with you; it cannot be edited. Enter all cash including this float.'))}</p></section>`;}
   function floatSplit(s,counted){const retained=Math.min(counted,Number(s.permanent_float?.amount||0));return {handover_halalas:counted-retained,retained_halalas:retained};}
-  async function floatRegister(){
-    const d=await api('/api/driver-floats');state.floatRegister=d;
+  async function floatRegister(brand){
+    const d=await api('/api/driver-floats',{brand});state.floatRegister={...d,brand};
     const names=Object.fromEntries(d.drivers.map(x=>[x.id,x.display_name]));
     modal(tr('العهدة الدائمة للسائقين','Permanent driver floats'),`<div class="stack"><p>${esc(tr('يسجل المدير إجمالي العهدة المسلّمة فعليًا، ويعتمدها المحاسب بين الشفتات. لا تتغير التقفيلات السابقة.','The manager records the actual total float held; accounting approves between shifts. Past closures do not change.'))}</p>${state.user.role==='delivery_manager'?`<form><label>${esc(tr('السائق','Driver'))}<select name="driver_id" required>${d.drivers.map(x=>`<option value="${esc(x.id)}">${esc(x.display_name)} — ${money(x.current?.amount||0)}</option>`).join('')}</select></label>${amountField(tr('إجمالي العهدة الفعلي الجديد (وليس الزيادة)','New actual total float (not the increase)'),'amount',null)}${field(tr('مرجع التسليم أو الاسترداد','Handover or return reference'),'reference','',{required:true})}${textarea(tr('سبب التسجيل أو التغيير','Reason'),'reason','',true)}${formEnd(tr('إرسال للمحاسب','Send to accountant'))}</form>`:''}${table([tr('السائق','Driver'),tr('العهدة','Float'),tr('الحالة','Status'),tr('الإجراء','Action')],d.requests.map(r=>[esc(names[r.driver_id]),money(r.amount_halalas),esc(r.approved===true?tr('معتمدة','Approved'):r.approved===false?tr('مرفوضة','Rejected'):tr('بانتظار المحاسب','Awaiting accounting')),r.approved==null&&can('accounting_review')?`<button data-action="float-review" data-id="${esc(r.id)}">${esc(tr('مراجعة','Review'))}</button>`:'—']))}</div>`,async fd=>{
       const driver=d.drivers.find(x=>x.id===fd.get('driver_id'));
-      await mutation('/api/driver-floats',{driver_id:driver.id,base_request_id:driver.current?.request_id||null,amount_halalas:cents(fd.get('amount')),reference:fd.get('reference'),reason:fd.get('reason')});await floatRegister();
+      await mutation('/api/driver-floats',{driver_id:driver.id,base_request_id:driver.current?.request_id||null,amount_halalas:cents(fd.get('amount')),reference:fd.get('reference'),reason:fd.get('reason')},undefined,{brand});await floatRegister(brand);
     });
     const input=$('#modal [name=amount]');if(input)input.value='';
   }
   function floatReview(id){
-    const r=state.floatRegister.requests.find(x=>x.id===id);
-    modal(tr('مراجعة العهدة الدائمة','Review permanent float'),`<form><p><strong>${money(r.amount_halalas)}</strong></p><p>${esc(r.reference)} — ${esc(r.reason)}</p><label>${esc(tr('القرار','Decision'))}<select name="approved"><option value="1">${esc(tr('اعتماد','Approve'))}</option><option value="0">${esc(tr('رفض','Reject'))}</option></select></label>${field(tr('مرجع تحقق المحاسبة','Accounting verification reference'),'reference','',{required:true})}${check(tr('راجعت السند والمبلغ الفعلي لدى السائق؛ هذا ليس صرفًا جديدًا كل يوم','I verified the record and actual cash held; this is not a new daily payout'),'confirmed')}${formEnd(tr('حفظ القرار','Save decision'))}</form>`,async fd=>{await mutation('/api/driver-floats/'+encodeURIComponent(id)+'/decision',{approved:fd.get('approved')==='1',confirmed:fd.has('confirmed'),reference:fd.get('reference')});await floatRegister();});
+    const {requests,brand}=state.floatRegister;
+    const r=requests.find(x=>x.id===id);
+    modal(tr('مراجعة العهدة الدائمة','Review permanent float'),`<form><p><strong>${money(r.amount_halalas)}</strong></p><p>${esc(r.reference)} — ${esc(r.reason)}</p><label>${esc(tr('القرار','Decision'))}<select name="approved"><option value="1">${esc(tr('اعتماد','Approve'))}</option><option value="0">${esc(tr('رفض','Reject'))}</option></select></label>${field(tr('مرجع تحقق المحاسبة','Accounting verification reference'),'reference','',{required:true})}${check(tr('راجعت السند والمبلغ الفعلي لدى السائق؛ هذا ليس صرفًا جديدًا كل يوم','I verified the record and actual cash held; this is not a new daily payout'),'confirmed')}${formEnd(tr('حفظ القرار','Save decision'))}</form>`,async fd=>{await mutation('/api/driver-floats/'+encodeURIComponent(id)+'/decision',{approved:fd.get('approved')==='1',confirmed:fd.has('confirmed'),reference:fd.get('reference')},undefined,{brand});refreshAccountingWork(true);await floatRegister(brand);});
   }
   async function reportNoAnswer(id,oid){if(await openTaskIntervention(id,oid,'no_answer'))return;modal(tr('الزبون لا يرد','Customer not responding'),`<form><p>${esc(tr('سجّل محاولة فعلية. يبقى الطلب محفوظًا ويرفع البلاغ للمدير دون إلغاء.','Record an actual attempt. The order stays saved and the manager is alerted; it is not cancelled.'))}</p><label>${esc(tr('طريقة التواصل','Contact method'))}<select name="contact_method"><option value="call">${esc(tr('اتصال هاتفي','Phone call'))}</option><option value="message">${esc(tr('رسالة','Message'))}</option></select></label>${textarea(tr('تفاصيل المحاولة','Attempt details'),'reason','',true)}${formEnd(tr('تسجيل ورفع للمدير','Record and alert manager'))}</form>`,async fd=>{await mutation(`/api/tasks/${encodeURIComponent(id)}/transition`,{status:'problem',contact_method:fd.get('contact_method'),reason:tr('الزبون لا يرد: ','Customer not responding: ')+fd.get('reason')});closeModal();await loadPage();});}
   setInterval(refreshOperationalAlerts,15000);
@@ -3290,7 +3291,7 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
         const view=state.accountingViews[key]??={};
         if(kind==='shift'){view.tab='settlements';view.frozen='';view.openWorkShift=id;}
         if(!await loadPage()||state.page!=='accounting'||state.accountingBrand!==brand)return;
-        if(kind==='float')await floatRegister();
+        if(kind==='float')await floatRegister(state.user.operations_brands?.length?brand:undefined);
         if(['bags','bag-count','bag-review'].includes(kind)){
           const data=await api('/api/cash-bags?pending_only=true');
           const bag=data.bags.find(row=>row.id===id);
