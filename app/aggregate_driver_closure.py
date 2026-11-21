@@ -86,7 +86,7 @@ def receipt_difference(declaration,receipt):
     return receipt['received_halalas']-(declaration['cash_halalas']-declaration['retained_halalas'])
 
 
-def view(c,user,day,legs):
+def view(c,user,day,legs,*,accounting_card=True):
     declaration=latest(c,day['id'])
     receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declaration['id'],)).fetchone() if declaration else None
     allocation=c.execute('SELECT * FROM shared_driver_closure_allocations WHERE declaration_id=%s',(declaration['id'],)).fetchone() if declaration else None
@@ -125,6 +125,21 @@ def view(c,user,day,legs):
             if not bag['custody_review']['financial_treatment']:
                 output['can_allocate']=False
                 if not allocation:output['state']='cash_bag_custody_review_pending'
+    if accounting_card and accounting(user) and output['cash_bag']:
+        for item,(_,shift) in zip(output['legs'],legs):
+            item['manager_shift_id']=shift['manager_shift_id']
+        managers=[shift['manager_shift_id'] for _,shift in legs]
+        manager_rows=c.execute("""SELECT s.id,s.status,s.staffing_ended_at,u.display_name FROM shifts s
+            JOIN users u ON u.id=s.user_id WHERE s.id=ANY(%s) ORDER BY s.id""",(managers,)).fetchall()
+        output['manager_names']=list(dict.fromkeys(r['display_name'] for r in manager_rows))
+        output['manager_duty_pending']=len(manager_rows)!=len(set(managers)) or any(
+            r['status']!='closed' and not r['staffing_ended_at'] for r in manager_rows)
+        output['channels_closed']=bool(review and review['financially_complete'] and
+            not (output['cash_bag'].get('custody_review') and not output['cash_bag']['custody_review']['financially_complete']))
+        if allocation and review:
+            for item,report in zip(allocation['legs'],review.get('reports',[]),strict=False):
+                leg=next((leg for leg in output['legs'] if leg['shift_id']==item['shift_id']),None)
+                if leg is not None:leg['accounting_report']=report
     output['handover_branches']=c.execute('SELECT id,name,city FROM branches WHERE id=ANY(%s) ORDER BY branch_no', (list({bid for _,shift in legs for bid in shift['branch_ids']}),)).fetchall()
     if output['cash_bag'] and not receipt:
         output['state']='awaiting_accounting_receipt' if output['cash_bag']['destination']=='branch' else 'awaiting_manager_receipt'
@@ -180,6 +195,8 @@ class AllocationLeg(ops.OperationBody):
 
 
 class Allocation(ops.OperationBody):
+    record_for_review: StrictBool = False
+    finalize_count_id: str | None = Field(default=None, min_length=1, max_length=200)
     declaration_id:str
     receipt_id:str
     legs:list[AllocationLeg]=Field(min_length=1,max_length=2)
@@ -427,13 +444,42 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
                 c.execute("UPDATE shifts SET status='closed',closed_at=%s,staffing_ended_at=coalesce(staffing_ended_at,%s),approved_by=%s,exception_reason=%s,submission=%s WHERE id=%s",(receipt['created_at'],receipt['created_at'],user['id'],body.reason,db.json(values),s['id']))
                 from .reporting import create_snapshot
                 reports.append(create_snapshot(c,s['id'],user['id']))
+            if body.finalize_count_id:
+                from .shared_driver_accounting import finalize
+                finalize(c,user,day,legs,declaration,receipt,{'legs':[r.model_dump() for r in body.legs]},body.finalize_count_id,for_review=body.record_for_review)
             db.audit(c,user['id'],'shared_driver.allocated','central_workday',day['id'],{'allocation_id':identifier,**body.model_dump(),'report_ids':reports})
             return {'allocation_id':identifier,'report_ids':reports}
-        value=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_driver.allocate:'+day['id'],body.model_dump(),perform)
+        value=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_driver.allocate:'+day['id'],body.model_dump(exclude_none=True,exclude=set() if body.record_for_review else {'record_for_review'}),perform)
         output={**value,**view(c,user,day,legs)}
     from .reporting import generate_files
     for report in value['report_ids']:generate_files(report)
     return output
+
+
+class AccountingClose(ops.OperationBody):
+    record_for_review: StrictBool = False
+    allocation_id: str
+    count_id: str
+    confirmed: StrictBool
+
+
+@router.post(BASE+'/accounting-close')
+def accounting_close(sid:str,body:AccountingClose,request:Request,user=Depends(auth.current_user)):
+    from .shared_driver_accounting import finalize
+    if not accounting(user):raise db.error(403,'SHARED_ACCOUNTANT_REQUIRED','اعتماد المحاسبة مطلوب.')
+    with db.tx() as c:
+        workdays.lock_lanes(c)
+        day,legs=authorize(c,user,sid)
+        def perform():
+            declaration=latest(c,day['id'])
+            row=c.execute('SELECT * FROM shared_driver_closure_allocations WHERE id=%s',(body.allocation_id,)).fetchone()
+            if not body.confirmed or not declaration or not row or row['declaration_id']!=declaration['id']:
+                raise db.error(409,'ALLOCATION_CHANGED','حدّث البطاقة وراجع الإسناد الحالي.')
+            receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE id=%s AND declaration_id=%s',(row['receipt_id'],declaration['id'])).fetchone()
+            if not receipt:raise db.error(409,'RECEIPT_REQUIRED','سجل الاستلام غير مكتمل.')
+            finalize(c,user,day,legs,declaration,receipt,row,body.count_id,for_review=body.record_for_review)
+            return {'recorded':True,'matched_close':not body.record_for_review}
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'driver.accounting_close:'+day['id'],body.model_dump(),perform)
 
 
 @router.get('/shared-driver-closures')
@@ -449,7 +495,7 @@ def inbox(user=Depends(auth.current_user)):
             except HTTPException as error:
                 if error.status_code in {403,404}:continue
                 raise
-            item=view(c,user,day,legs)
+            item=view(c,user,day,legs,accounting_card=False)
             if item.get('allocation') and (item.get('receipt_accounting_review') or {}).get('financially_complete'):continue
             output.append(item)
         return {'workdays':output}

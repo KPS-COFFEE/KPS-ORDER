@@ -217,3 +217,16 @@
 #accounting-work-inbox .ac-work-list { max-height: 16rem; overflow: auto; padding-inline-start: 1.5rem; }
 #accounting-work-inbox button { margin: .2rem; }
 .ac-manager-card summary .ac-next-action { grid-column: 1 / -1; margin: 0; }
+
+.dc-summary {display:grid;gap:.8rem;padding:1rem;border:1px solid #d0d9d4;border-radius:.9rem;background:#f6faf7;color:#172d24}
+.dc-summary header {display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:.45rem}
+.dc-summary header strong {font-size:1.2rem}
+.dc-channels {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:.65rem}
+.dc-channel {padding:.8rem;background:white;border:1px solid #d9e2dc;border-radius:.65rem}
+.dc-channel h3,.dc-summary p,.dc-channel dl {margin:0}
+.dc-channel dl {display:grid;gap:.35rem;margin-block-start:.5rem}
+.dc-channel dl div {display:flex;justify-content:space-between;gap:.75rem}
+.dc-channel dd {margin:0;font-variant-numeric:tabular-nums;font-weight:650}
+.dc-summary p {font-weight:650}
+.dc-brand {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr));gap:.65rem}
+.dc-brand h3 {grid-column:1/-1;margin:0}

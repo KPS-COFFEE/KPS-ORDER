@@ -188,14 +188,12 @@ def test_driver_shared_closure_has_one_cash_card_input_and_accounting_allocation
                 counted.locator('[name=reference]').fill('Witnessed zero cash and card count')
                 counted.locator('[name=confirmed]').check()
                 counted.locator('button[type=submit]').click()
-                expect(accountant_page.locator('#modal')).not_to_be_visible(timeout=30000)
+                expect(accountant_page.locator('.dc-summary')).to_be_visible(timeout=30000)
                 with db.tx() as c:
                     witnessed=c.execute('SELECT n.* FROM driver_cash_bag_counts n JOIN driver_cash_bags b ON b.id=n.bag_id WHERE b.declaration_id=%s',(declaration['id'],)).fetchone()
                     assert witnessed['received_cash_halalas']==0 and witnessed['card_halalas']==0
                     assert witnessed['counted_by']=='dual-accountant'
                     assert c.execute('SELECT received_halalas FROM shared_driver_closure_receipts WHERE id=%s',(physical['id'],)).fetchone()['received_halalas']==physical['received_halalas']
-                accountant_page.locator('[data-action=shared-driver-inbox]').click()
-                accountant_page.locator('[data-action=shared-driver-case][data-id="'+sid+'"]').click()
                 allocation=accountant_page.locator('#central-closure-form')
                 expect(allocation.locator('[name^="cash:"]')).to_have_count(2)
                 expect(allocation.locator('[name^="card:"]')).to_have_count(2)
@@ -206,7 +204,7 @@ def test_driver_shared_closure_has_one_cash_card_input_and_accounting_allocation
                 allocation.locator('[name=reason]').fill('Verified zero-activity brand allocation')
                 allocation.locator('[name=confirmed]').check()
                 allocation.locator('button[type=submit]').click()
-                expect(accountant_page.locator('#modal')).not_to_be_visible(timeout=30000)
+                expect(accountant_page.locator('.dc-summary .dc-channel')).to_have_count(4,timeout=30000)
                 assert not accountant_errors,accountant_errors
             finally:accountant_ctx.close()
             with db.tx() as c:
