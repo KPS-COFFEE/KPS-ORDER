@@ -95,6 +95,8 @@ def build(order, number, issued_at, *, seller=None):
     if order['snapshot'].get('gift'):
         doc['buyer'] = deepcopy(order['snapshot']['gift']['purchaser'])
         doc['gift_order'] = True
+    if order['snapshot'].get('delivery_recipient'):
+        doc['buyer'] = deepcopy(order['snapshot']['delivery_recipient']['purchaser'])
     doc['qr_text'] = encode_qr(doc)
     return doc
 

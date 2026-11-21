@@ -202,7 +202,7 @@ def quote_delivery_center_order(body: DeliveryCenterOrder,
         raise db.error(403, 'BRAND_FORBIDDEN', 'البراند خارج نطاقك.')
     if body.service != 'delivery':
         raise db.error(422, 'DELIVERY_ONLY', 'طلب مركز التوصيل مخصص للتوصيل.')
-    if body.gift or body.benefit_code or body.cashback_halalas:
+    if body.gift or body.delivery_recipient or body.benefit_code or body.cashback_halalas:
         raise db.error(422, 'CUSTOMER_BENEFIT_IDENTITY_REQUIRED', 'المزايا والإهداء من حساب العميل الموثق. / Use the verified purchaser account.')
     with db.tx() as conn:
         delivery_center_scope(conn, user, body.branch_id)
@@ -243,7 +243,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
         phone_required=False if delivery_center else user.get('customer_phone_required')
         if phone_required is None:phone_required=auth.customer_phone_required(conn,body.brand_id)
         if delivery_center:
-            if body.gift or body.benefit_code or body.cashback_halalas:
+            if body.gift or body.delivery_recipient or body.benefit_code or body.cashback_halalas:
                 raise db.error(422,'CUSTOMER_BENEFIT_IDENTITY_REQUIRED','المزايا والإهداء من حساب العميل الموثق. / Use the verified purchaser account.')
             if body.service != 'delivery':
                 raise db.error(422,'DELIVERY_ONLY','طلب مركز التوصيل مخصص للتوصيل.')
@@ -326,7 +326,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 raise db.error(422,'CUSTOMER_PHONE_REQUIRED','أدخل رقم اتصال صحيحًا قبل الطلب.')
             if phone_required and customer['phone'] != user.get('phone'):
                 raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','تحقق من الرقم الجديد قبل الطلب.')
-            if body.service=='delivery' and phone_required and not body.gift:
+            if body.service=='delivery' and phone_required and not (body.gift or body.delivery_recipient):
                 address_key='addr_'+hashlib.sha256((user['id']+json.dumps({k:customer.get(k) for k in ('address','neighborhood','location')},sort_keys=True)).encode()).hexdigest()
                 loc=customer.get('location') or {}
                 conn.execute('INSERT INTO customer_addresses(id,customer_id,brand_id,label,address,neighborhood,lat,lng) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET updated_at=now()', (address_key,user['id'],user['brand_id'],customer['neighborhood'],customer['address'],customer['neighborhood'],loc.get('lat'),loc.get('lng')))
