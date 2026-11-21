@@ -1854,7 +1854,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     const s=original?.shift||x.shift,own=s.user_id===state.user.id,manager=state.user.role==='delivery_manager'&&!own;
     const dec=x.declaration,submitted=Boolean(dec&&!x.returned),canSubmit=!submitted&&((own&&s.status==='closing')||(manager&&['open','closing'].includes(s.status)));
     const bag=x.cash_bag;
-    const accountingCard=bag && can('accounting_review') && ['owner','admin'].includes(state.user.role);
+    const accountingCard=bag && typeof x.manager_duty_pending==='boolean' && ['owner','admin'].includes(state.user.role) && can('accounting_review');
     if(accountingCard)state.cashBags=[...(state.cashBags||[]).filter(item=>item.id!==bag.id),bag];
     const summary=accountingCard?driverCloseSummary(x):'';
     const clearChannels=accountingCard && bag.count_id && !x.cash_difference_halalas && !x.card_difference_halalas &&
@@ -1912,7 +1912,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
         const legs=x.legs.map(l=>{const cash=cents(fd.get('cash:'+l.shift_id)),retained=cents(fd.get('retained:'+l.shift_id)),difference=x.receipt_treatment?signedCents(fd.get('receipt_difference:'+l.shift_id)):0,received=cash-retained-difference;if(retained>cash||received<0)throw new Error(tr('راجع النقد والعهدة وفرق الاستلام لهذا البراند','Review cash, float and receipt difference for this brand'));return {shift_id:l.shift_id,counted_halalas:cash,retained_halalas:retained,received_halalas:received,receipt_difference_halalas:difference,terminal_total_halalas:cents(fd.get('card:'+l.shift_id)),evidence:fd.get('evidence:'+l.shift_id)};});
         await mutation('/api/central-operations/workdays/'+encodeURIComponent(id)+'/physical-allocation',{declaration_id:dec.id,receipt_id:x.receipt.id,legs,reason:fd.get('reason'),confirmed:true,...(canRecord?{finalize_count_id:bag.count_id,record_for_review:!finalReady||fd.get('closing_mode')==='attribute'}:{})});state.closureDirty=false;closeModal();refreshAccountingWork(true);await loadPage();if(accountingCard)await sharedDriverClosure(id);
       });
-      const mode=$('#modal [name=closing_mode]');
+      const mode=finalReady?$('#modal [name=closing_mode]'):null;
       if(mode)mode.onchange=()=>{mode.form.querySelector('button[type=submit]').textContent=mode.value==='final'?tr('اعتماد وإقفال تقفيلة السائق','Approve and close driver settlement'):tr('توثيق الموازنة لمراجعة الفرق','Record balance for variance review');};
       bindSharedClosureDirty();return;
     }
