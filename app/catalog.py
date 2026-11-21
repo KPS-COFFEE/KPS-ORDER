@@ -690,10 +690,13 @@ class OrderItem(_CheckoutModel):
     note: str = Field(default='', max_length=300)
 
 
-class GiftInfo(_CheckoutModel):
+class DeliveryRecipient(_CheckoutModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     recipient_name: str = Field(min_length=1,max_length=100)
     recipient_phone: str = Field(min_length=8,max_length=30)
+
+
+class GiftInfo(DeliveryRecipient):
     message: str = Field(default='',max_length=500)
 
 
@@ -712,6 +715,7 @@ class QuoteBody(_CheckoutModel):
     benefit_code: str = Field(default='',pattern=r'^(?:[A-Z0-9_-]{3,50})?$')
     cashback_halalas: StrictInt = Field(default=0,ge=0,le=10000000)
     gift: GiftInfo | None = None
+    delivery_recipient: DeliveryRecipient | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode='before')
     @classmethod
@@ -793,7 +797,7 @@ def order_request_payload(body):
     # Preserve fingerprints of already committed ordinary orders across this
     # additive release. Non-default new fields remain part of the replay key.
     payload=body.model_dump()
-    for field in ('benefit_code','cashback_halalas','gift'):
+    for field in ('benefit_code','cashback_halalas','gift','delivery_recipient'):
         if not payload.get(field):
             payload.pop(field,None)
     for field in ('expected_gift', 'expected_gift_version'):
