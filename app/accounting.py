@@ -788,9 +788,10 @@ def variance_confirmation(c, report_id, revision):
       (report_id,str(revision))).fetchone()
 
 
-def driver_settlement_scope(c, user, report_id):
-    # Lock the parent to serialize first approval, amendments and final receipt.
-    row = c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind IN ('driver','manager') FOR UPDATE",
+def driver_settlement_scope(c, user, report_id, *, lock=True):
+    # Writers serialize on the parent; reading ticket history only needs the same scope checks.
+    query = "SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind IN ('driver','manager')"
+    row = c.execute(query + (" FOR UPDATE" if lock else ""),
                     (report_id, user['brand_id'])).fetchone()
     if not row or ((user['role'] != 'owner' or user.get('home_brand_id')) and not set(row['branch_ids']) <= set(user.get('branch_ids', []))):
         fail('REPORT_SCOPE', 'التقفيلة غير متاحة.', 404)
@@ -946,7 +947,7 @@ class DriverCashCorrectionApproval(Note):
 def cash_correction_requests(c,user,report_id):
     # Audit events are the append-only ticket ledger. Scope is checked before
     # querying so saved tickets never expose another brand or branch.
-    driver_settlement_scope(c,user,report_id)
+    driver_settlement_scope(c,user,report_id,lock=False)
     events=c.execute("""SELECT a.*,u.display_name actor_name FROM audit_events a
       JOIN users u ON u.id=a.actor_id WHERE a.entity_type='report' AND a.entity_id=%s
       AND a.action IN ('accounting.cash_correction.requested','accounting.cash_correction.approved','accounting.cash_correction.rejected')
