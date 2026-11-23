@@ -82,42 +82,54 @@ class Count(ops.OperationBody):
 def inbox(user=Depends(auth.current_user), pending_only:bool=False):
     if not accounting(user):raise db.error(403,'ACCOUNTANT_REQUIRED','جرد الأكياس للمحاسبة المخولة.')
     with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         days.require_enabled(user,'accounting_review')
-        result=[]
-        query = "SELECT b.*,d.anchor_shift_id,u.display_name driver_name,br.name branch_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id WHERE NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id)"
-        if pending_only:
-            # Include uncounted bags and counted bags with a custody difference.
-            query += """ AND NOT EXISTS (
-                SELECT 1 FROM driver_cash_bag_counts n
-                LEFT JOIN shared_driver_closure_receipts r ON r.declaration_id=b.declaration_id
-                WHERE n.bag_id=b.id AND n.card_halalas=b.declared_card_halalas
-                  AND (r.id IS NULL OR n.received_cash_halalas=r.received_halalas))"""
-        query += ' ORDER BY b.deposited_at DESC'
-        if not pending_only:
-            query += ' LIMIT 500'
-        for b in c.execute(query).fetchall():
-            try:day,legs=authorize(c,user,b['anchor_shift_id'])
-            except HTTPException as exc:
-                if exc.status_code in (403,404):continue
-                raise
-            row=bag_view(c,day['id'])
-            if row['id']!=b['id']:continue
-            row=dict(row,anchor_shift_id=b['anchor_shift_id'], shift_ids=sorted({s['id'] for _,s in legs}), manager_shift_ids=sorted({s['manager_shift_id'] for _,s in legs if s.get('manager_shift_id')}))
-            receipt=c.execute('SELECT id FROM shared_driver_closure_receipts WHERE declaration_id=%s',(b['declaration_id'],)).fetchone()
-            row['ready_to_count']=b['destination']=='branch' or bool(receipt)
-            row['state']='counted' if row['count_id'] else 'awaiting_accounting_receipt' if row['ready_to_count'] else 'awaiting_manager_receipt'
-            row['cash_difference_halalas']=row['received_cash_halalas']-b['declared_cash_halalas'] if row['count_id'] else None
-            full_receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE declaration_id=%s',(b['declaration_id'],)).fetchone()
-            row['accounting_custody_difference_halalas']=row['received_cash_halalas']-full_receipt['received_halalas'] if row['count_id'] and full_receipt else None
-            row['accounting_custody_card_difference_halalas']=row['card_halalas']-row['declared_card_halalas'] if row['count_id'] else None
-            row['accounting_custody_review_required']=False
-            if row['accounting_custody_difference_halalas'] or row['accounting_custody_card_difference_halalas']:
-                from .cash_bag_custody import projection
-                row['custody_review']=projection(c,b['id'],{'id':row['count_id'],'received_cash_halalas':row['received_cash_halalas'],'card_halalas':row['card_halalas'],'declared_card_halalas':row['declared_card_halalas']},full_receipt)
-                row['accounting_custody_review_required']=not row['custody_review']['period_approval_allowed']
-            if not pending_only or not row['count_id'] or not (row.get('custody_review') or {}).get('financially_complete', True):
-                result.append(row)
-        return ops.safe({'bags':result})
+        return ops.safe({'bags':authorized_bags(c,user,pending_only=pending_only)})
+
+
+def authorized_bags(c,user,*,pending_only=False,manager_ids=None):
+    result=[]
+    query = "SELECT b.*,d.anchor_shift_id,u.display_name driver_name,br.name branch_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id WHERE NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id)"
+    params = []
+    if manager_ids is not None:
+        if not manager_ids:
+            return []
+        query += """ AND EXISTS (SELECT 1 FROM central_workday_legs leg
+            JOIN shifts child ON child.id=leg.shift_id
+            WHERE leg.workday_id=b.workday_id AND child.manager_shift_id=ANY(%s))"""
+        params.append(manager_ids)
+    if pending_only:
+        # Include uncounted bags and counted bags with a custody difference.
+        query += """ AND NOT EXISTS (
+            SELECT 1 FROM driver_cash_bag_counts n
+            LEFT JOIN shared_driver_closure_receipts r ON r.declaration_id=b.declaration_id
+            WHERE n.bag_id=b.id AND n.card_halalas=b.declared_card_halalas
+              AND (r.id IS NULL OR n.received_cash_halalas=r.received_halalas))"""
+    query += ' ORDER BY b.deposited_at DESC'
+    if not pending_only and manager_ids is None:
+        query += ' LIMIT 500'
+    for b in c.execute(query,params).fetchall():
+        try:day,legs=authorize(c,user,b['anchor_shift_id'],lock=False)
+        except HTTPException as exc:
+            if exc.status_code in (403,404):continue
+            raise
+        row=bag_view(c,day['id'])
+        if not row or row['id']!=b['id']:continue
+        row=dict(row,anchor_shift_id=b['anchor_shift_id'], shift_ids=sorted({s['id'] for _,s in legs}), manager_shift_ids=sorted({s['manager_shift_id'] for _,s in legs if s.get('manager_shift_id')}))
+        full_receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE declaration_id=%s',(b['declaration_id'],)).fetchone()
+        row['ready_to_count']=b['destination']=='branch' or bool(full_receipt)
+        row['state']='counted' if row['count_id'] else 'awaiting_accounting_receipt' if row['ready_to_count'] else 'awaiting_manager_receipt'
+        row['cash_difference_halalas']=row['received_cash_halalas']-b['declared_cash_halalas'] if row['count_id'] else None
+        row['accounting_custody_difference_halalas']=row['received_cash_halalas']-full_receipt['received_halalas'] if row['count_id'] and full_receipt else None
+        row['accounting_custody_card_difference_halalas']=row['card_halalas']-row['declared_card_halalas'] if row['count_id'] else None
+        row['accounting_custody_review_required']=False
+        if row['accounting_custody_difference_halalas'] or row['accounting_custody_card_difference_halalas']:
+            from .cash_bag_custody import projection
+            row['custody_review']=projection(c,b['id'],{'id':row['count_id'],'received_cash_halalas':row['received_cash_halalas'],'card_halalas':row['card_halalas'],'declared_card_halalas':row['declared_card_halalas']},full_receipt)
+            row['accounting_custody_review_required']=not row['custody_review']['period_approval_allowed']
+        if not pending_only or not row['count_id'] or not (row.get('custody_review') or {}).get('financially_complete', True):
+            result.append(row)
+    return result
 
 
 @router.post('/{bid}/count')

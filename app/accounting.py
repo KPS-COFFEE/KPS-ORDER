@@ -1117,6 +1117,7 @@ def confirm_driver_variance(report_id:str,body:DriverVarianceConfirmation,reques
 def accounting_manager_cards(offset:int=Query(0,ge=0),page_size:int=Query(20,ge=1,le=50),focus_id:str=Query('',max_length=150),user=Depends(access)):
     from .accounting_statements import manager_cards
     with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         bids=[b['id'] for b in branches(c,user)]
         result=manager_cards(c,user,bids,page_size=page_size,offset=offset)
         if focus_id and not any(card['id']==focus_id for card in result['cards']):
@@ -1134,6 +1135,15 @@ def accounting_manager_cards(offset:int=Query(0,ge=0),page_size:int=Query(20,ge=
             """,(ids,)).fetchall()}
             for card in result['cards']:
                 card['can_split_manager_days']=card['id'] in eligible
+        from . import cash_bags, central_operations
+        if result['cards'] and central_operations.enabled() and cash_bags.accounting(user):
+            by_manager = {card['id']: [] for card in result['cards']}
+            for bag in cash_bags.authorized_bags(c, user, manager_ids=list(by_manager)):
+                for manager_id in bag['manager_shift_ids']:
+                    if manager_id in by_manager:
+                        by_manager[manager_id].append(bag)
+            for card in result['cards']:
+                card['cash_bags'] = by_manager[card['id']]
         return result
 
 
