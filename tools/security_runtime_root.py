@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import ssl
 
 root = Path('/runtime-root')
 local = Path('/usr/local')
@@ -60,6 +61,9 @@ while pending:
         else:
             raise RuntimeError('Unresolved installed package dependency: ' + group)
 
+if packages.intersection({"libssl3t64", "openssl-provider-legacy"}):
+    raise RuntimeError("Unexpected second OpenSSL implementation in the runtime closure")
+
 for package in packages:
     name = package.split(':')[0]
     if name in {'libacl1', 'libmount1', 'libblkid1', 'util-linux', 'mount', 'gzip', 'ncurses-bin', 'libtinfo6', 'libsqlite3-0', 'libuuid1'}:
@@ -108,6 +112,12 @@ legacy = root / 'var/lib/dpkg/status'
 if legacy.exists():
     names = {x['package'] for x in records}
     legacy.write_text('\n\n'.join(block for block in legacy.read_text().split('\n\n') if not any(f'Package: {name}\n' in block + '\n' for name in names)) + '\n')
+trust_bundle = root / 'etc/ssl/certs/ca-certificates.crt'
+if not trust_bundle.is_file():
+    raise RuntimeError("Missing system CA bundle")
+certificate_file = root / 'etc/ssl/cert.pem'
+if not certificate_file.exists() and not certificate_file.is_symlink():
+    certificate_file.symlink_to('certs/ca-certificates.crt')
 if with_shell:
     shell = root / 'usr/bin/sh'
     if shell.exists() or shell.is_symlink():
@@ -120,6 +130,6 @@ for p in root.rglob('*'):
         p.chmod(p.stat().st_mode & ~0o6000)
 manifest = root / 'usr/local/share/kps/runtime-packages.json'
 manifest.parent.mkdir(parents=True, exist_ok=True)
-manifest.write_text(json.dumps({'suite': 'trixie', 'python': '3.12', 'rollback_shell': with_shell, 'complete_packages': records}, indent=2) + '\n')
+manifest.write_text(json.dumps({'suite': 'trixie', 'python': '3.12', 'openssl': ssl.OPENSSL_VERSION, 'rollback_shell': with_shell, 'complete_packages': records}, indent=2) + '\n')
 shutil.copyfile('/tmp/container_entrypoint.py', root / 'usr/local/bin/kps-order-start.py')
 print(manifest.read_text())

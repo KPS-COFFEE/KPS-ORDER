@@ -1,11 +1,20 @@
 # All OS inputs are Debian 13; no Bookworm/Sid packages are mixed.
 FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:8c563c1fb5e120606f0d85733049775faed6192e2bd2223ef283a5393eec22b9 AS runtime-base
-FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS build
+FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS python-base
+
+FROM python-base AS openssl-build
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends build-essential perl curl gnupg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY tools/build_runtime_openssl.sh /tmp/build_runtime_openssl.sh
+RUN sh /tmp/build_runtime_openssl.sh
+
+FROM python-base AS build
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PORT=10000
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends fonts-dejavu-core libstdc++6 libssl3t64 zlib1g \
+    && apt-get install --yes --no-install-recommends fonts-dejavu-core libstdc++6 zlib1g \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' zlib1g)" ge '1:1.3.dfsg+really1.3.1-1+deb13u1' \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 kpsorder \
@@ -25,7 +34,11 @@ COPY --chown=kpsorder:kpsorder tools/central_activation_preflight.py tools/produ
 COPY --chown=kpsorder:kpsorder tools/enbishan_workbook.py ./tools/enbishan_workbook.py
 COPY --chown=kpsorder:kpsorder tools/windows-print-bridge/ ./tools/windows-print-bridge/
 
+COPY --from=openssl-build /openssl-runtime/usr/local/ /usr/local/
+ENV LD_LIBRARY_PATH=/usr/local/lib
+RUN python -c "import ssl; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 10), ssl.OPENSSL_VERSION"
 COPY --from=runtime-base / /runtime-root/
+COPY --from=openssl-build /openssl-runtime/etc/ssl/openssl.cnf /runtime-root/etc/ssl/openssl.cnf
 COPY tools/security_runtime_root.py /tmp/security_runtime_root.py
 COPY tools/container_entrypoint.py /tmp/container_entrypoint.py
 FROM build AS candidate-build
@@ -43,6 +56,7 @@ WORKDIR /app
 COPY --from=rollback-build /runtime-root/ /
 COPY --from=build --chown=10001:10001 /app/ /app/
 USER 10001:10001
+RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 10); assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
 EXPOSE 10000
 ENTRYPOINT []
 CMD ["/bin/sh", "-c", "exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 2 --timeout-keep-alive 15"]
@@ -54,6 +68,7 @@ WORKDIR /app
 COPY --from=candidate-build /runtime-root/ /
 COPY --from=build --chown=10001:10001 /app/ /app/
 USER 10001:10001
+RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 10); assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
 EXPOSE 10000
 ENTRYPOINT []
 CMD ["/usr/local/bin/python", "/usr/local/bin/kps-order-start.py"]
