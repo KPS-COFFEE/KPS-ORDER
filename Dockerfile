@@ -36,7 +36,7 @@ COPY --chown=kpsorder:kpsorder tools/windows-print-bridge/ ./tools/windows-print
 
 COPY --from=openssl-build /openssl-runtime/usr/local/ /usr/local/
 ENV LD_LIBRARY_PATH=/usr/local/lib
-RUN python -c "import ssl; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 9), ssl.OPENSSL_VERSION"
+RUN python -c "import ssl; assert ssl.OPENSSL_VERSION_NUMBER == 0x30500090, ssl.OPENSSL_VERSION"
 COPY --from=runtime-base / /runtime-root/
 COPY --from=openssl-build /openssl-runtime/etc/ssl/openssl.cnf /runtime-root/etc/ssl/openssl.cnf
 COPY tools/security_runtime_root.py /tmp/security_runtime_root.py
@@ -56,7 +56,7 @@ WORKDIR /app
 COPY --from=rollback-build /runtime-root/ /
 COPY --from=build --chown=10001:10001 /app/ /app/
 USER 10001:10001
-RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 9); assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
+RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_NUMBER == 0x30500090; assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
 EXPOSE 10000
 ENTRYPOINT []
 CMD ["/bin/sh", "-c", "exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 2 --timeout-keep-alive 15"]
@@ -68,7 +68,7 @@ WORKDIR /app
 COPY --from=candidate-build /runtime-root/ /
 COPY --from=build --chown=10001:10001 /app/ /app/
 USER 10001:10001
-RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 9); assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
+RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_NUMBER == 0x30500090; assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
 EXPOSE 10000
 ENTRYPOINT []
 CMD ["/usr/local/bin/python", "/usr/local/bin/kps-order-start.py"]
