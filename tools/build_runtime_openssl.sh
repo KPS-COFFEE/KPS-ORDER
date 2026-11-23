@@ -17,7 +17,7 @@ gpg --batch --export "$signer" > release-key.gpg
 test -s release-key.gpg
 curl --fail --location --retry 2 --output "$archive" "$release/$archive"
 curl --fail --location --retry 2 --output "$archive.asc" "$release/$archive.asc"
-gpgv --keyring "$build_dir/release-key.gpg" "$archive.asc" "$archive"
+gpg --batch --no-default-keyring --keyring "$build_dir/release-key.gpg" --verify "$archive.asc" "$archive"
 printf '%s  %s\n' 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a "$archive" | sha256sum -c -
 tar -xzf "$archive"
 cd "openssl-$version"
