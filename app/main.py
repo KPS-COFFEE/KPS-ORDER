@@ -116,6 +116,8 @@ from . import branch_payments, branch_payment_renewal
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
+from . import driver_order_sounds
+app.include_router(driver_order_sounds.router)
 from . import customer_message_routing
 app.include_router(customer_message_routing.router)
 from . import experience_policy
@@ -292,6 +294,13 @@ def metric_definitions(user=Depends(auth.current_user)):
         raise db.error(403, 'STAFF_REQUIRED', 'تعريفات تقارير التشغيل متاحة للموظفين المخولين.')
     return FileResponse(ROOT / 'docs' / 'metrics.md', media_type='text/plain; charset=utf-8',
                         headers={'Cache-Control': 'no-store'})
+
+
+@app.api_route('/favicon.ico', methods=['GET', 'HEAD'])
+async def favicon(request: Request):
+    from .storefront_scope import default_brand
+    image = 'enbishan-favicon.ico' if default_brand() == 'enbishan' else 'kps-favicon.ico'
+    return await StaticFiles(directory=PUBLIC / 'assets').get_response(image, request.scope)
 
 
 @app.get('/{filename}')
