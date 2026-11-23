@@ -788,9 +788,10 @@ def variance_confirmation(c, report_id, revision):
       (report_id,str(revision))).fetchone()
 
 
-def driver_settlement_scope(c, user, report_id):
-    # Lock the parent to serialize first approval, amendments and final receipt.
-    row = c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind IN ('driver','manager') FOR UPDATE",
+def driver_settlement_scope(c, user, report_id, *, lock=True):
+    # Writers serialize on the parent; reading ticket history only needs the same scope checks.
+    query = "SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind IN ('driver','manager')"
+    row = c.execute(query + (" FOR UPDATE" if lock else ""),
                     (report_id, user['brand_id'])).fetchone()
     if not row or ((user['role'] != 'owner' or user.get('home_brand_id')) and not set(row['branch_ids']) <= set(user.get('branch_ids', []))):
         fail('REPORT_SCOPE', 'التقفيلة غير متاحة.', 404)
@@ -946,7 +947,7 @@ class DriverCashCorrectionApproval(Note):
 def cash_correction_requests(c,user,report_id):
     # Audit events are the append-only ticket ledger. Scope is checked before
     # querying so saved tickets never expose another brand or branch.
-    driver_settlement_scope(c,user,report_id)
+    driver_settlement_scope(c,user,report_id,lock=False)
     events=c.execute("""SELECT a.*,u.display_name actor_name FROM audit_events a
       JOIN users u ON u.id=a.actor_id WHERE a.entity_type='report' AND a.entity_id=%s
       AND a.action IN ('accounting.cash_correction.requested','accounting.cash_correction.approved','accounting.cash_correction.rejected')
@@ -1117,6 +1118,7 @@ def confirm_driver_variance(report_id:str,body:DriverVarianceConfirmation,reques
 def accounting_manager_cards(offset:int=Query(0,ge=0),page_size:int=Query(20,ge=1,le=50),focus_id:str=Query('',max_length=150),user=Depends(access)):
     from .accounting_statements import manager_cards
     with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         bids=[b['id'] for b in branches(c,user)]
         result=manager_cards(c,user,bids,page_size=page_size,offset=offset)
         if focus_id and not any(card['id']==focus_id for card in result['cards']):
@@ -1134,6 +1136,15 @@ def accounting_manager_cards(offset:int=Query(0,ge=0),page_size:int=Query(20,ge=
             """,(ids,)).fetchall()}
             for card in result['cards']:
                 card['can_split_manager_days']=card['id'] in eligible
+        from . import cash_bags, central_operations
+        if result['cards'] and central_operations.enabled() and cash_bags.accounting(user):
+            by_manager = {card['id']: [] for card in result['cards']}
+            for bag in cash_bags.authorized_bags(c, user, manager_ids=list(by_manager)):
+                for manager_id in bag['manager_shift_ids']:
+                    if manager_id in by_manager:
+                        by_manager[manager_id].append(bag)
+            for card in result['cards']:
+                card['cash_bags'] = by_manager[card['id']]
         return result
 
 

@@ -22,7 +22,15 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
  assert.match(mixed,/RELEASED: Driver duty ended;[^<]+Responsible: accounting/);
  assert.match(mixed,/OPEN: End the driver shift and send its closure — Responsible: delivery manager/);
 
- assert.match(context.managerCardNext({financial_ledger_closed:false}),/collect and count the bag/);
+ assert.match(context.managerCardNext({financial_ledger_closed:false}),/declaration and allocation/);
+ const bags=Array.from({length:10},(_,i)=>({id:'bag-'+i,shift_ids:['driver-'+i],driver_name:'Driver '+i,ready_to_count:true,count_id:i<4?'count-'+i:null,counted_by_name:'Witness',counted_at:'2026-11-22',received_cash_halalas:i===0?0:100}));
+ const mixedCard={id:'evening',financial_ledger_closed:false,cash_bags:bags,drivers:[],pending_drivers:bags.map((b,i)=>({id:'driver-'+i,driver_name:b.driver_name,responsible:'accounting'}))};
+ const bagHtml=context.managerCardDrivers(mixedCard);
+ assert.match(context.managerCardNext(mixedCard),/Counted 4 of 10 bags/);
+ assert.equal((bagHtml.match(/data-manager-bag-count=/g)||[]).length,6);
+ assert.equal((bagHtml.match(/Counted by Witness/g)||[]).length,4);
+ assert.match(bagHtml,/Actually counted: 0/);
+ assert(!bagHtml.includes('No bag linked'));
  assert.match(context.managerCardNext({operationally_closed:false,financial_ledger_closed:false}),/delivery manager completes end-of-duty/);
  assert.match(context.managerCardBlockers({blockers:[{reason:'manager_shift_open',responsible:'delivery_manager'}]}),/Complete the overdue manager shift[^<]+Responsible: delivery manager/);
  const pendingDeadline=context.managerCardDrivers({id:'missing-report',drivers:[],pending_drivers:[{id:'driver-old',driver_name:'OVERDUE DRIVER',responsible:'accounting',due_at:'2026-01-02T16:00:00+03:00',overdue:true}]});

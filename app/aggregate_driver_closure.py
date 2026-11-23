@@ -31,10 +31,10 @@ def accounting(user):
     return user['role'] in {'owner','admin'} and auth.has_permission(user,'accounting_review')
 
 
-def authorize(c,user,sid,*,manager=False):
+def authorize(c,user,sid,*,manager=False,lock=True):
     workdays.require_enabled(user,'accounting_review' if accounting(user) else 'shifts_view',existing_sid=sid)
     day,legs=workdays.authorized(c,user,sid,manager=manager,capability='accounting_review' if accounting(user) else None,
-                               historical_closure=True)
+                               historical_closure=True,lock=lock)
     if day['kind']!='driver':raise db.error(409,'SHARED_DRIVER_REQUIRED','اختر وردية سائق.')
     return day,workdays.ordered(legs,day['anchor_shift_id'])
 
@@ -96,8 +96,7 @@ def view(c,user,day,legs):
     review=allocated_review(c,day['id']) if allocation else None
     treatment=shared_approved(c,day['id'],declaration['id'],receipt['id']) if declaration and receipt else None
     expected=sum(row['expected_halalas'] for row in declaration['expected_snapshot']) if declaration else sum(ops.balance(c,s) for _,s in legs)
-    cards=sum(ops.blind_closure.card_reconciliation(c,s['id'],0,(s.get('external_enbishan') or {}).get('card_halalas',0))['expected_card_halalas'] for _,s in legs)
-    if declaration:cards=sum(row['expected_card_halalas'] for row in declaration['expected_snapshot'])
+    cards=sum(row['expected_card_halalas'] for row in declaration['expected_snapshot']) if declaration else sum(ops.blind_closure.card_reconciliation(c,s['id'],0,(s.get('external_enbishan') or {}).get('card_halalas',0))['expected_card_halalas'] for _,s in legs)
     output={'driver_id':day['user_id'],'driver_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],'shift':{'id':day['anchor_shift_id'],'kind':'driver','user_id':day['user_id'],'status':legs[0][1]['status'],'delivery_operational_date':legs[0][1]['delivery_operational_date']},'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'declaration':declaration,'receipt':receipt,'allocation':allocation,'returned':returned,
       'state':'allocated_amount_settled' if allocation and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if allocation and treatment else 'allocated' if allocation else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_receipt' if declaration else 'awaiting_driver',
       'expected_cash_halalas':expected,'expected_card_halalas':cards,
@@ -442,10 +441,11 @@ def inbox(user=Depends(auth.current_user)):
     from fastapi import HTTPException
     with db.tx() as c:
         if not multibrand.enabled():return {'workdays':[]}
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         rows=c.execute("SELECT DISTINCT w.anchor_shift_id FROM central_workdays w JOIN shared_driver_closure_declarations d ON d.workday_id=w.id JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE a.id IS NULL OR EXISTS (SELECT 1 FROM audit_events t WHERE t.entity_type='central_workday' AND t.entity_id=w.id AND t.action='accounting.financial_treatment.approved' AND t.details->>'declaration_id'=d.id AND t.details->>'receipt_id'=r.id AND t.details->>'kind'='outstanding') ORDER BY w.anchor_shift_id").fetchall()
         output=[]
         for row in rows:
-            try:day,legs=authorize(c,user,row['anchor_shift_id'])
+            try:day,legs=authorize(c,user,row['anchor_shift_id'],lock=False)
             except HTTPException as error:
                 if error.status_code in {403,404}:continue
                 raise
