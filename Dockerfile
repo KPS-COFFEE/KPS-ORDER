@@ -4,7 +4,7 @@ FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269
 
 FROM python-base AS openssl-build
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends build-essential perl curl gnupg ca-certificates \
+    && apt-get install --yes --no-install-recommends build-essential perl curl patch gnupg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY tools/build_runtime_openssl.sh /tmp/build_runtime_openssl.sh
 RUN sh /tmp/build_runtime_openssl.sh
@@ -36,7 +36,7 @@ COPY --chown=kpsorder:kpsorder tools/windows-print-bridge/ ./tools/windows-print
 
 COPY --from=openssl-build /openssl-runtime/usr/local/ /usr/local/
 ENV LD_LIBRARY_PATH=/usr/local/lib
-RUN python -c "import ssl; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 10), ssl.OPENSSL_VERSION"
+RUN python -c "import ssl; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 9), ssl.OPENSSL_VERSION"
 COPY --from=runtime-base / /runtime-root/
 COPY --from=openssl-build /openssl-runtime/etc/ssl/openssl.cnf /runtime-root/etc/ssl/openssl.cnf
 COPY tools/security_runtime_root.py /tmp/security_runtime_root.py
@@ -56,7 +56,7 @@ WORKDIR /app
 COPY --from=rollback-build /runtime-root/ /
 COPY --from=build --chown=10001:10001 /app/ /app/
 USER 10001:10001
-RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 10); assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
+RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 9); assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
 EXPOSE 10000
 ENTRYPOINT []
 CMD ["/bin/sh", "-c", "exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 2 --timeout-keep-alive 15"]
@@ -68,7 +68,7 @@ WORKDIR /app
 COPY --from=candidate-build /runtime-root/ /
 COPY --from=build --chown=10001:10001 /app/ /app/
 USER 10001:10001
-RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 10); assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
+RUN ["/usr/local/bin/python", "-c", "import ssl, hashlib; assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 9); assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; assert hashlib.sha256(b'kps').digest()"]
 EXPOSE 10000
 ENTRYPOINT []
 CMD ["/usr/local/bin/python", "/usr/local/bin/kps-order-start.py"]
