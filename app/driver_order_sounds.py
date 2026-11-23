@@ -75,48 +75,55 @@ def valid_wave(data):
     return fmt and audio and rate // 10 <= frames <= rate * 10
 
 
-def _sound(conn, brand_id):
-    row = conn.execute('SELECT name,sha256,audio FROM driver_order_audio WHERE brand_id=%s', (brand_id,)).fetchone()
+def selected_sound(user, brand_id):
+    brand = brand_id or user['brand_id']
+    with db.tx() as conn:
+        if not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,79}', brand) or not multibrand.project(conn, user, brand):
+            raise db.error(404, 'DRIVER_SOUND_NOT_FOUND', 'الصوت غير متاح ضمن صلاحياتك.')
+        # Optional older installations stored a custom WAV per brand. The
+        # standard rings require no new tables in the current application.
+        has_custom_table = conn.execute(
+            "SELECT to_regclass(format('%I.driver_order_audio', current_schema())) IS NOT NULL AS present"
+        ).fetchone()['present']
+        row = None
+        if has_custom_table:
+            row = conn.execute(
+                'SELECT name,sha256,audio FROM driver_order_audio WHERE brand_id=%s', (brand,)
+            ).fetchone()
+
     if row:
         data = bytes(row['audio'])
         if valid_wave(data) and hashlib.sha256(data).hexdigest() == row['sha256']:
-            return data, row['name'], False
-    return approved_wave(brand_id), ('Enbishan' if brand_id=='enbishan' else 'KPS')+' — جرس الطلب / Order ring', True
+            return descriptor(data, row['name'], False, brand), data
+    return default_sound(brand)
 
 
-def descriptor(data, name, default, brand_id):
+@functools.lru_cache(maxsize=4)
+def default_sound(brand):
+    data = approved_wave(brand)
+    name = ('Enbishan' if brand == 'enbishan' else 'KPS') + ' — جرس الطلب / Order ring'
+    return descriptor(data, name, True, brand), data
+
+
+def descriptor(data, name, default, brand):
     digest = hashlib.sha256(data).hexdigest()
-    return {'name': name, 'sha256': digest, 'bytes': len(data), 'default': default, 'brand_id':brand_id,
-            'path': '/api/operations/driver-order-sound/brands/'+brand_id+'/audio/' + digest}
-
-
-def sound_scope(conn,user,brand_id):
-    brand=brand_id or user['brand_id']
-    if not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,79}',brand) or not multibrand.project(conn,user,brand):
-        raise db.error(404,'DRIVER_SOUND_NOT_FOUND','الصوت غير متاح ضمن صلاحياتك.')
-    return brand
+    return {'name': name, 'sha256': digest, 'bytes': len(data), 'default': default, 'brand_id': brand,
+            'path': f'/api/operations/driver-order-sound/brands/{brand}/audio/{digest}'}
 
 
 @router.get('/operations/driver-order-sound')
-def read_sound(response: Response, brand_id: str | None=None, user=Depends(work_user)):
+def read_sound(response: Response, brand_id: str | None = None, user=Depends(work_user)):
     response.headers['Cache-Control'] = 'private, no-store'
-    with db.tx() as conn:
-        brand=sound_scope(conn,user,brand_id)
-        return {'sound': descriptor(*_sound(conn,brand),brand)}
+    metadata, _ = selected_sound(user, brand_id)
+    return {'sound': metadata}
 
 
 @router.get('/operations/driver-order-sound/audio/{digest}')
-def read_audio(digest: str, user=Depends(work_user), brand_id: str | None=None):
+@router.get('/operations/driver-order-sound/brands/{brand_id}/audio/{digest}')
+def read_audio(digest: str, user=Depends(work_user), brand_id: str | None = None):
     if not re.fullmatch(r'[a-f0-9]{64}', digest):
         raise db.error(404, 'DRIVER_SOUND_NOT_FOUND', 'الصوت غير متاح.')
-    with db.tx() as conn:
-        brand=sound_scope(conn,user,brand_id)
-        data, _, _ = _sound(conn,brand)
-    if hashlib.sha256(data).hexdigest() != digest:
+    metadata, data = selected_sound(user, brand_id)
+    if metadata['sha256'] != digest:
         raise db.error(404, 'DRIVER_SOUND_NOT_FOUND', 'الصوت غير متاح.')
-    return Response(data, media_type='audio/wav', headers={'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff'})
-
-
-@router.get('/operations/driver-order-sound/brands/{brand_id}/audio/{digest}')
-def read_brand_audio(brand_id: str, digest: str, user=Depends(work_user)):
-    return read_audio(digest,user,brand_id)
+    return Response(data, media_type='audio/wav', headers={'Cache-Control': 'private, no-store'})

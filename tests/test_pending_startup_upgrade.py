@@ -25,7 +25,6 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = json.loads((Path(__file__).with_name('fixtures') / 'startup-baseline-4e4d781.json').read_text())
 IDENTITY = 'baseline-source-identity.json'
 PENDING = frozenset({
-    '098_driver_order_audio.sql',
     '137_manager_admission_lifecycle.sql',
     '136_refund_execution_evidence.sql',
     '135_driver_duty_city.sql',
