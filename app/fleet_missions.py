@@ -1,6 +1,6 @@
 """Work orders for non-delivery journeys; the delivery ledger is read-only here."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,6 +39,8 @@ class Mission(Form):
     kind: str = Field(max_length=40)
     destination: str = Field(default="", max_length=350)
     planned_minutes: int = Field(ge=1, le=2880)
+    frequency: Literal["once", "daily", "weekly"] = "once"
+    occurrences: int = Field(default=1, ge=1, le=365)
     scheduled_at: datetime
     stops: list[str] = Field(default_factory=list, max_length=100)
 
@@ -248,37 +250,53 @@ def create(body: Mission, request: Request, user=Depends(auth.current_user)):
                 or kind == "supervision"
                 and car["home_profile"] == person["profile"]
             )
-            if approved:
-                check_schedule(
-                    c,
-                    body.vehicle_id,
-                    body.employee_id,
-                    body.scheduled_at,
-                    body.planned_minutes,
-                    parent["id"] if parent else None,
-                )
+            if body.frequency != "once":
+                if not lead:
+                    deny()
+                if parent:
+                    invalid("تكليف المشرف يرتبط بيوم إشراف مفتوح. اختر مرة واحدة.")
+                if body.occurrences < 2:
+                    invalid("حدد عدد المرات شاملًا أول مهمة.")
+            elif body.occurrences != 1:
+                invalid("المهمة غير المكررة لها موعد واحد.")
             stamp = service_hours.now_riyadh()
-            order = c.execute(
-                """INSERT INTO fleet_missions(brand_id,vehicle_id,employee_id,kind,destination,stops,planned_minutes,scheduled_at,requested_by,approved_by,approved_at,operating_day,status,parent_id)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
-                (
-                    brand,
-                    car["vehicle_id"],
-                    body.employee_id,
-                    kind,
-                    destination,
-                    db.json(stops),
-                    body.planned_minutes,
-                    body.scheduled_at,
-                    user["id"],
-                    user["id"] if approved else None,
-                    stamp if approved else None,
-                    service_hours.delivery_operational_date(body.scheduled_at),
-                    "approved" if approved else "requested",
-                    parent["id"] if parent else None,
-                ),
-            ).fetchone()
-            return {"id": order["id"]}
+            first_id = None
+            interval = timedelta(days=7 if body.frequency == "weekly" else 1)
+            for index in range(body.occurrences):
+                scheduled = body.scheduled_at + index * interval
+                if approved:
+                    check_schedule(
+                        c,
+                        body.vehicle_id,
+                        body.employee_id,
+                        scheduled,
+                        body.planned_minutes,
+                        parent["id"] if parent else None,
+                    )
+                order = c.execute(
+                    """INSERT INTO fleet_missions(brand_id,vehicle_id,employee_id,kind,destination,stops,planned_minutes,scheduled_at,requested_by,approved_by,approved_at,operating_day,status,parent_id)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                    (
+                        brand,
+                        car["vehicle_id"],
+                        body.employee_id,
+                        kind,
+                        destination,
+                        db.json(stops),
+                        body.planned_minutes,
+                        scheduled,
+                        user["id"],
+                        user["id"] if approved else None,
+                        stamp if approved else None,
+                        service_hours.delivery_operational_date(scheduled),
+                        "approved" if approved else "requested",
+                        parent["id"] if parent else None,
+                    ),
+                ).fetchone()
+                if first_id is None:
+                    first_id = order["id"]
+            return {"id": first_id}
+
 
         return db.idempotent(
             c,
