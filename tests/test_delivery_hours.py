@@ -197,6 +197,9 @@ def test_pre_cutoff_order_finishes_and_custody_closes_after_cutoff(delivery_ops)
     manager, driver = shifts()
     created = post('customer', '/api/orders', body)['order']
     oid = created['id']
+    # The application clock is frozen; PostgreSQL's default now() uses wall time.
+    with db.tx() as c:
+        c.execute('UPDATE orders SET created_at=%s WHERE id=%s', (clock[0], oid))
     assert created['delivery_operational_date'] == '2026-10-09'
     assert created['snapshot']['delivery_operating_day']['date'] == '2026-10-09'
     task = post('manager', '/api/orders/' + oid + '/assign', {'driver_shift_id': driver})['task']['id']
