@@ -179,8 +179,8 @@ def workspace(user=Depends(auth.current_user)):
             "missions": missions,
             "cars": [v for v in cars if lead or any(v["options"].values())],
             "branches": c.execute(
-                "SELECT id,name,branch_no FROM branches WHERE brand_id=%s ORDER BY branch_no",
-                (brand,),
+                "SELECT id,name,branch_no FROM branches WHERE brand_id=%s AND (%s OR id=ANY(%s)) ORDER BY branch_no",
+                (brand, role not in policy.EXTERNAL, user.get("branch_ids", [])),
             ).fetchall(),
             "routes": c.execute(
                 "SELECT kind,stops FROM fleet_supply_routes WHERE brand_id=%s", (brand,)

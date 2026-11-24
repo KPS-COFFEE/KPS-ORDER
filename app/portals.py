@@ -8,7 +8,7 @@ PORTAL_ROLES = {
     'order.kps.sa': frozenset({'customer'}),
     'order.enbishan.com': frozenset({'customer'}),
     'admin.kps.sa': frozenset({'owner', 'admin'}),
-    'staff.kps.sa': frozenset({'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}),
+    'staff.kps.sa': frozenset({'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver', 'fleet_employee'}),
 }
 
 
