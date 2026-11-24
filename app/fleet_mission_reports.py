@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import logging
+import re
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
@@ -278,6 +279,93 @@ def make_pdf(rows, group, day):
         pdf.setFillColor(colors.HexColor(ink))
         pdf.setFont(font, fs)
         pdf.drawRightString(x, y, visual(s))
+
+    if group == "missions":
+        from reportlab.platypus import Table, TableStyle, Image
+
+        def cell(value, width, size=13):
+            value = "—" if value is None or value == "" else str(value)
+            # Wrap logical Arabic words before shaping each printed line.
+            lines = []
+            for paragraph in value.split("\n"):
+                words = paragraph.split()
+                line = ""
+                for word in words:
+                    candidate = (line + " " + word).strip()
+                    if line and pdfmetrics.stringWidth(visual(candidate), font, size) > width - 14:
+                        lines.append(visual(line))
+                        line = ""
+                    line = (line + " " + word).strip()
+                lines.append(visual(line))
+            return "\n".join(lines)
+
+        by_car = {}
+        for row in rows:
+            key = tuple(row.get("vehicle_ids") or [row.get("plate")])
+            by_car.setdefault(key, []).append(row)
+        widths = [94, 88, 73, 78, 76, 76, 272, 185, w - 50 - 942]
+        heads = ["الحالة", "المسافة كم", "المدة د", "المخطط د", "العودة", "الخروج",
+                 "الأمر والموظف والمهمة", "السيارة واللوحة", ""]
+        table_rows = [[visual(label) for label in heads]]
+        styles = [
+            ("FONT", (0, 0), (-1, -1), font, 14, 21),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#193e42")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#193e42")),
+            ("FONT", (1, 1), (5, -1), font, 17, 23),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]
+        for i, car_rows in enumerate(by_car.values()):
+            first = len(table_rows)
+            for row in car_rows:
+                fields = [row.get(k) for k in ("status","distance","minutes","plan","end","start")]
+                fields.append(f"{row['id']} · {row['employee']}\n{row['task']}")
+                plate = str(row.get("plate") or "—")
+                parts = re.fullmatch(r"\s*(\d{1,4})\s*([ابحدرسصطعقكلمنهوى](?:\s*[ابحدرسصطعقكلمنهوى]){2})\s*", plate)
+                if parts:
+                    digits, letters = parts.groups()
+                    mapping = dict(zip("ابحدرسصطعقكلمنهوى", "ABJDRSXTEGKLZNHUV"))
+                    latin = " ".join(mapping[ch] for ch in reversed(letters) if ch.strip())
+                    plate = plate + "\n" + digits + "   " + latin
+                fields.append(f"{row['model']}\n{plate}")
+                cells = [cell(v, widths[j], 17 if 1 <= j <= 5 else 14) for j, v in enumerate(fields)]
+                table_rows.append(cells + [""])
+            last = len(table_rows) - 1
+            for col in (7, 8):
+                if first != last:
+                    styles.append(("SPAN", (col, first), (col, last)))
+            if i % 2 == 0:
+                styles.append(("BACKGROUND", (0, first), (-1, last), colors.HexColor("#f1f6f4")))
+            styles.append(("LINEBELOW", (0, last), (-1, last), .5, colors.HexColor("#cbdad5")))
+            art = ASSETS / "fleet-models" / f"{car_rows[0].get('art')}.jpg"
+            if art.is_file():
+                table_rows[first][-1] = Image(str(art), width=95, height=40, kind="proportional")
+        table = Table(table_rows, colWidths=widths, style=TableStyle(styles))
+        _, height = table.wrap(w - 50, h)
+        h = max(h, height + 220)
+        pdf.setPageSize((w, h))
+        write(title(group, day), w - 26, h - 44, 24)
+        finished = [r for r in rows if r.get("code") == "completed" and not r.get("parent")]
+        minutes = sum(r.get("minutes") or 0 for r in finished)
+        km = sum(r["distance"] for r in finished if isinstance(r.get("distance"), (int, float)))
+        cards = [("السيارات التي خرجت", sum(any(r.get("start") not in (None,"","—") for r in group_rows) for group_rows in by_car.values())),
+                 ("أوامر الحركة", sum(r.get("code") != "idle" for r in rows)),
+                 ("مدة المهام المكتملة", f"{minutes // 60} س {minutes % 60} د"),
+                 ("المسافة المسجلة", f"{km:g} كم")]
+        for i, (label, value) in enumerate(cards):
+            right = w - 25 - i * (w - 50) / 4
+            left = right - (w - 50) / 4 + 7
+            pdf.setFillColor(colors.HexColor("#edf5f1"))
+            pdf.roundRect(left, h - 143, right-left, 75, 8, stroke=0, fill=1)
+            write(label, right - 12, h - 94, 14)
+            write(str(value), right - 12, h - 129, 21)
+        table.drawOn(pdf, 25, h - 158 - height)
+        write("الصور توضيحية • توقيت الرياض", w - 25, 16, 10)
+        pdf.save()
+        return out.getvalue()
 
     keys = columns(group)
     weights = (
