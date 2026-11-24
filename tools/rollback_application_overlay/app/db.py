@@ -406,6 +406,8 @@ PRESERVED_TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_
 PRESERVED_TABLES += ('order_preparation_routes','manager_day_splits')
 PRESERVED_TABLES += ('staff_brand_memberships','driver_brand_dedications')
 
+PRESERVED_TABLES += ('fleet_mission_staff','fleet_mission_cars','fleet_supply_routes','fleet_missions','fleet_morning_reports')
+
 def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
     """Compare existing columns/bytes in the same bounded migration transaction.
 
