@@ -233,6 +233,10 @@ def _find_session(conn, request: Request):
 def current_user(request: Request) -> dict:
     with db.tx(pipeline=True) as conn:
         user = _find_session(conn, request)
+        if user and user['role'] == 'fleet_employee':
+            path = request.url.path
+            if path not in {'/api/session', '/api/auth/logout', '/ops/fleet-missions'} and not path.startswith('/api/fleet-missions/'):
+                raise db.error(403,'FLEET_EMPLOYEE_SCOPE','هذا الحساب مخصص لحركة السيارات.')
         if user:
             from .morning_manager_context import apply as delivery_context
             user = delivery_context(conn, user, request)

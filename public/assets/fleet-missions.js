@@ -26,6 +26,9 @@ function formGuard(form,cb,id){
 }
 async function reload(){
  data=await api('/api/fleet-missions/workspace');lead=['owner','director','fleet_manager'].includes(data.role);director=['owner','director'].includes(data.role);
+ const branches=$('#supervisorBranches');
+ branches.hidden=!['supervisor_a','supervisor_b'].includes(data.role);
+ if(!branches.hidden)branches.textContent='الفروع تحت إشرافك · '+data.branches.map(b=>b.branch_no+' '+b.name).join('، ');
  $('[data-tab=reports]').hidden=!lead;$('[data-tab=routes]').hidden=!director;
  $('#carCards').innerHTML=data.cars.map(c=>'<article>'+picture(c)+'<h3>'+safe(c.model||'سيارة')+'</h3>'+plate(c.plate)+'<p>'+safe(c.holder?'المفتاح مع '+c.holder:'المفتاح لدى الإدارة')+'</p></article>').join('')||'لا توجد سيارات متاحة.';
  $('#orderCards').innerHTML=data.missions.map(m=>{
@@ -121,6 +124,13 @@ $('#newOrder').onclick=()=>{submitKey=null;newOrder();};
 document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
  if(b.hasAttribute('data-close'))b.closest('dialog').close();if(b.dataset.tab)tab(b.dataset.tab);if(b.dataset.act)action(b.dataset.act,+b.dataset.id);if(b.dataset.export)download(b.dataset.export).catch(error);});
 $('#filters').onchange=e=>{if([F.group,F.day].includes(e.target))resetFilters();if(F.day.value)loadReport().catch(error);};
-(async()=>{const s=await api('/api/session');csrf=s.csrf_token;await reload();$('#msg').textContent='';$('#content').hidden=false;
+(async()=>{const s=await api('/api/session');csrf=s.csrf_token;
+ if(s.user?.role==='fleet_employee'){
+   $('#backToOps').hidden=true;
+   const logout=$('#fleetLogout');
+   logout.hidden=false;
+   logout.onclick=async()=>{try{await api('/api/auth/logout',{method:'POST',body:{}});location.replace('/ops');}catch(e){error(e);}};
+ }
+ await reload();$('#msg').textContent='';$('#content').hidden=false;
  F.day.value=dateAt(Date.now()-86400000).slice(0,10);resetFilters();tab(lead?'reports':'orders');})().catch(error);
 })();
