@@ -21,6 +21,10 @@ KINDS = {
     "bus": "توصيل موظفين",
     "supervision": "يوم مشرف خارجي",
     "assignment": "تكليف المدير العام",
+    "custody": "استلام أو تسليم عهدة",
+    "transfer": "نقل مستلزمات بين فرعين",
+    "support": "مساندة فرع طارئة",
+    "service": "صيانة سيارة أو فحص دوري",
     "other": "أخرى",
 }
 LEADS = {"owner", "director", "fleet_manager"}
@@ -162,3 +166,4 @@ def profile(c, u):
         (u["brand_id"], u["id"]),
     ).fetchone()
     return r["profile"] if r else None
+

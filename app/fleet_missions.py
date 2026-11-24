@@ -1,6 +1,6 @@
 """Work orders for non-delivery journeys; the delivery ledger is read-only here."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,12 +39,16 @@ class Mission(Form):
     kind: str = Field(max_length=40)
     destination: str = Field(default="", max_length=350)
     planned_minutes: int = Field(ge=1, le=2880)
+    frequency: Literal["once", "daily", "weekly"] = "once"
+    occurrences: int = Field(default=1, ge=1, le=365)
     scheduled_at: datetime
     stops: list[str] = Field(default_factory=list, max_length=100)
 
 
 class Action(Form):
     action: Literal[
+        "replace",
+        "amend",
         "approve",
         "issue",
         "start",
@@ -60,6 +64,13 @@ class Action(Form):
     fuel: int | None = Field(default=None, ge=0, le=100)
     note: str = Field(default="", max_length=400)
     inspection: str = Field(default="", max_length=200)
+    vehicle_id: str = Field(default="", max_length=150)
+    employee_id: str = Field(default="", max_length=150)
+    destination: str = Field(default="", max_length=350)
+    expected_vehicle: str = Field(default="", max_length=150)
+    incoming_km: int | None = Field(default=None, ge=0, le=10000000)
+    incoming_broken: bool = False
+    allocation_minutes: int = Field(default=60, ge=1, le=2880)
     stop_id: str = Field(default="", max_length=150)
 
 
@@ -248,37 +259,53 @@ def create(body: Mission, request: Request, user=Depends(auth.current_user)):
                 or kind == "supervision"
                 and car["home_profile"] == person["profile"]
             )
-            if approved:
-                check_schedule(
-                    c,
-                    body.vehicle_id,
-                    body.employee_id,
-                    body.scheduled_at,
-                    body.planned_minutes,
-                    parent["id"] if parent else None,
-                )
+            if body.frequency != "once":
+                if not lead:
+                    deny()
+                if parent:
+                    invalid("تكليف المشرف يرتبط بيوم إشراف مفتوح. اختر مرة واحدة.")
+                if body.occurrences < 2:
+                    invalid("حدد عدد المرات شاملًا أول مهمة.")
+            elif body.occurrences != 1:
+                invalid("المهمة غير المكررة لها موعد واحد.")
             stamp = service_hours.now_riyadh()
-            order = c.execute(
-                """INSERT INTO fleet_missions(brand_id,vehicle_id,employee_id,kind,destination,stops,planned_minutes,scheduled_at,requested_by,approved_by,approved_at,operating_day,status,parent_id)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
-                (
-                    brand,
-                    car["vehicle_id"],
-                    body.employee_id,
-                    kind,
-                    destination,
-                    db.json(stops),
-                    body.planned_minutes,
-                    body.scheduled_at,
-                    user["id"],
-                    user["id"] if approved else None,
-                    stamp if approved else None,
-                    service_hours.delivery_operational_date(body.scheduled_at),
-                    "approved" if approved else "requested",
-                    parent["id"] if parent else None,
-                ),
-            ).fetchone()
-            return {"id": order["id"]}
+            first_id = None
+            interval = timedelta(days=7 if body.frequency == "weekly" else 1)
+            for index in range(body.occurrences):
+                scheduled = body.scheduled_at + index * interval
+                if approved:
+                    check_schedule(
+                        c,
+                        body.vehicle_id,
+                        body.employee_id,
+                        scheduled,
+                        body.planned_minutes,
+                        parent["id"] if parent else None,
+                    )
+                order = c.execute(
+                    """INSERT INTO fleet_missions(brand_id,vehicle_id,employee_id,kind,destination,stops,planned_minutes,scheduled_at,requested_by,approved_by,approved_at,operating_day,status,parent_id)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                    (
+                        brand,
+                        car["vehicle_id"],
+                        body.employee_id,
+                        kind,
+                        destination,
+                        db.json(stops),
+                        body.planned_minutes,
+                        scheduled,
+                        user["id"],
+                        user["id"] if approved else None,
+                        stamp if approved else None,
+                        service_hours.delivery_operational_date(scheduled),
+                        "approved" if approved else "requested",
+                        parent["id"] if parent else None,
+                    ),
+                ).fetchone()
+                if first_id is None:
+                    first_id = order["id"]
+            return {"id": first_id}
+
 
         return db.idempotent(
             c,
@@ -311,14 +338,53 @@ def transition(
             state = m["status"]
             uid = user["id"]
             emp = m["employee_id"]
-            if a in ("approve", "issue", "return") and not lead:
+            if a in ("approve", "issue", "return", "amend", "replace") and not lead:
                 deny()
             if (
                 a in ("start", "finish", "arrive", "miss", "request_return")
                 and emp != uid
             ):
                 deny()
-            if a == "cancel" and (
+            if a in ("cancel","amend","replace") and not body.note:
+                invalid("سجّل سبب الإجراء.")
+            if a in ("amend","replace"):
+                if body.expected_vehicle != car["vehicle_id"] or m["parent_id"]:
+                    conflict("حدّث الأمر وتحقق من السيارة.")
+                if m["kind"] == "assignment" and role not in ("director","owner"):
+                    deny()
+                target = vehicle(c, brand, body.vehicle_id)
+                employee = body.employee_id if a == "amend" else emp
+                person = next((s for s in roster(c, brand) if s["id"] == employee), None)
+                if not person or not policy.allowed(person["profile"],target["category"],target["home_profile"],m["kind"]):
+                    deny("التخصيص غير مسموح.")
+                if target["details"].get("operating_status") == "paused":
+                    conflict("السيارة موقوفة.")
+                if a == "amend":
+                    if state != "approved" or not body.destination:
+                        conflict("يُعدّل الأمر المعتمد قبل صرف المفتاح.")
+                    if m["kind"] in policy.SUPPLY and body.destination != m["destination"]:
+                        invalid("الوجهة مرتبطة بخط التوريد المعتمد.")
+                    check_schedule(c, target["vehicle_id"], employee, m["scheduled_at"], m["planned_minutes"], oid)
+                    c.execute("UPDATE fleet_missions SET vehicle_id=%s,employee_id=%s,destination=%s,approved_at=now(),approved_by=%s WHERE id=%s",
+                              (body.vehicle_id,employee,body.destination,uid,oid))
+                else:
+                    if state != "active" or car["vehicle_id"] == body.vehicle_id or target["key_holder"] not in (None,emp):
+                        conflict("اختر بديلًا متاحًا لأمر جارٍ.")
+                    if c.execute("SELECT 1 FROM fleet_missions WHERE parent_id=%s AND status NOT IN ('cancelled','completed')",(oid,)).fetchone():
+                        conflict("أغلق التكليف المرتبط قبل التبديل.")
+                    now = service_hours.now_riyadh()
+                    check_schedule(c,body.vehicle_id,emp,now,body.allocation_minutes,oid)
+                    check_available(c,m,target)
+                    old = None if body.broken else body.km
+                    new = None if body.incoming_broken else body.incoming_km
+                    for value,broken,floor in [(old,body.broken,max(m["start_km"] or 0,car["last_km"] or 0)),(new,body.incoming_broken,int(target["last_km"] or target["details"].get("odometer_km") or 0))]:
+                        if not broken and (value is None or value < floor):
+                            invalid("تحقق من قراءة العداد لكل سيارة.")
+                    segment = dict(vehicle_id=car["vehicle_id"],plate=car["plate"],start=m["start_km"],end=old,at=now.isoformat(),reason=body.note,until=(now+timedelta(minutes=body.allocation_minutes)).isoformat())
+                    c.execute("UPDATE fleet_missions SET vehicle_id=%s,start_km=%s,vehicle_changes=vehicle_changes || %s::jsonb WHERE id=%s",(body.vehicle_id,new,db.json([segment]),oid))
+                    for v,holder,km,broken in [(car,None,old,body.broken),(target,emp,new,body.incoming_broken)]:
+                        c.execute("UPDATE fleet_mission_cars SET key_holder=%s,last_km=coalesce(%s,last_km),broken_meter=%s WHERE vehicle_id=%s",(holder,km,broken,v["vehicle_id"]))
+            elif a == "cancel" and (
                 state in ("requested", "approved") or state == "issued" and lead
             ):
                 c.execute(
@@ -416,6 +482,8 @@ def transition(
                     invalid("تحقق من قراءة نهاية المهمة.")
                 if m["kind"] == "supervision" and not body.note:
                     invalid("اكتب الفروع التي زرتها اليوم.")
+                if service_hours.now_riyadh() > m["started_at"] + timedelta(minutes=m["planned_minutes"]) and not body.note:
+                    invalid("اكتب سبب تأخر العودة.")
                 km = None if body.broken else body.km
                 c.execute(
                     "UPDATE fleet_missions SET status='completed',ended_at=now(),end_km=%s,end_fuel=%s,outcome=%s WHERE id=%s",
@@ -463,7 +531,7 @@ def transition(
                 "fleet.mission." + a,
                 "fleet_mission",
                 str(oid),
-                {"brand_id": brand},
+                {"brand_id": brand,"reason":body.note,"previous_vehicle":m["vehicle_id"],"previous_employee":emp,"previous_destination":m["destination"],"new_vehicle":body.vehicle_id,"new_employee":body.employee_id,"new_destination":body.destination},
             )
             return {"id": oid, "action": a}
 
@@ -499,3 +567,4 @@ def check_available(c, m, car):
         ).fetchone()
     ):
         conflict("يوم المشرف مقفل.")
+

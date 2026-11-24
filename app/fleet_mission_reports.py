@@ -62,7 +62,7 @@ def clock(t):
 
 def snapshot(c, brand, day, now):
     missions = c.execute(
-        """SELECT m.*, v.plate, v.details->>'type' model, mc.art,
+        """SELECT m.*, v.plate, concat_ws(' · ',v.details->>'type',nullif(v.details->>'color','')) model, mc.art,
                   u.display_name employee, issuer.display_name issuer
         FROM fleet_missions m JOIN fleet_mission_cars mc ON mc.vehicle_id=m.vehicle_id
         JOIN fleet_vehicles v ON v.id=m.vehicle_id JOIN users u ON u.id=m.employee_id
@@ -119,19 +119,30 @@ def snapshot(c, brand, day, now):
                 ],
             )
         )
+        segments = m.get("vehicle_changes") or []
+        segment_notes = []
+        for leg in segments:
+            measured = leg["end"] - leg["start"] if leg["end"] is not None and leg["start"] is not None else None
+            segment_notes.append(f"{leg['plate']} · {measured if measured is not None else 'غير مسجل'} كم")
+        if segments:
+            segment_notes.append(f"{m['plate']} · {km} كم")
+            if isinstance(km,(int,float)) and all(s["end"] is not None and s["start"] is not None for s in segments):
+                km += sum(s["end"]-s["start"] for s in segments)
+            else:
+                km = "غير مكتمل"
         result.append(
             dict(
                 id=str(m["id"]),
                 model=m["model"] or "مركبة",
                 art=m["art"],
-                plate=m["plate"],
+                plate=" / ".join([s["plate"] for s in segments]+[m["plate"]]),
                 employee=m["employee"],
                 employee_id=m["employee_id"],
-                vehicle_ids=[m["vehicle_id"]],
+                vehicle_ids=[s["vehicle_id"] for s in segments]+[m["vehicle_id"]],
                 kind=m["kind"],
                 code=m["status"],
                 status=STATUS[m["status"]],
-                task=mission_policy.KINDS[m["kind"]] + " · " + m["destination"],
+                task=mission_policy.KINDS[m["kind"]] + " · " + m["destination"] + (" · "+" / ".join(segment_notes) if segments else "") + (" · "+m["outcome"] if m["outcome"] else ""),
                 start=clock(m["started_at"]),
                 end=clock(m["ended_at"]),
                 plan=m["planned_minutes"],
@@ -144,7 +155,7 @@ def snapshot(c, brand, day, now):
         )
     shifts = c.execute(
         """SELECT s.id,s.user_id,u.display_name employee,s.opened_at,coalesce(s.submitted_at,s.closed_at) ended,
-        l.vehicle_id,v.plate,v.details->>'type' model,mc.art, """
+        l.vehicle_id,v.plate,concat_ws(' · ',v.details->>'type',nullif(v.details->>'color','')) model,mc.art, """
         + fleet.METRICS
         + """ metrics
         FROM shifts s JOIN users u ON u.id=s.user_id
@@ -192,7 +203,7 @@ def snapshot(c, brand, day, now):
         )
     used = {v for row in [*result, *grouped.values()] for v in row["vehicle_ids"]}
     inventory = c.execute(
-        """SELECT m.vehicle_id,m.art,v.plate,v.details->>'type' model
+        """SELECT m.vehicle_id,m.art,v.plate,concat_ws(' · ',v.details->>'type',nullif(v.details->>'color','')) model
         FROM fleet_mission_cars m JOIN fleet_vehicles v ON v.id=m.vehicle_id
         WHERE m.brand_id=%s AND m.category<>'relief' ORDER BY v.plate""",
         (brand,),
@@ -621,3 +632,4 @@ async def poll_loop():
                 "fleet_morning_worker_failure type=%s", type(exc).__name__
             )
         await asyncio.sleep(15)
+
