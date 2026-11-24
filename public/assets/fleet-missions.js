@@ -3,7 +3,7 @@
 const $=q=>document.querySelector(q),all=q=>Array.from(document.querySelectorAll(q));
 const safe=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const opts=(list,empty)=> (empty===undefined?'':'<option value="">'+safe(empty)+'</option>')+Object.entries(list).map(([v,t])=>'<option value="'+safe(v)+'">'+safe(t)+'</option>').join('');
-const names={requested:'بانتظار الموافقة',approved:'معتمد',issued:'جاهز للاستلام',active:'على الطريق',completed:'مكتمل',cancelled:'ملغى'};
+const names={requested:'بانتظار الموافقة',approved:'معتمد',issued:'جاهز للاستلام',active:'على الطريق',completed:'مكتمل',cancelled:'ملغى',idle:'بلا أمر'};
 const actions={approve:'موافقة',issue:'تجهيز المفتاح',start:'استلام وبدء',finish:'إنهاء المهمة',arrive:'تمت زيارة الفرع',miss:'تعذر التوريد',request_return:'طلب تسليم المفتاح',return:'تأكيد استلام الإدارة',cancel:'إلغاء الأمر'};
 const lines=['local','riyadh','east','selected'];
 const C=$('#create').elements,F=$('#filters').elements,R=$('#routeForm').elements;

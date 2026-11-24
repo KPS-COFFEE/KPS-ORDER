@@ -189,6 +189,37 @@ def snapshot(c, brand, day, now):
             if isinstance(r["distance"], (int, float)) and km is not None
             else "غير مكتمل"
         )
+    used = {v for row in [*result, *grouped.values()] for v in row["vehicle_ids"]}
+    inventory = c.execute(
+        """SELECT m.vehicle_id,m.art,v.plate,v.details->>'type' model
+        FROM fleet_mission_cars m JOIN fleet_vehicles v ON v.id=m.vehicle_id
+        WHERE m.brand_id=%s AND m.category<>'relief' ORDER BY v.plate""",
+        (brand,),
+    ).fetchall()
+    for car in inventory:
+        if car["vehicle_id"] not in used:
+            result.append(
+                dict(
+                    id="—",
+                    employee="—",
+                    employee_id="",
+                    kind="",
+                    code="idle",
+                    status=STATUS["idle"],
+                    vehicle_ids=[car["vehicle_id"]],
+                    model=car["model"] or "مركبة",
+                    plate=car["plate"],
+                    art=car["art"],
+                    task="لا يوجد أمر مسجل",
+                    start="—",
+                    end="—",
+                    plan=None,
+                    minutes=None,
+                    distance="—",
+                    custody="—",
+                    details="",
+                )
+            )
     return {
         "missions": result,
         "delivery": list(grouped.values()),
@@ -376,7 +407,9 @@ def report(
             "as_of": data["as_of"],
             "title": title(group, day),
             "columns": {k: LABELS[k] for k in columns(group, True)},
-            "employees": {r["employee_id"]: r["employee"] for r in all_rows},
+            "employees": {
+                r["employee_id"]: r["employee"] for r in all_rows if r["employee_id"]
+            },
             "vehicles": {
                 v: p
                 for r in all_rows

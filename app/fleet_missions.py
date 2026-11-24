@@ -88,6 +88,23 @@ def vehicle(c, brand, vid):
     return r
 
 
+def check_schedule(c, vehicle_id, employee_id, starts, minutes, parent_id=None):
+    c.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+        ("fleet-employee:" + employee_id,),
+    )
+    busy = c.execute(
+        """SELECT 1 FROM fleet_missions WHERE (vehicle_id=%s OR employee_id=%s)
+        AND status IN ('approved','issued','active')
+        AND (%s::bigint IS NULL OR id<>%s)
+        AND scheduled_at < %s::timestamptz + %s * interval '1 minute'
+        AND scheduled_at + planned_minutes * interval '1 minute' > %s LIMIT 1""",
+        (vehicle_id, employee_id, parent_id, parent_id, starts, minutes, starts),
+    ).fetchone()
+    if busy:
+        conflict("للسيارة أو الموظف أمر معتمد يتداخل مع هذا الموعد. اختر موعدًا آخر.")
+
+
 def stop_list(c, brand, ids):
     if not ids or len(ids) != len(set(ids)):
         invalid("اختر فروعًا مختلفة بالترتيب.")
@@ -231,6 +248,15 @@ def create(body: Mission, request: Request, user=Depends(auth.current_user)):
                 or kind == "supervision"
                 and car["home_profile"] == person["profile"]
             )
+            if approved:
+                check_schedule(
+                    c,
+                    body.vehicle_id,
+                    body.employee_id,
+                    body.scheduled_at,
+                    body.planned_minutes,
+                    parent["id"] if parent else None,
+                )
             stamp = service_hours.now_riyadh()
             order = c.execute(
                 """INSERT INTO fleet_missions(brand_id,vehicle_id,employee_id,kind,destination,stops,planned_minutes,scheduled_at,requested_by,approved_by,approved_at,operating_day,status,parent_id)
@@ -300,6 +326,14 @@ def transition(
                     (body.note, oid),
                 )
             elif a == "approve" and state == "requested":
+                check_schedule(
+                    c,
+                    m["vehicle_id"],
+                    emp,
+                    m["scheduled_at"],
+                    m["planned_minutes"],
+                    m["parent_id"],
+                )
                 c.execute(
                     "UPDATE fleet_missions SET status='approved',approved_by=%s,approved_at=now() WHERE id=%s",
                     (uid, oid),
