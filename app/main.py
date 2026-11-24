@@ -59,6 +59,8 @@ async def lifespan(app):
             if os.getenv('MANAGER_NOTIFICATION_WORKER_ENABLED','true').lower()=='true' and os.getenv('APP_ENV')!='testing':
                 from . import manager_notifications
                 background_tasks.append(asyncio.create_task(manager_notifications.poll_loop(),name='manager-notifications'))
+            if os.getenv('FLEET_MISSION_ROSTER') and os.getenv('APP_ENV') != 'testing':
+                background_tasks.append(asyncio.create_task(fleet_mission_reports.poll_loop(),name='fleet-morning-reports'))
             if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
                 background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
             from . import branch_payment_webhooks
@@ -116,6 +118,14 @@ from . import branch_payments, branch_payment_renewal
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
+from . import fleet_missions, fleet_mission_reports
+app.include_router(fleet_missions.router)
+
+@app.get('/ops/fleet-missions')
+def fleet_workspace(user=Depends(auth.current_user)):
+    with db.tx() as c: fleet_missions.actor(c,user)
+    return FileResponse(PUBLIC/'fleet-missions.html',headers={'Cache-Control':'private, no-store'})
+
 from . import driver_order_sounds
 app.include_router(driver_order_sounds.router)
 from . import customer_message_routing
