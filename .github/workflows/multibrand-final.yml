@@ -34,12 +34,12 @@ jobs:
       EMAIL_PROVIDER: disabled
       REPORT_WORKER_ENABLED: 'false'
       EMAIL_WORKER_ENABLED: 'false'
-      RUNTIME_REVISION: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+      RUNTIME_REVISION: 9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+          ref: 9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: invoice-parity-e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+          name: invoice-parity-9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
           path: |
             test-results/enbishan/
             test-artifacts/brand-receipt-*.png
@@ -87,12 +87,12 @@ jobs:
       EMAIL_PROVIDER: disabled
       REPORT_WORKER_ENABLED: 'false'
       EMAIL_WORKER_ENABLED: 'false'
-      RUNTIME_REVISION: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+      RUNTIME_REVISION: 9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+          ref: 9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
           fetch-depth: 0
       - name: Prepare genuine current production source for the isolated upgrade witness
         run: |
@@ -190,7 +190,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: multibrand-postgres-e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+          name: multibrand-postgres-9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
           path: test-results/
           retention-days: 14
           if-no-files-found: error
@@ -218,12 +218,12 @@ jobs:
       EMAIL_PROVIDER: disabled
       REPORT_WORKER_ENABLED: 'false'
       EMAIL_WORKER_ENABLED: 'false'
-      RUNTIME_REVISION: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+      RUNTIME_REVISION: 9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+          ref: 9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -289,7 +289,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: multibrand-browser-e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
+          name: multibrand-browser-9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
           path: |
             test-results/
             test-artifacts/
