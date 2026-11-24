@@ -19,7 +19,8 @@ def test_photo_taps_quantity_required_choices_and_neighborhood(static_customer, 
              'category': 'اختبار', 'price_halalas': 1000, 'source_verified': True, 'available': True, 'option_groups': []}
     variant = {**plain, 'id': 'synthetic-options', 'name': 'صنف اختبار بخيار', 'name_en': 'Synthetic options',
                'option_groups': [{'code': 'FLAVOUR', 'required': True, 'name': 'النكهة', 'name_en': 'Flavour',
-                                  'values': [{'code': 'A', 'name': 'خيار أ', 'name_en': 'Option A', 'price_delta_halalas': 0}]}]}
+                                  'values': [{'code': 'A', 'name': 'خيار أ', 'name_en': 'Option A', 'price_delta_halalas': 0},
+                                             {'code': 'B', 'name': 'خيار ب', 'name_en': 'Option B', 'price_delta_halalas': 0}]}]}
     errors, requests = [], []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
