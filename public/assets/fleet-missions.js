@@ -81,6 +81,18 @@ function updateFrequency(){
  C.occurrences.disabled=!recurring;
 }
 C.frequency.onchange=updateFrequency;
+function durationLabel(minutes){
+ const hours=Math.floor(minutes/60), quarter=(minutes%60)/15;
+ const fractions=['','ربع ساعة','نصف ساعة','٤٥ دقيقة'];
+ if(!hours)return fractions[quarter];
+ const number=hours.toLocaleString('ar-SA');
+ const whole=hours===1?'ساعة':hours===2?'ساعتان':number+(hours<=10?' ساعات':' ساعة');
+ return whole+['',' وربع',' ونصف',' و٤٥ دقيقة'][quarter];
+}
+C.planned_minutes.add(new Option('اختر المدة','',true,true));
+for(let minutes=15;minutes<=2880;minutes+=15){
+ C.planned_minutes.add(new Option(durationLabel(minutes),String(minutes)));
+}
 function newOrder(){
  $('#create').reset();updateFrequency();$('#editorError').textContent='';
  C.employee_id.innerHTML=opts(Object.fromEntries(data.staff.map(u=>[u.id,u.display_name])));if(data.staff.some(s=>s.id===data.self))C.employee_id.value=data.self;
