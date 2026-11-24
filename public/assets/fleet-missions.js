@@ -4,7 +4,7 @@ const $=q=>document.querySelector(q),all=q=>Array.from(document.querySelectorAll
 const safe=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const opts=(list,empty)=> (empty===undefined?'':'<option value="">'+safe(empty)+'</option>')+Object.entries(list).map(([v,t])=>'<option value="'+safe(v)+'">'+safe(t)+'</option>').join('');
 const names={requested:'بانتظار الموافقة',approved:'معتمد',issued:'جاهز للاستلام',active:'على الطريق',completed:'مكتمل',cancelled:'ملغى',idle:'بلا أمر'};
-const actions={approve:'موافقة',issue:'تجهيز المفتاح',start:'استلام وبدء',finish:'إنهاء المهمة',arrive:'تمت زيارة الفرع',miss:'تعذر التوريد',request_return:'طلب تسليم المفتاح',return:'تأكيد استلام الإدارة',cancel:'إلغاء الأمر'};
+const actions={amend:"تعديل واعتماد",replace:"استلام المفتاح وتسليم بديل",approve:'موافقة',issue:'تجهيز المفتاح',start:'استلام وبدء',finish:'إنهاء المهمة',arrive:'تمت زيارة الفرع',miss:'تعذر التوريد',request_return:'طلب تسليم المفتاح',return:'تأكيد استلام الإدارة',cancel:'إلغاء الأمر'};
 const lines=['local','riyadh','east','selected'];
 const C=$('#create').elements,F=$('#filters').elements,R=$('#routeForm').elements;
 let data,csrf,lead,director,selection,reportSeq=0,workTab,report,picks=[],routePicks=[];
@@ -33,6 +33,8 @@ async function reload(){
  $('#carCards').innerHTML=data.cars.map(c=>'<article>'+picture(c)+'<h3>'+safe(c.model||'سيارة')+'</h3>'+plate(c.plate)+'<p>'+safe(c.holder?'المفتاح مع '+c.holder:'المفتاح لدى الإدارة')+'</p></article>').join('')||'لا توجد سيارات متاحة.';
  $('#orderCards').innerHTML=data.missions.map(m=>{
  const mine=m.employee_id===data.self,own=m.key_holder===m.employee_id,acts=[];
+ if(lead&&!m.parent_id&&m.status==='approved')acts.push('amend');
+ if(lead&&!m.parent_id&&m.status==='active')acts.push('replace');
  if(lead&&m.status==='requested')acts.push('approve');
  if(lead&&m.status==='approved'&&!own&&!m.parent_id)acts.push('issue');
  if(mine&&(m.status==='issued'||m.status==='approved'&&own&&(m.category==='permanent'||m.parent_id)))acts.push('start');
@@ -70,7 +72,7 @@ function cars(){
  const available=data.cars.filter(c=>c.options[C.employee_id.value]?.includes(kind)).sort((a,b)=>Number(b.home_profile===user?.profile||b.category==='shared_camry')-Number(a.home_profile===user?.profile||a.category==='shared_camry'));
  C.vehicle_id.innerHTML=opts(Object.fromEntries(available.map(c=>[c.vehicle_id,(c.model||'مركبة')+' · '+c.plate+(c.holder?' · بعهدة '+c.holder:'')])));
  const route=lines.includes(kind);$('#destinationLabel').hidden=route||kind==='supervision';C.destination.required=!route&&kind!=='supervision';
- $('#destinationLabel span').textContent=kind==='other'?'سبب المهمة (إلزامي)':'الوجهة أو الغرض';picks=[];
+ $('#destinationLabel span').textContent=({custody:'الفرع والعهدة واسم المستلم',transfer:'من فرع إلى فرع والمستلزمات',support:'الفرع وسبب المساندة',service:'الورشة ونوع الخدمة',other:'سبب المهمة (إلزامي)'})[kind]||'الوجهة أو الغرض';picks=[];
  const el=$('#chosenStops');if(kind==='selected'&&director)stopEditor(el,picks);
  else el.textContent=route?(data.routes.find(r=>r.kind===kind)?.stops.map(s=>s.name).join(' ← ')||'بانتظار تحديد فروع الخط من المدير العام'):'';
 }
@@ -114,14 +116,29 @@ function action(a,id){
  (a==='start'?'<label>فحص المركبة<select name="inspection" required>'+opts({'سليمة':'سليمة','ملاحظة':'توجد ملاحظة'},'اختر نتيجة الفحص')+'</select></label>':'')+
  (a==='arrive'||a==='miss'?'<p>'+safe(m.stops.find(s=>s.state==='pending')?.name)+'</p>':'')+
  (['finish','start','miss','cancel'].includes(a)?'<label>'+(m.kind==='supervision'&&a==='finish'?'تقرير نهاية اليوم والفروع التي زرتها':'الملاحظات / السبب')+'<textarea maxlength="400" name="note" '+(a==='miss'||m.kind==='supervision'&&a==='finish'?'required':'')+'></textarea></label>':'');
+ if(a==='replace'||a==='amend'){
+ const people=Object.fromEntries(data.staff.map(s=>[s.id,s.display_name]));
+ const fields=$('#actionFields');
+ fields.innerHTML=(a==='amend'?'<label>الموظف<select name="employee_id">'+opts(people)+'</select></label><label>الوجهة<input required maxlength="350" name="destination"></label>':'')+
+ '<label>السيارة<select required name="vehicle_id"></select></label>'+
+ (a==='replace'?'<label>مدة الإسناد<select name="allocation_minutes">'+C.planned_minutes.innerHTML+'</select></label><label>عداد السيارة المستلمة<input required type="number" min="0" name="km"></label><label><input type="checkbox" name="broken">عدادها معطل</label><label>عداد البديلة<input required type="number" min="0" name="incoming_km"></label><label><input type="checkbox" name="incoming_broken">عداد البديلة معطل</label>':'')+
+ '<label>سبب الإجراء<textarea name="note" required maxlength="400"></textarea></label>';
+ const inputs=$('#actionForm').elements;
+ const refresh=()=>{const employee=inputs.employee_id?.value||m.employee_id;inputs.vehicle_id.innerHTML=opts(Object.fromEntries(data.cars.filter(v=>v.options[employee]?.includes(m.kind)&&(a!=='replace'||v.vehicle_id!==m.vehicle_id&&(!v.key_holder||v.key_holder===employee))).map(v=>[v.vehicle_id,v.model+' · '+v.plate])),'اختر السيارة');};
+ if(a==='amend'){inputs.employee_id.value=m.employee_id;inputs.employee_id.onchange=refresh;inputs.destination.value=m.destination;inputs.destination.readOnly=lines.includes(m.kind);}
+ refresh();if(a==='amend')inputs.vehicle_id.value=m.vehicle_id;
+ else{inputs.allocation_minutes.value='60';for(const [flag,km] of [['broken','km'],['incoming_broken','incoming_km']])inputs[flag].onchange=()=>{inputs[km].disabled=inputs[flag].checked;};}
+ }
  const f=$('#actionForm').elements;
+ if(a==='cancel')f.note.required=true;
+ if(a==='finish'&&Date.now()>Date.parse(m.started_at)+60000*m.planned_minutes){f.note.required=true;f.note.placeholder='سبب تأخر العودة';}
  if(meter){f.broken.checked=Boolean(car?.broken_meter);const flip=()=>{f.km.required=!f.broken.checked;f.km.disabled=f.broken.checked;};f.broken.onchange=flip;flip();}
  if(a==='start')f.inspection.onchange=()=>{f.note.required=f.inspection.value==='ملاحظة';};
  $('#act').showModal();
 }
 formGuard($('#actionForm'),async()=>{
  const {a,m}=selection,f=$('#actionForm').elements;
- await api('/api/fleet-missions/orders/'+m.id,{method:'POST',body:{action:a,km:f.km?.value?+f.km.value:null,broken:!!f.broken?.checked,
+ await api('/api/fleet-missions/orders/'+m.id,{method:'POST',body:{action:a,...(['amend','replace'].includes(a)?{expected_vehicle:m.vehicle_id,vehicle_id:f.vehicle_id.value,employee_id:f.employee_id?.value||'',destination:f.destination?.value||'',incoming_km:f.incoming_km?.value?Number(f.incoming_km.value):null,incoming_broken:!!f.incoming_broken?.checked,allocation_minutes:Number(f.allocation_minutes?.value||60)}:{}),km:f.km?.value?+f.km.value:null,broken:!!f.broken?.checked,
  fuel:f.fuel?+f.fuel.value:null,inspection:f.inspection?f.inspection.value+(f.note?.value?' · '+f.note.value:''):'',note:f.note?.value||'',stop_id:m.stops.find(s=>s.state==='pending')?.id||''}});
  $('#act').close();await reload();},'#actionError');
 function filterUrl(fmt){const q=new URLSearchParams(new FormData($('#filters')));q.delete('group');q.set('fmt',fmt);return '/api/fleet-missions/reports/'+F.group.value+'?'+q;}
@@ -153,3 +170,4 @@ $('#filters').onchange=e=>{if([F.group,F.day].includes(e.target))resetFilters();
  await reload();$('#msg').textContent='';$('#content').hidden=false;
  F.day.value=dateAt(Date.now()-86400000).slice(0,10);resetFilters();tab(lead?'reports':'orders');})().catch(error);
 })();
+
