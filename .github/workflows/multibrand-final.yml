@@ -3,7 +3,7 @@ name: Multi-brand final acceptance
   pull_request:
     branches: [agent/kps-order-emergency-v4, agent/multibrand-safe-release-20261023]
   push:
-    branches: [agent/enbishan-invoice-parity-20261023]
+    branches: [agent/enbishan-invoice-parity-20261023, qa/fleet-multibrand-218]
 permissions:
   contents: read
 concurrency:
@@ -13,7 +13,7 @@ concurrency:
 # rollback and complete-regression checks remain mandatory and unchanged.
 jobs:
   invoice-parity:
-    if: github.head_ref == 'agent/accounting-cards-pdf-20261102' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/enbishan-invoice-parity-20261023' || github.ref == 'refs/heads/agent/enbishan-invoice-parity-20261023'
+    if: github.ref == 'refs/heads/qa/fleet-multibrand-218' || github.head_ref == 'agent/accounting-cards-pdf-20261102' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/enbishan-invoice-parity-20261023' || github.ref == 'refs/heads/agent/enbishan-invoice-parity-20261023'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
@@ -34,12 +34,12 @@ jobs:
       EMAIL_PROVIDER: disabled
       REPORT_WORKER_ENABLED: 'false'
       EMAIL_WORKER_ENABLED: 'false'
-      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      RUNTIME_REVISION: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -60,13 +60,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: invoice-parity-${{ github.event.pull_request.head.sha || github.sha }}
+          name: invoice-parity-e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
           path: |
             test-results/enbishan/
             test-artifacts/brand-receipt-*.png
           retention-days: 14
   multibrand-postgres:
-    if: github.head_ref == 'agent/accounting-cards-pdf-20261102' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
+    if: github.ref == 'refs/heads/qa/fleet-multibrand-218' || github.head_ref == 'agent/accounting-cards-pdf-20261102' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -87,12 +87,12 @@ jobs:
       EMAIL_PROVIDER: disabled
       REPORT_WORKER_ENABLED: 'false'
       EMAIL_WORKER_ENABLED: 'false'
-      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha }}
+      RUNTIME_REVISION: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
           fetch-depth: 0
       - name: Prepare genuine current production source for the isolated upgrade witness
         run: |
@@ -190,13 +190,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: multibrand-postgres-${{ github.event.pull_request.head.sha }}
+          name: multibrand-postgres-e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
           path: test-results/
           retention-days: 14
           if-no-files-found: error
 
   multibrand-browser:
-    if: github.head_ref == 'agent/accounting-cards-pdf-20261102' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
+    if: github.ref == 'refs/heads/qa/fleet-multibrand-218' || github.head_ref == 'agent/accounting-cards-pdf-20261102' || github.head_ref == 'agent/role-workspaces-20261102' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -218,12 +218,12 @@ jobs:
       EMAIL_PROVIDER: disabled
       REPORT_WORKER_ENABLED: 'false'
       EMAIL_WORKER_ENABLED: 'false'
-      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha }}
+      RUNTIME_REVISION: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -289,7 +289,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: multibrand-browser-${{ github.event.pull_request.head.sha }}
+          name: multibrand-browser-e4eb679e02ed8307c2d7d7af42bd4fa5e1297d12
           path: |
             test-results/
             test-artifacts/
