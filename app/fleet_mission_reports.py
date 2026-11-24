@@ -314,10 +314,8 @@ def make_pdf(rows, group, day):
         write("الشكل", x, h - 135, 9)
         return h - 154
 
-    y = header()
-    if not rows:
-        write("لا توجد سجلات لهذا اليوم ضمن الاختيار.", right, y - 39)
-    for i, r in enumerate(rows):
+    prepared = []
+    for r in rows:
         cells = []
         for k, b in zip(keys, widths):
             val = r.get(k)
@@ -337,9 +335,15 @@ def make_pdf(rows, group, day):
                 lines.append(line)
             cells.append(lines)
         rh = max(31, 12 * max(map(len, cells)) + 11)
-        if y - rh < 30:
-            pdf.showPage()
-            y = header()
+        prepared.append((r, cells, rh))
+    # Keep the daily register on one sheet. For busy days extend the canvas,
+    # preserving every order and the same readable Arabic type size.
+    h = max(h, 184 + sum(row_height for _, _, row_height in prepared))
+    pdf.setPageSize((w, h))
+    y = header()
+    if not rows:
+        write("لا توجد سجلات لهذا اليوم ضمن الاختيار.", right, y - 39)
+    for i, (r, cells, rh) in enumerate(prepared):
         if i % 2 == 0:
             pdf.setFillColor(colors.HexColor("#f7faf9"))
             pdf.rect(25, y - rh, w - 50, rh, fill=1, stroke=0)
