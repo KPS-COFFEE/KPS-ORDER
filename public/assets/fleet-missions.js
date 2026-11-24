@@ -74,8 +74,15 @@ function cars(){
  const el=$('#chosenStops');if(kind==='selected'&&director)stopEditor(el,picks);
  else el.textContent=route?(data.routes.find(r=>r.kind===kind)?.stops.map(s=>s.name).join(' ← ')||'بانتظار تحديد فروع الخط من المدير العام'):'';
 }
+function updateFrequency(){
+ const recurring=lead && C.frequency.value!=='once';
+ $('#frequencyField').hidden=!lead;
+ $('#occurrencesField').hidden=!recurring;
+ C.occurrences.disabled=!recurring;
+}
+C.frequency.onchange=updateFrequency;
 function newOrder(){
- $('#create').reset();$('#editorError').textContent='';
+ $('#create').reset();updateFrequency();$('#editorError').textContent='';
  C.employee_id.innerHTML=opts(Object.fromEntries(data.staff.map(u=>[u.id,u.display_name])));if(data.staff.some(s=>s.id===data.self))C.employee_id.value=data.self;
  C.time.value=dateAt(Date.now()).slice(0,16);kinds();$('#editor').showModal();
 }
@@ -84,7 +91,7 @@ $('#create').addEventListener('input',()=>submitKey=null);
 formGuard($('#create'),async()=>{
  submitKey||=crypto.randomUUID();
  await api('/api/fleet-missions/orders',{method:'POST',key:submitKey,body:{employee_id:C.employee_id.value,vehicle_id:C.vehicle_id.value,kind:C.kind.value,
- destination:C.destination.value,planned_minutes:+C.planned_minutes.value,scheduled_at:C.time.value+':00+03:00',stops:picks}});
+ destination:C.destination.value,planned_minutes:+C.planned_minutes.value,scheduled_at:C.time.value+':00+03:00',stops:picks,...(lead && C.frequency.value!=='once'?{frequency:C.frequency.value,occurrences:Number(C.occurrences.value)}:{})}});
  $('#editor').close();await reload();},'#editorError');
 formGuard($('#routeForm'),async()=>{await api('/api/fleet-missions/routes/'+R.kind.value,{method:'PUT',body:{stops:routePicks}});await reload();$('#msg').textContent='حُفظت فروع الخط وترتيبها.';});
 function action(a,id){
