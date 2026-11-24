@@ -113,6 +113,11 @@ async def database_unavailable(request: Request, exc):
 # These routers have disjoint namespaces. Resolve the frequently used order
 # routes first without changing a route's dependencies or relative precedence
 # within its router. No permission/session result is cached.
+app.include_router(orders.router)
+from . import branch_payments, branch_payment_renewal
+app.include_router(branch_payments.router)
+app.include_router(catalog.router)
+app.include_router(auth.router)
 from . import fleet_missions, fleet_mission_reports
 app.include_router(fleet_missions.router)
 
@@ -121,11 +126,6 @@ def fleet_workspace(user=Depends(auth.current_user)):
     with db.tx() as c: fleet_missions.actor(c,user)
     return FileResponse(PUBLIC/'fleet-missions.html',headers={'Cache-Control':'private, no-store'})
 
-app.include_router(orders.router)
-from . import branch_payments, branch_payment_renewal
-app.include_router(branch_payments.router)
-app.include_router(catalog.router)
-app.include_router(auth.router)
 from . import driver_order_sounds
 app.include_router(driver_order_sounds.router)
 from . import customer_message_routing
