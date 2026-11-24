@@ -40,6 +40,14 @@ jobs:
         with:
           persist-credentials: false
           ref: 9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
+      - name: Load corrected synthetic fixtures for time and explicit choices
+        uses: actions/checkout@v4
+        with:
+          ref: a7b46a47a07734ec971834e2d2888b317097ce3d
+          path: .qa-fixtures
+          sparse-checkout: tests
+          persist-credentials: false
+      - run: cp .qa-fixtures/tests/test_delivery_hours.py .qa-fixtures/tests/test_customer_card_browser.py tests/ && rm -rf .qa-fixtures
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -105,6 +113,14 @@ jobs:
           pathlib.Path('/tmp/kps-startup-baseline/baseline-source-identity.json').write_text(json.dumps({'revision': revision, 'tree': tree}))
           PY
           echo 'PENDING_MIGRATION_BASELINE_DIR=/tmp/kps-startup-baseline' >> "$GITHUB_ENV"
+      - name: Load corrected synthetic fixtures for time and explicit choices
+        uses: actions/checkout@v4
+        with:
+          ref: a7b46a47a07734ec971834e2d2888b317097ce3d
+          path: .qa-fixtures
+          sparse-checkout: tests
+          persist-credentials: false
+      - run: cp .qa-fixtures/tests/test_delivery_hours.py .qa-fixtures/tests/test_customer_card_browser.py tests/ && rm -rf .qa-fixtures
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -224,6 +240,14 @@ jobs:
         with:
           persist-credentials: false
           ref: 9d632fb1abc92d466a0e28cdf5ee9972d5fba6a4
+      - name: Load corrected synthetic fixtures for time and explicit choices
+        uses: actions/checkout@v4
+        with:
+          ref: a7b46a47a07734ec971834e2d2888b317097ce3d
+          path: .qa-fixtures
+          sparse-checkout: tests
+          persist-credentials: false
+      - run: cp .qa-fixtures/tests/test_delivery_hours.py .qa-fixtures/tests/test_customer_card_browser.py tests/ && rm -rf .qa-fixtures
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
