@@ -1559,6 +1559,7 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
         if len(profiles) != 1 or profiles[0] not in {'supplier_a','supplier_b','supplier_bus','supervisor_a','supervisor_b','internal','purchaser'}:
             raise db.error(422,'FLEET_PROFILE_REQUIRED','الجوال غير مرتبط بموظف حركة معتمد.')
         conn.execute('INSERT INTO fleet_mission_staff(brand_id,user_id,profile) VALUES(%s,%s,%s)', (user['brand_id'],identifier,profiles[0]))
+        mission_policy.assign_permanent_keys(conn, user['brand_id'])
     details={'role':body.role,'branch_ids':scope,'permissions':permissions,'permission_denials':denials}
     if draft_only:
         details['owner_decision']=maintenance_provenance
