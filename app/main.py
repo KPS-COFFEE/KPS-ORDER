@@ -59,6 +59,8 @@ async def lifespan(app):
             if os.getenv('MANAGER_NOTIFICATION_WORKER_ENABLED','true').lower()=='true' and os.getenv('APP_ENV')!='testing':
                 from . import manager_notifications
                 background_tasks.append(asyncio.create_task(manager_notifications.poll_loop(),name='manager-notifications'))
+            if os.getenv('FLEET_MISSION_ROSTER') and os.getenv('APP_ENV') != 'testing':
+                background_tasks.append(asyncio.create_task(fleet_mission_reports.poll_loop(),name='fleet-morning-reports'))
             if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
                 background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
             from . import branch_payment_webhooks
@@ -111,6 +113,14 @@ async def database_unavailable(request: Request, exc):
 # These routers have disjoint namespaces. Resolve the frequently used order
 # routes first without changing a route's dependencies or relative precedence
 # within its router. No permission/session result is cached.
+from . import fleet_missions, fleet_mission_reports
+app.include_router(fleet_missions.router)
+
+@app.get('/ops/fleet-missions')
+def fleet_workspace(user=Depends(auth.current_user)):
+    with db.tx() as c: fleet_missions.actor(c,user)
+    return FileResponse(PUBLIC/'fleet-missions.html',headers={'Cache-Control':'private, no-store'})
+
 app.include_router(orders.router)
 from . import branch_payments, branch_payment_renewal
 app.include_router(branch_payments.router)

@@ -88,7 +88,7 @@ def _send(row):
                 headers={'Authorization':'Bearer '+os.environ['RESEND_API_KEY'],
                          'Idempotency-Key':row['id']},
                 json={'from':sender,'to':[row['recipient']], 'subject':payload['subject'],
-                      'text':payload['text'], **({'html':payload['html']} if payload.get('html') else {})})
+                      'text':payload['text'], **({'attachments':payload['attachments']} if row['kind']=='fleet_daily' else {}), **({'html':payload['html']} if payload.get('html') else {})})
         if not 200 <= result.status_code < 300:
             raise RuntimeError('EMAIL_PROVIDER_REJECTED')
         reference = result.json().get('id')
@@ -107,6 +107,9 @@ def _send(row):
     message.set_content(payload['text'])
     if payload.get('html'):
         message.add_alternative(payload['html'], subtype='html')
+    if row['kind']=='fleet_daily':
+        for item in payload['attachments']:
+            message.add_attachment(base64.b64decode(item['content']),maintype='application',subtype='pdf',filename=item['filename'])
     with smtplib.SMTP_SSL(host, port, timeout=15, context=ssl.create_default_context()) as smtp:
         smtp.login(os.environ['SMTP_USERNAME'],os.environ['SMTP_PASSWORD'])
         rejected = smtp.send_message(message)
@@ -139,6 +142,10 @@ def dispatch_once(limit=10):
                 authorized=bool(conn.execute("SELECT 1 FROM report_notifications n JOIN users u ON u.id=n.recipient_user_id JOIN brands b ON b.id=u.brand_id WHERE n.email_outbox_id=%s AND u.active AND b.active AND u.role='owner' AND u.brand_id=%s AND u.email_verified_at IS NOT NULL AND lower(btrim(u.email))=%s",(row['id'],row['brand_id'],row['recipient'])).fetchone())
             elif row['kind']=='operations_alert':
                 authorized=bool(conn.execute("SELECT 1 FROM recovery_alert_notifications n JOIN users u ON u.id=n.recipient_user_id JOIN recovery_alerts a ON a.id=n.alert_id JOIN brands b ON b.id=u.brand_id WHERE n.email_outbox_id=%s AND u.active AND b.active AND u.role='owner' AND u.brand_id=%s AND u.email_verified_at IS NOT NULL AND lower(btrim(u.email))=%s AND a.brand_id=u.brand_id",(row['id'],row['brand_id'],row['recipient'])).fetchone())
+            elif row['kind']=='fleet_daily':
+                from .fleet_mission_reports import recipient
+                dest=recipient(conn,row['brand_id'])
+                authorized=bool(dest and dest['address']==row['recipient'] and conn.execute('SELECT 1 FROM fleet_morning_reports WHERE mail_id=%s',(row['id'],)).fetchone())
             elif row['kind']=='manager_notification':
                 from .manager_notifications import authorized as manager_authorized
                 authorized=manager_authorized(conn,row)

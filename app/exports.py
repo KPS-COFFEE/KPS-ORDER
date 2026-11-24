@@ -61,13 +61,15 @@ TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
 TABLES += ('order_preparation_routes','manager_day_splits')
 # Notification addresses and private delivery receipts stay in full archives.
 TABLES += ('manager_notification_subscriptions','manager_email_notifications')
+FLEET_WORK_TABLES = ('fleet_mission_staff','fleet_mission_cars','fleet_supply_routes','fleet_missions','fleet_morning_reports')
+TABLES += FLEET_WORK_TABLES
 SHARED_PHYSICAL_TABLES = {'manager_day_splits','driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
                           'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
 # Combined physical actuals cannot be split into invented brand amounts in a brand export.
 # Full private archives retain the whole immutable declaration and its provenance.
 # Global bank statement originals can span sellers; private full archives retain them.
 SHARED_BANK_TABLES = {'bank_reconciliation_bank_lines'}
-AUTH_TABLES = {'driver_duty_cities','manager_notification_subscriptions','manager_email_notifications','dispatch_impact_quotes'} | TRACKING_PRIVATE_TABLES | SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+AUTH_TABLES = set(FLEET_WORK_TABLES) | {'driver_duty_cities','manager_notification_subscriptions','manager_email_notifications','dispatch_impact_quotes'} | TRACKING_PRIVATE_TABLES | SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices', 'staff_geo_access_grants',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -231,7 +233,7 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
         for table in selected:
             clause, params = _scoped_sql(table, None if full else brand_id,
                                          bank_table_available='bank_reconciliation_batches' in available)
-            ordering = ' ORDER BY kind DESC,opened_at,id' if table == 'shifts' else ''
+            ordering = ' ORDER BY kind DESC,opened_at,id' if table == 'shifts' else ' ORDER BY id' if table == 'fleet_missions' else ''
             rows = conn.execute(sql.SQL('SELECT * FROM {} WHERE ' + clause + ordering).format(sql.Identifier(table)), params).fetchall()
             counts[table] = len(rows)
             for index, row in enumerate(rows):
@@ -561,6 +563,8 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM chat_messages),0),1),EXISTS(SELECT 1 FROM chat_messages))", (sequence,))
             if 'orders' in actual:
                 conn.execute("SELECT setval('order_human_number_seq',greatest(coalesce((SELECT max(order_no) FROM orders),0),1),EXISTS(SELECT 1 FROM orders))")
+            if 'fleet_missions' in manifest['table_order']:
+                conn.execute("SELECT setval(pg_get_serial_sequence('fleet_missions','id'),greatest(coalesce(max(id),0),1),count(*)>0) FROM fleet_missions")
             if 'fiscal_documents' in manifest['table_order']:
                 conn.execute("SELECT setval('fiscal_document_number_seq',greatest(coalesce((SELECT max(substring(number from '[0-9]+$')::bigint) FROM fiscal_documents),0),1),EXISTS(SELECT 1 FROM fiscal_documents))")
             if 'fiscal_previews' in manifest['table_order']:
