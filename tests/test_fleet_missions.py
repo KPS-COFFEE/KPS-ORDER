@@ -232,3 +232,28 @@ def test_scheduled_director_mail(database, monkeypatch):
             ).fetchone()["status"]
             == "cancelled"
         )
+
+
+def test_owner_enrolls_supervisor_with_assigned_branches(client, monkeypatch):
+    from tests.sms_policy_helpers import sms_login, sms_step_up
+
+    phone = '+966511222333'
+    cfg = {'kps': {'people': [{'profile': 'supervisor_a', 'phone': phone}], 'cars': []}}
+    monkeypatch.setattr(policy, 'config', lambda: cfg)
+    with db.tx() as c:
+        owner = c.execute("INSERT INTO users(id,brand_id,display_name,role,invitation_status,identity_kind) VALUES('test-fleet-owner','kps','Test owner','owner','active','staff_owner_approved') RETURNING *").fetchone()
+        branch = c.execute("SELECT id FROM branches WHERE brand_id='kps' LIMIT 1").fetchone()['id']
+    sms_login(client, owner, monkeypatch)
+    sms_step_up(client, owner, monkeypatch)
+    res = client.post('/api/identity/staff/invitations', json={
+        'display_name': 'مشرف اختباري', 'phone': phone, 'role': 'fleet_employee', 'branch_ids': [branch],
+    })
+    assert res.status_code == 200, res.text
+    person = res.json()['user']
+    assert person['active'] and person['branch_ids'] == [branch]
+    client.cookies.clear()
+    sms_login(client, person, monkeypatch, phone)
+    workspace = client.get('/api/fleet-missions/workspace')
+    assert workspace.status_code == 200, workspace.text
+    assert workspace.json()['role'] == 'supervisor_a'
+    assert [b['id'] for b in workspace.json()['branches']] == [branch]

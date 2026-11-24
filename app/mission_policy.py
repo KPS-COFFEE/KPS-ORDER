@@ -72,6 +72,13 @@ def plate_identity(value):
     return m[1] or m[4], letters
 
 
+def assign_permanent_keys(c, brand):
+    c.execute(
+        "UPDATE fleet_mission_cars v SET key_holder=s.user_id FROM fleet_mission_staff s WHERE v.brand_id=%s AND s.brand_id=v.brand_id AND s.profile=v.home_profile AND v.category='permanent' AND v.key_holder IS NULL AND NOT EXISTS(SELECT 1 FROM fleet_missions m WHERE m.vehicle_id=v.vehicle_id)",
+        (brand,),
+    )
+
+
 def sync(c):
     for brand, cfg in config().items():
         unresolved = []
@@ -130,10 +137,7 @@ def sync(c):
                 "INSERT INTO fleet_mission_cars(vehicle_id,brand_id,category,home_profile,art) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                 (v["id"], brand, car["category"], car.get("home"), car.get("art")),
             )
-        c.execute(
-            "UPDATE fleet_mission_cars v SET key_holder=s.user_id FROM fleet_mission_staff s WHERE v.brand_id=%s AND s.brand_id=v.brand_id AND s.profile=v.home_profile AND v.category='permanent' AND v.key_holder IS NULL AND NOT EXISTS(SELECT 1 FROM fleet_missions m WHERE m.vehicle_id=v.vehicle_id)",
-            (brand,),
-        )
+        assign_permanent_keys(c, brand)
         count = c.execute(
             "SELECT count(*) n FROM fleet_mission_cars WHERE brand_id=%s", (brand,)
         ).fetchone()["n"]

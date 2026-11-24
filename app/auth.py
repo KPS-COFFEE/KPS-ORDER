@@ -233,6 +233,10 @@ def _find_session(conn, request: Request):
 def current_user(request: Request) -> dict:
     with db.tx(pipeline=True) as conn:
         user = _find_session(conn, request)
+        if user and user['role'] == 'fleet_employee':
+            path = request.url.path
+            if path not in {'/api/session', '/api/auth/logout', '/ops/fleet-missions'} and not path.startswith('/api/fleet-missions/'):
+                raise db.error(403,'FLEET_EMPLOYEE_SCOPE','هذا الحساب مخصص لحركة السيارات.')
         if user:
             from .morning_manager_context import apply as delivery_context
             user = delivery_context(conn, user, request)
@@ -1453,7 +1457,7 @@ class StaffInvitationBody(BaseModel):
     branch_ids:list[str]=Field(default_factory=list,max_length=500)
     employee_ref:str|None=Field(default=None,max_length=80)
     vehicle:dict=Field(default_factory=dict)
-    role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager']='driver'
+    role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager','fleet_employee']='driver'
     full_owner_confirmed:StrictBool=False
     permissions:list[str]=Field(default_factory=list,max_length=20)
     permission_denials:list[str]=Field(default_factory=list,max_length=80)
@@ -1532,7 +1536,7 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
     ready=not draft_only and not sms_approved and email_delivery.configuration()['configured'] and (
         channel['state']=='testing' or (channel['state']=='active' and channel['enabled']))
     scope=_staff_scope(conn,user,body.branch_ids)
-    if body.role!='owner' and not scope:
+    if body.role not in {'owner','fleet_employee'} and not scope:
         raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد فرعًا أو أكثر للموظف.')
     if (sms_approved or body.role in {'owner','admin','delivery_manager'} or denials) and not draft_only:
         require_owner_step_up(conn,user)
@@ -1548,6 +1552,14 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
         row=conn.execute("UPDATE users SET active=true,identity_kind='staff_owner_approved',invitation_status='active' WHERE id=%s RETURNING *",(identifier,)).fetchone()
     row=conn.execute('UPDATE users SET permissions=%s,permission_denials=%s WHERE id=%s RETURNING *',(db.json(permissions),db.json(denials),identifier)).fetchone()
     challenge=_create_email_token(conn,brand=user['brand_id'],email=email,purpose='add_owner' if body.role=='owner' else 'invitation',user_id=identifier,created_by=user['id']) if ready else None
+    if body.role == 'fleet_employee':
+        from . import mission_policy
+        people = mission_policy.config().get(user['brand_id'], {}).get('people', [])
+        profiles = [person['profile'] for person in people if person.get('phone') and normalize_phone(person['phone']) == phone]
+        if len(profiles) != 1 or profiles[0] not in {'supplier_a','supplier_b','supplier_bus','supervisor_a','supervisor_b','internal','purchaser'}:
+            raise db.error(422,'FLEET_PROFILE_REQUIRED','الجوال غير مرتبط بموظف حركة معتمد.')
+        conn.execute('INSERT INTO fleet_mission_staff(brand_id,user_id,profile) VALUES(%s,%s,%s)', (user['brand_id'],identifier,profiles[0]))
+        mission_policy.assign_permanent_keys(conn, user['brand_id'])
     details={'role':body.role,'branch_ids':scope,'permissions':permissions,'permission_denials':denials}
     if draft_only:
         details['owner_decision']=maintenance_provenance
@@ -1731,7 +1743,7 @@ class StaffUpdateBody(BaseModel):
     vehicle:dict|None=None
     permissions:list[str]|None=Field(default=None,max_length=20)
     permission_denials:list[str]|None=Field(default=None,max_length=80)
-    role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager']|None=None
+    role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager','fleet_employee']|None=None
     reason:str|None=Field(default=None,min_length=3,max_length=500)
 
 
