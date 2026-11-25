@@ -62,14 +62,15 @@ TABLES += ('order_preparation_routes','manager_day_splits')
 # Notification addresses and private delivery receipts stay in full archives.
 TABLES += ('manager_notification_subscriptions','manager_email_notifications')
 FLEET_WORK_TABLES = ('fleet_mission_staff','fleet_mission_cars','fleet_supply_routes','fleet_missions','fleet_morning_reports')
-TABLES += FLEET_WORK_TABLES
+INTERVIEW_TABLES = ('interview_panels', 'interview_rooms', 'interview_responses', 'interview_exams')
+TABLES += FLEET_WORK_TABLES + INTERVIEW_TABLES
 SHARED_PHYSICAL_TABLES = {'manager_day_splits','driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
                           'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
 # Combined physical actuals cannot be split into invented brand amounts in a brand export.
 # Full private archives retain the whole immutable declaration and its provenance.
 # Global bank statement originals can span sellers; private full archives retain them.
 SHARED_BANK_TABLES = {'bank_reconciliation_bank_lines'}
-AUTH_TABLES = set(FLEET_WORK_TABLES) | {'driver_duty_cities','manager_notification_subscriptions','manager_email_notifications','dispatch_impact_quotes'} | TRACKING_PRIVATE_TABLES | SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+AUTH_TABLES = set(FLEET_WORK_TABLES + INTERVIEW_TABLES) | {'driver_duty_cities','manager_notification_subscriptions','manager_email_notifications','dispatch_impact_quotes'} | TRACKING_PRIVATE_TABLES | SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices', 'staff_geo_access_grants',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -533,9 +534,10 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                             values.append(Decimal(value['$decimal']))
                         else:
                             values.append(value)
-                    statement = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
+                    override = sql.SQL('OVERRIDING SYSTEM VALUE') if table == 'interview_rooms' else sql.SQL('')
+                    statement = sql.SQL('INSERT INTO {} ({}) {} VALUES ({})').format(
                         sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, writable)),
-                        sql.SQL(',').join(sql.Placeholder() for _ in writable))
+                        override, sql.SQL(',').join(sql.Placeholder() for _ in writable))
                     conn.execute(statement, values)
             # Validate deferred references/projections before changing trigger
             # state: PostgreSQL refuses ALTER TABLE with pending FK events on
@@ -563,6 +565,8 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM chat_messages),0),1),EXISTS(SELECT 1 FROM chat_messages))", (sequence,))
             if 'orders' in actual:
                 conn.execute("SELECT setval('order_human_number_seq',greatest(coalesce((SELECT max(order_no) FROM orders),0),1),EXISTS(SELECT 1 FROM orders))")
+            if 'interview_rooms' in manifest['table_order']:
+                conn.execute("SELECT setval(pg_get_serial_sequence('interview_rooms','id'),greatest(coalesce(max(id),0),1),count(*)>0) FROM interview_rooms")
             if 'fleet_missions' in manifest['table_order']:
                 conn.execute("SELECT setval(pg_get_serial_sequence('fleet_missions','id'),greatest(coalesce(max(id),0),1),count(*)>0) FROM fleet_missions")
             if 'fiscal_documents' in manifest['table_order']:
