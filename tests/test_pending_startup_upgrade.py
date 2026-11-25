@@ -25,6 +25,13 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = json.loads((Path(__file__).with_name('fixtures') / 'startup-baseline-4e4d781.json').read_text())
 IDENTITY = 'baseline-source-identity.json'
 PENDING = frozenset({
+    '141_interview_panel.sql',
+    '142_interview_exam.sql',
+    '143_interview_batch.sql',
+    '144_interview_supervised_groups.sql',
+    '145_interview_candidate_codes.sql',
+    '146_interview_exam_lanes.sql',
+
     '138_fleet_missions.sql','139_fleet_employee_role.sql','140_fleet_vehicle_changes.sql',
     '137_manager_admission_lifecycle.sql',
     '136_refund_execution_evidence.sql',
