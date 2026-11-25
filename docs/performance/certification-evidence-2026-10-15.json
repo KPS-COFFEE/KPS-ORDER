@@ -1,0 +1,988 @@
+[
+  {
+    "head": "8d1e1d4fc1cb6fc2c7b5eb0da425fb77febec2d7",
+    "status": "PASS_LOCAL_ENGINEERING_GATE",
+    "tested_source_sha256": "d114c517bfaf4b280d0025740a87d4ef312eefa902d512f90ac1ffddd024baa1",
+    "tested_tree_dirty": false,
+    "gate": {
+      "p95_ms_max": 5000,
+      "p99_ms_max": 10000,
+      "unexpected_error_rate_max": 0.01,
+      "data_invariant_failures_max": 0,
+      "deadlocks_max": 0,
+      "all_requested_levels_required": true
+    },
+    "methodology": {
+      "workers": 2,
+      "rounds_per_user": 2,
+      "requested_levels": [
+        50,
+        100,
+        250,
+        500
+      ],
+      "real_guest_identity": true,
+      "checkout_identity_policy": "legacy_guest",
+      "real_HTTP": true,
+      "real_PostgreSQL": true,
+      "concurrent_same_key_order_transmissions": 2,
+      "source_address_strategy": "distinct actual 127.20.x.x socket IPs",
+      "transport_recovery": "Await both transmissions; at most one retry per TransportError, same session/body/key; original failures remain in error rate/latencies.",
+      "traffic": "Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle",
+      "scope": "closed-loop simultaneous bursts; no think time, not an open-loop sustained production soak",
+      "safety": "UUID test schema, synthetic customers, disabled providers/background delivery, localhost HTTP only",
+      "verified_startup_worker_pids": [
+        2950,
+        2951
+      ]
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "logical_cpus": 4,
+      "cpu_quota": "unavailable",
+      "memory_limit_bytes": "unavailable",
+      "postgresql": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "max_connections": "100"
+    },
+    "run_id": 38466066467,
+    "job_id": 115533868003,
+    "artifact_id": 11848813480,
+    "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38466066467/job/115533868003",
+    "resource_limits": {},
+    "stages": [
+      {
+        "users": 50,
+        "metrics": {
+          "requests": 550,
+          "p95_ms": 482.529,
+          "p99_ms": 565.231,
+          "error_count": 0,
+          "completed_users": 50
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 100,
+          "acknowledged_orders": 100,
+          "persisted_orders": 100,
+          "creation_events": 100,
+          "creation_audits": 100,
+          "idempotency_rows": 100,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 100,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 100,
+        "metrics": {
+          "requests": 1100,
+          "p95_ms": 936.601,
+          "p99_ms": 1091.9,
+          "error_count": 0,
+          "completed_users": 100
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 200,
+          "acknowledged_orders": 200,
+          "persisted_orders": 200,
+          "creation_events": 200,
+          "creation_audits": 200,
+          "idempotency_rows": 200,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 200,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 250,
+        "metrics": {
+          "requests": 2750,
+          "p95_ms": 2194.662,
+          "p99_ms": 2590.697,
+          "error_count": 0,
+          "completed_users": 250
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 500,
+          "acknowledged_orders": 500,
+          "persisted_orders": 500,
+          "creation_events": 500,
+          "creation_audits": 500,
+          "idempotency_rows": 500,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 500,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 500,
+        "metrics": {
+          "requests": 5500,
+          "p95_ms": 4549.511,
+          "p99_ms": 6582.549,
+          "error_count": 0,
+          "completed_users": 500
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 1000,
+          "acknowledged_orders": 1000,
+          "persisted_orders": 1000,
+          "creation_events": 1000,
+          "creation_audits": 1000,
+          "idempotency_rows": 1000,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 1000,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      }
+    ]
+  },
+  {
+    "head": "8d1e1d4fc1cb6fc2c7b5eb0da425fb77febec2d7",
+    "status": "PASS_LOCAL_ENGINEERING_GATE",
+    "tested_source_sha256": "d114c517bfaf4b280d0025740a87d4ef312eefa902d512f90ac1ffddd024baa1",
+    "tested_tree_dirty": false,
+    "gate": {
+      "p95_ms_max": 5000,
+      "p99_ms_max": 10000,
+      "unexpected_error_rate_max": 0.01,
+      "data_invariant_failures_max": 0,
+      "deadlocks_max": 0,
+      "all_requested_levels_required": true
+    },
+    "methodology": {
+      "workers": 2,
+      "rounds_per_user": 2,
+      "requested_levels": [
+        50,
+        100,
+        250,
+        500
+      ],
+      "real_guest_identity": true,
+      "checkout_identity_policy": "legacy_guest",
+      "real_HTTP": true,
+      "real_PostgreSQL": true,
+      "concurrent_same_key_order_transmissions": 2,
+      "source_address_strategy": "distinct actual 127.20.x.x socket IPs",
+      "transport_recovery": "Await both transmissions; at most one retry per TransportError, same session/body/key; original failures remain in error rate/latencies.",
+      "traffic": "Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle",
+      "scope": "closed-loop simultaneous bursts; no think time, not an open-loop sustained production soak",
+      "safety": "UUID test schema, synthetic customers, disabled providers/background delivery, localhost HTTP only",
+      "verified_startup_worker_pids": [
+        2722,
+        2723
+      ]
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "logical_cpus": 4,
+      "cpu_quota": "unavailable",
+      "memory_limit_bytes": "unavailable",
+      "postgresql": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "max_connections": "100"
+    },
+    "run_id": 38466066467,
+    "job_id": 115533867494,
+    "artifact_id": 11848163561,
+    "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38466066467/job/115533867494",
+    "resource_limits": {},
+    "stages": [
+      {
+        "users": 50,
+        "metrics": {
+          "requests": 550,
+          "p95_ms": 582.417,
+          "p99_ms": 841.562,
+          "error_count": 0,
+          "completed_users": 50
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 100,
+          "acknowledged_orders": 100,
+          "persisted_orders": 100,
+          "creation_events": 100,
+          "creation_audits": 100,
+          "idempotency_rows": 100,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 100,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 100,
+        "metrics": {
+          "requests": 1100,
+          "p95_ms": 650.294,
+          "p99_ms": 836.364,
+          "error_count": 0,
+          "completed_users": 100
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 200,
+          "acknowledged_orders": 200,
+          "persisted_orders": 200,
+          "creation_events": 200,
+          "creation_audits": 200,
+          "idempotency_rows": 200,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 200,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 250,
+        "metrics": {
+          "requests": 2750,
+          "p95_ms": 1686.821,
+          "p99_ms": 1869.207,
+          "error_count": 0,
+          "completed_users": 250
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 500,
+          "acknowledged_orders": 500,
+          "persisted_orders": 500,
+          "creation_events": 500,
+          "creation_audits": 500,
+          "idempotency_rows": 500,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 500,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 500,
+        "metrics": {
+          "requests": 5500,
+          "p95_ms": 3388.985,
+          "p99_ms": 3689.035,
+          "error_count": 0,
+          "completed_users": 500
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 1000,
+          "acknowledged_orders": 1000,
+          "persisted_orders": 1000,
+          "creation_events": 1000,
+          "creation_audits": 1000,
+          "idempotency_rows": 1000,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 1000,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      }
+    ]
+  },
+  {
+    "head": "27238462513097343e070a402ccaf6bcb97cb6fc",
+    "status": "PASS_LOCAL_ENGINEERING_GATE",
+    "tested_source_sha256": "0eb2a6f00624835ed10ab54d84f630fa511169ba72c27de04d3ffa41603bbcd0",
+    "tested_tree_dirty": false,
+    "gate": {
+      "p95_ms_max": 5000,
+      "p99_ms_max": 10000,
+      "unexpected_error_rate_max": 0.01,
+      "data_invariant_failures_max": 0,
+      "deadlocks_max": 0,
+      "all_requested_levels_required": true
+    },
+    "methodology": {
+      "workers": 2,
+      "rounds_per_user": 2,
+      "requested_levels": [
+        50,
+        100,
+        250,
+        500
+      ],
+      "real_guest_identity": true,
+      "checkout_identity_policy": "legacy_guest",
+      "real_HTTP": true,
+      "real_PostgreSQL": true,
+      "concurrent_same_key_order_transmissions": 2,
+      "source_address_strategy": "distinct actual 127.20.x.x socket IPs",
+      "transport_recovery": "Await both transmissions; at most one retry per TransportError, same session/body/key; original failures remain in error rate/latencies.",
+      "traffic": "Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle",
+      "scope": "closed-loop simultaneous bursts; no think time, not an open-loop sustained production soak",
+      "safety": "UUID test schema, synthetic customers, disabled providers/background delivery, localhost HTTP only",
+      "verified_startup_worker_pids": [
+        2768,
+        2769
+      ]
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "logical_cpus": 4,
+      "cpu_quota": "unavailable",
+      "memory_limit_bytes": "unavailable",
+      "postgresql": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "max_connections": "100"
+    },
+    "run_id": 38535743728,
+    "job_id": 115758645702,
+    "artifact_id": 11880465472,
+    "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38535743728/job/115758645702",
+    "resource_limits": {},
+    "stages": [
+      {
+        "users": 50,
+        "metrics": {
+          "requests": 550,
+          "p95_ms": 395.559,
+          "p99_ms": 472.935,
+          "error_count": 0,
+          "completed_users": 50
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 100,
+          "acknowledged_orders": 100,
+          "persisted_orders": 100,
+          "creation_events": 100,
+          "creation_audits": 100,
+          "idempotency_rows": 100,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 100,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 100,
+        "metrics": {
+          "requests": 1100,
+          "p95_ms": 714.714,
+          "p99_ms": 977.121,
+          "error_count": 0,
+          "completed_users": 100
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 200,
+          "acknowledged_orders": 200,
+          "persisted_orders": 200,
+          "creation_events": 200,
+          "creation_audits": 200,
+          "idempotency_rows": 200,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 200,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 250,
+        "metrics": {
+          "requests": 2750,
+          "p95_ms": 1888.847,
+          "p99_ms": 2116.328,
+          "error_count": 0,
+          "completed_users": 250
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 500,
+          "acknowledged_orders": 500,
+          "persisted_orders": 500,
+          "creation_events": 500,
+          "creation_audits": 500,
+          "idempotency_rows": 500,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 500,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 500,
+        "metrics": {
+          "requests": 5500,
+          "p95_ms": 3355.727,
+          "p99_ms": 5421.21,
+          "error_count": 0,
+          "completed_users": 500
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 1000,
+          "acknowledged_orders": 1000,
+          "persisted_orders": 1000,
+          "creation_events": 1000,
+          "creation_audits": 1000,
+          "idempotency_rows": 1000,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 1000,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      }
+    ]
+  },
+  {
+    "head": "27238462513097343e070a402ccaf6bcb97cb6fc",
+    "status": "NOT_READY",
+    "tested_source_sha256": "0eb2a6f00624835ed10ab54d84f630fa511169ba72c27de04d3ffa41603bbcd0",
+    "tested_tree_dirty": false,
+    "gate": {
+      "p95_ms_max": 5000,
+      "p99_ms_max": 10000,
+      "unexpected_error_rate_max": 0.01,
+      "data_invariant_failures_max": 0,
+      "deadlocks_max": 0,
+      "all_requested_levels_required": true
+    },
+    "methodology": {
+      "workers": 2,
+      "rounds_per_user": 2,
+      "requested_levels": [
+        50,
+        100,
+        250,
+        500
+      ],
+      "real_guest_identity": true,
+      "checkout_identity_policy": "legacy_guest",
+      "real_HTTP": true,
+      "real_PostgreSQL": true,
+      "concurrent_same_key_order_transmissions": 2,
+      "source_address_strategy": "distinct actual 127.20.x.x socket IPs",
+      "transport_recovery": "Await both transmissions; at most one retry per TransportError, same session/body/key; original failures remain in error rate/latencies.",
+      "traffic": "Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle",
+      "scope": "closed-loop simultaneous bursts; no think time, not an open-loop sustained production soak",
+      "safety": "UUID test schema, synthetic customers, disabled providers/background delivery, localhost HTTP only",
+      "verified_startup_worker_pids": [
+        2962,
+        2963
+      ]
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "logical_cpus": 4,
+      "cpu_quota": "unavailable",
+      "memory_limit_bytes": "unavailable",
+      "postgresql": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "max_connections": "100"
+    },
+    "run_id": 38535743728,
+    "job_id": 115758645730,
+    "artifact_id": 11880266063,
+    "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38535743728/job/115758645730",
+    "resource_limits": {},
+    "stages": [
+      {
+        "users": 50,
+        "metrics": {
+          "requests": 550,
+          "p95_ms": 481.652,
+          "p99_ms": 584.824,
+          "error_count": 0,
+          "completed_users": 50
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 100,
+          "acknowledged_orders": 100,
+          "persisted_orders": 100,
+          "creation_events": 100,
+          "creation_audits": 100,
+          "idempotency_rows": 100,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 100,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 100,
+        "metrics": {
+          "requests": 1100,
+          "p95_ms": 892.242,
+          "p99_ms": 1047.77,
+          "error_count": 0,
+          "completed_users": 100
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 200,
+          "acknowledged_orders": 200,
+          "persisted_orders": 200,
+          "creation_events": 200,
+          "creation_audits": 200,
+          "idempotency_rows": 200,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 200,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 250,
+        "metrics": {
+          "requests": 2750,
+          "p95_ms": 2084.808,
+          "p99_ms": 2680.868,
+          "error_count": 0,
+          "completed_users": 250
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 500,
+          "acknowledged_orders": 500,
+          "persisted_orders": 500,
+          "creation_events": 500,
+          "creation_audits": 500,
+          "idempotency_rows": 500,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 500,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 500,
+        "metrics": {
+          "requests": 5500,
+          "p95_ms": 5072.146,
+          "p99_ms": 5881.89,
+          "error_count": 0,
+          "completed_users": 500
+        },
+        "passed": false,
+        "integrity": {
+          "expected_orders": 1000,
+          "acknowledged_orders": 1000,
+          "persisted_orders": 1000,
+          "creation_events": 1000,
+          "creation_audits": 1000,
+          "idempotency_rows": 1000,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 1000,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      }
+    ]
+  },
+  {
+    "head": "667286532787e2aad33636c2b4adcd34428d3dcf",
+    "status": "NOT_READY",
+    "tested_source_sha256": "cbbdd12c36c813319cb245aba2578fc32eb124c75995dbf7b7c12468871a0e69",
+    "tested_tree_dirty": false,
+    "gate": {
+      "p95_ms_max": 5000,
+      "p95_comparison": "strictly_less_than",
+      "p99_ms_max": 10000,
+      "unexpected_error_rate_max": 0.01,
+      "data_invariant_failures_max": 0,
+      "deadlocks_max": 0,
+      "all_requested_levels_required": true
+    },
+    "methodology": {
+      "workers": 2,
+      "rounds_per_user": 2,
+      "requested_levels": [
+        50,
+        100,
+        250,
+        500
+      ],
+      "real_guest_identity": true,
+      "checkout_identity_policy": "legacy_guest",
+      "real_HTTP": true,
+      "real_PostgreSQL": true,
+      "concurrent_same_key_order_transmissions": 2,
+      "source_address_strategy": "distinct actual 127.20.x.x socket IPs",
+      "transport_recovery": "Await both transmissions; at most one retry per TransportError, same session/body/key; original failures remain in error rate/latencies.",
+      "traffic": "Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle",
+      "scope": "closed-loop simultaneous bursts; no think time, not an open-loop sustained production soak",
+      "safety": "UUID test schema, synthetic customers, disabled providers/background delivery, localhost HTTP only",
+      "verified_startup_worker_pids": [
+        3024,
+        3025
+      ]
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "logical_cpus": 4,
+      "cpu_quota": "unavailable",
+      "memory_limit_bytes": "unavailable",
+      "postgresql": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "max_connections": "100"
+    },
+    "run_id": 38760747965,
+    "job_id": 116511088833,
+    "artifact_id": 11986036417,
+    "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38760747965/job/116511088833",
+    "resource_limits": {
+      "name": "current_render_resource_budget",
+      "budget_configuration_verified": true,
+      "application_limits": {
+        "cpu_quota_us": 50000,
+        "cpu_period_us": 100000,
+        "memory_limit_bytes": 536870912,
+        "swap_limit_bytes": 0
+      },
+      "postgresql_limits": {
+        "cpu_quota_us": 10000,
+        "cpu_period_us": 100000,
+        "memory_limit_bytes": 268435456,
+        "swap_limit_bytes": 0
+      },
+      "generator_outside_workload_cgroups": true
+    },
+    "stages": [
+      {
+        "users": 50,
+        "metrics": {
+          "requests": 550,
+          "p95_ms": 3653.355,
+          "p99_ms": 4001.808,
+          "error_count": 0,
+          "completed_users": 50
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 100,
+          "acknowledged_orders": 100,
+          "persisted_orders": 100,
+          "creation_events": 100,
+          "creation_audits": 100,
+          "idempotency_rows": 100,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 100,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 100,
+        "metrics": {
+          "requests": 1100,
+          "p95_ms": 4560.226,
+          "p99_ms": 5196.75,
+          "error_count": 0,
+          "completed_users": 100
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 200,
+          "acknowledged_orders": 200,
+          "persisted_orders": 200,
+          "creation_events": 200,
+          "creation_audits": 200,
+          "idempotency_rows": 200,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 200,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 250,
+        "metrics": {
+          "requests": 2750,
+          "p95_ms": 11552.455,
+          "p99_ms": 12367.679,
+          "error_count": 0,
+          "completed_users": 250
+        },
+        "passed": false,
+        "integrity": {
+          "expected_orders": 500,
+          "acknowledged_orders": 500,
+          "persisted_orders": 500,
+          "creation_events": 500,
+          "creation_audits": 500,
+          "idempotency_rows": 500,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 500,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 500,
+        "metrics": {
+          "requests": 5500,
+          "p95_ms": 19292.306,
+          "p99_ms": 21871.229,
+          "error_count": 0,
+          "completed_users": 500
+        },
+        "passed": false,
+        "integrity": {
+          "expected_orders": 1000,
+          "acknowledged_orders": 1000,
+          "persisted_orders": 1000,
+          "creation_events": 1000,
+          "creation_audits": 1000,
+          "idempotency_rows": 1000,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 1000,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      }
+    ],
+    "stage_500_cpu_deltas": {
+      "application": {
+        "nr_periods": 1040,
+        "nr_throttled": 236,
+        "throttled_usec": 13027293,
+        "usage_usec": 32353359
+      },
+      "postgresql": {
+        "nr_periods": 1058,
+        "nr_throttled": 932,
+        "throttled_usec": 179215822,
+        "usage_usec": 9912188
+      }
+    }
+  },
+  {
+    "head": "667286532787e2aad33636c2b4adcd34428d3dcf",
+    "status": "PASS_PROPOSED_RESOURCE_GATE",
+    "tested_source_sha256": "cbbdd12c36c813319cb245aba2578fc32eb124c75995dbf7b7c12468871a0e69",
+    "tested_tree_dirty": false,
+    "gate": {
+      "p95_ms_max": 5000,
+      "p95_comparison": "strictly_less_than",
+      "p99_ms_max": 10000,
+      "unexpected_error_rate_max": 0.01,
+      "data_invariant_failures_max": 0,
+      "deadlocks_max": 0,
+      "all_requested_levels_required": true
+    },
+    "methodology": {
+      "workers": 2,
+      "rounds_per_user": 2,
+      "requested_levels": [
+        50,
+        100,
+        250,
+        500
+      ],
+      "real_guest_identity": true,
+      "checkout_identity_policy": "legacy_guest",
+      "real_HTTP": true,
+      "real_PostgreSQL": true,
+      "concurrent_same_key_order_transmissions": 2,
+      "source_address_strategy": "distinct actual 127.20.x.x socket IPs",
+      "transport_recovery": "Await both transmissions; at most one retry per TransportError, same session/body/key; original failures remain in error rate/latencies.",
+      "traffic": "Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle",
+      "scope": "closed-loop simultaneous bursts; no think time, not an open-loop sustained production soak",
+      "safety": "UUID test schema, synthetic customers, disabled providers/background delivery, localhost HTTP only",
+      "verified_startup_worker_pids": [
+        2969,
+        2970
+      ]
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "logical_cpus": 4,
+      "cpu_quota": "unavailable",
+      "memory_limit_bytes": "unavailable",
+      "postgresql": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "max_connections": "100"
+    },
+    "run_id": 38760747965,
+    "job_id": 116511088268,
+    "artifact_id": 11986060750,
+    "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38760747965/job/116511088268",
+    "resource_limits": {
+      "name": "proposed_render_resource_budget",
+      "budget_configuration_verified": true,
+      "application_limits": {
+        "cpu_quota_us": 200000,
+        "cpu_period_us": 100000,
+        "memory_limit_bytes": 4294967296,
+        "swap_limit_bytes": 0
+      },
+      "postgresql_limits": {
+        "cpu_quota_us": 100000,
+        "cpu_period_us": 100000,
+        "memory_limit_bytes": 2147483648,
+        "swap_limit_bytes": 0
+      },
+      "generator_outside_workload_cgroups": true
+    },
+    "stages": [
+      {
+        "users": 50,
+        "metrics": {
+          "requests": 550,
+          "p95_ms": 354.526,
+          "p99_ms": 403.684,
+          "error_count": 0,
+          "completed_users": 50
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 100,
+          "acknowledged_orders": 100,
+          "persisted_orders": 100,
+          "creation_events": 100,
+          "creation_audits": 100,
+          "idempotency_rows": 100,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 100,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 100,
+        "metrics": {
+          "requests": 1100,
+          "p95_ms": 692.394,
+          "p99_ms": 922.501,
+          "error_count": 0,
+          "completed_users": 100
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 200,
+          "acknowledged_orders": 200,
+          "persisted_orders": 200,
+          "creation_events": 200,
+          "creation_audits": 200,
+          "idempotency_rows": 200,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 200,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 250,
+        "metrics": {
+          "requests": 2750,
+          "p95_ms": 1584.986,
+          "p99_ms": 2094.172,
+          "error_count": 0,
+          "completed_users": 250
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 500,
+          "acknowledged_orders": 500,
+          "persisted_orders": 500,
+          "creation_events": 500,
+          "creation_audits": 500,
+          "idempotency_rows": 500,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 500,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      },
+      {
+        "users": 500,
+        "metrics": {
+          "requests": 5500,
+          "p95_ms": 3417.426,
+          "p99_ms": 3793.161,
+          "error_count": 0,
+          "completed_users": 500
+        },
+        "passed": true,
+        "integrity": {
+          "expected_orders": 1000,
+          "acknowledged_orders": 1000,
+          "persisted_orders": 1000,
+          "creation_events": 1000,
+          "creation_audits": 1000,
+          "idempotency_rows": 1000,
+          "duplicate_business_intents": 0,
+          "orphan_orders": 0,
+          "distinct_receipt_references": 1000,
+          "failure_reasons": [],
+          "passed": true
+        },
+        "deadlocks_delta": 0
+      }
+    ],
+    "stage_500_cpu_deltas": {
+      "application": {
+        "nr_periods": 234,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "usage_usec": 25269845
+      },
+      "postgresql": {
+        "nr_periods": 228,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "usage_usec": 7151499
+      }
+    }
+  }
+]

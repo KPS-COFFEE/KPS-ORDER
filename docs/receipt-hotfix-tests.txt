@@ -1,0 +1,17 @@
+# Targeted receipt hotfix coverage; not a full operational certificate.
+tests/test_http_security.py
+tests/test_security_audit_local.py
+tests/test_map_resolution_security.py
+tests/test_morning_trial_security_postgres.py
+tests/test_morning_manager_dispatch_security_postgres.py
+tests/test_context_cookie_isolation.py
+tests/test_scoped_operational_permissions.py
+tests/test_multibrand_final_boundary.py
+tests/test_aggregate_driver_closure.py
+tests/test_aggregate_manager_closure.py
+tests/test_physical_receipt_boundary.py
+tests/test_driver_incentives_unit.py
+tests/test_shared_closure_privacy.py
+tests/test_rollback_shared_state_guard.py
+tests/test_driver_physical_admission.py
+tests/test_central_handovers.py

@@ -1,0 +1,60 @@
+name: Customer entry and stage timing acceptance
+on:
+  push:
+    branches: [agent/customer-journey-stage-policy-20261020, agent/customer-open-menu-map-20261021]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_customer_entry
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d test_customer_entry" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:isolated-test-only@127.0.0.1:5432/test_customer_entry
+      TEST_BROWSER: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium webkit
+      - run: node --check public/customer.js && node --check public/ops.js && node --check public/assets/experience-policy.js && node --check public/assets/first-order-gift.js && node --check public/assets/banner-device-preview.js && node --check public/assets/morning-delivery.js && node --check public/assets/customer-map.js
+      - name: Verify open browsing, early offer login and confirmed map pins
+        run: python -m pytest -q -x tests/test_customer_map_browser.py tests/test_experience_entry_browser.py --junitxml=test-results/open-menu-map.xml
+      - name: Verify legacy owner advertising integration and shared map budget first
+        run: >-
+          python -m pytest -q
+          tests/test_admin.py::test_real_banner_upload_schedule_scope_edit_persistence_and_private_preview
+          tests/test_launch_admin.py::test_city_scoped_banner_asset_schedule_speed_and_owner_edits_persist_without_data_changes
+          tests/test_launch_browser.py::test_editable_text_only_noto_ticker_above_header_left_to_right_and_dynamic_reduced_motion
+          tests/test_launch_browser.py::test_owner_banner_city_speed_link_image_scope_and_ticker_edits_through_real_forms
+          tests/test_browser.py::test_real_preview_responsive_colors_restriction_banner_and_missing_otp
+          tests/test_browser.py::test_real_customer_car_order_chat_images_and_owner_operations
+          tests/test_map_resolution_security.py::test_client_budget_and_cache_are_shared_by_distinct_os_workers
+          --junitxml=test-results/owner-integration.xml
+      - run: python -m pytest -q tests/test_delivery_hours.py::test_manager_preparation_is_separate_from_customer_admission tests/test_delivery_hours.py::test_manager_fresh_shift_and_customer_quote_boundaries tests/test_delivery_hours.py::test_driver_fresh_shift_cannot_start_outside_window tests/test_delivery_hours.py::test_manager_prepares_new_day_without_opening_customer_service
+      - run: node --check public/assets/advertising-policy.js && python -m pytest -q tests/test_storefront_advertising.py tests/test_storefront_advertising_postgres.py tests/test_storefront_advertising_browser.py tests/test_homepage_presentation.py
+      - run: node --check public/assets/dispatch-map.js && python -m pytest -q tests/test_dispatch_map_browser.py tests/test_dispatch_map_config.py tests/test_driver_gps_browser.py tests/test_driver_map_pins.py tests/test_driver_locations.py tests/test_dispatch_workspace_counts.py tests/test_dispatch_order_sort.py
+      - run: python -m pytest -q tests/test_customer_map.py tests/test_delivery_workspace_browser.py tests/test_morning_customer_postgres.py tests/test_morning_policy_browser.py tests/test_morning_delivery.py tests/test_morning_delivery_postgres.py tests/test_manager_acceptance_postgres.py tests/test_banner_device_preview_browser.py tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py tests/test_core.py tests/test_experience_policy.py tests/test_experience_policy_postgres.py tests/test_customer_progress.py tests/test_customer_progress_postgres.py --junitxml=test-results/customer-entry.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-entry-evidence
+          path: |
+            test-results/owner-integration.xml
+            test-results/customer-entry.xml
+            test-results/open-menu-map.xml
+            test-results/customer-entry-*.png

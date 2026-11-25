@@ -1,0 +1,19 @@
+{
+  "head": "ac3ab03d1f4f769590e3b6ce24f29b6596a91309",
+  "run": 39891433585,
+  "artifact_id": 12474829047,
+  "artifact_sha256": "4531b788b0151f6dd17a7c9fc8d9511081dd87f67ac762bfea43650ccabcfecd",
+  "classification": "Initial-head visual evidence only; overall run failed; not release certification",
+  "files": [
+    {
+      "original": "gift-creative-390.png",
+      "file": "kps-approved-gift-390-initial-head.png",
+      "sha256": "a899197d15ff934d2fca1c03912f3e04e91bf4b68a6bf607555ca6263e732d89"
+    },
+    {
+      "original": "campaign-report-en-1366.png",
+      "file": "campaign-report-ar-1366-initial-head.png",
+      "sha256": "5c688d838cd637ade474cf57d92e606a668ceadb6bc518ff96fbe2341d18c430"
+    }
+  ]
+}

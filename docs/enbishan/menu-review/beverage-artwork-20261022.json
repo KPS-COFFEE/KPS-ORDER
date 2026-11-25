@@ -1,0 +1,43 @@
+{
+  "decision_date": "2026-10-22",
+  "scope": "Owner requested beverage photos and the same water photo currently served by KPS. The KPS public catalog and image identify Nova, not Almas; no Almas branding was fabricated.",
+  "records": [
+    {
+      "code": "enb-2e070f45d5bf744d690a5471",
+      "file": "pepsi-240ml.webp",
+      "url": "https://hungerstation.dhmedia.io/image/product-information-management/69d38a1c0f57e122731310a8.jpg?quality=75&webp=true&width=1440",
+      "sha256": "ed2b6191c0512b4e7a39777e64a0c0cd9ef5bb181b7ee6e7489666f707c44824"
+    },
+    {
+      "code": "enb-d1dbec7c9b6807c2ac279729",
+      "file": "pepsi-diet-240ml.webp",
+      "url": "https://media.zid.store/4c014624-206d-43df-a6d3-064b19937af4/11d5c0aa-13be-40f3-9ed3-9940cd4bfe72.webp",
+      "sha256": "85a0cf40546f17c90c74d4a0e67aadd88327c9cc07587c5686b7d8fabab0758c"
+    },
+    {
+      "code": "enb-e280cf67030a17429d29363f",
+      "file": "7up-240ml.png",
+      "url": "https://cdn.salla.sa/QdoGmN/8af6ea9d-b178-42d3-a59a-25e2703f0eb3-848.12623274162x1000-p5sIdqlAO6KYLuvMK9UQOV2BBwoa5xUfHWhhgGjQ.png",
+      "sha256": "6d82559f8ecafc0efcc0003b01165e4653854239ac51e7adae22cd32a950781c"
+    },
+    {
+      "code": "enb-b668a68a8f8104f89fdc8567",
+      "file": "7up-diet.jpg",
+      "url": "https://cdn.salla.sa/XRVjV/sMMYZOHwgQup86mCWq3MjELmAFvlv7tWgHI5doar.jpg",
+      "sha256": "652d576ea89411ceaa7a389383abddb7070572393d143ffcf4f78c0ed2661ce1"
+    },
+    {
+      "code": "enb-3e3bfca2b787a5a48ff26488",
+      "file": "water-kps.jpg",
+      "url": "https://order.kps.sa/assets/kps-32-362d6590ff73.jpg",
+      "sha256": "362d6590ff737195c12aed05376cfd8e2344dbba97c43bdbf052fe23eee08084"
+    },
+    {
+      "code": "enb-078a4053bf0eef33bfe3557f",
+      "file": "mirinda-orange-240ml.webp",
+      "url": "https://img.ananinja.com/media/ninja-catalog-42/Banmaly/012000057250_1.png",
+      "sha256": "dfcfbf910a0f307ef9ed358e06c099526fcbdbaf868359096fa5c81dd0b921cf"
+    }
+  ],
+  "notes": "Photos only; prices, names, sizes, modifiers and activation flags are unchanged. 7up Diet source is a 320ml stock-can photo; the approved menu says Single and its portion is unchanged."
+}

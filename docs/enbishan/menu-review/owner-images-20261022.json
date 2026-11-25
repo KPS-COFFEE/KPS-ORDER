@@ -1,0 +1,45 @@
+{
+  "decision_id": "owner-final-20261022",
+  "assets": [
+    {
+      "filename": "mojito-grape.jpeg",
+      "path": "/assets/enbishan-menu/owner-review/mojito-grape.jpeg",
+      "sha256": "2891b9487294ddfa1049a56a24528e5df4e4f34fec0ef381b02d4c6744d21cd9",
+      "bytes": 301416,
+      "source": "Existing owner-reviewed customer Site /assets/owner-review/mojito-grape.jpeg",
+      "transformation": "None; byte-for-byte copy"
+    },
+    {
+      "filename": "mojito-mahashi.jpeg",
+      "path": "/assets/enbishan-menu/owner-review/mojito-mahashi.jpeg",
+      "sha256": "0ddfb729a4a4c77719f6e77f4e192fc196ba047d7c46e5153c2a08f722404a76",
+      "bytes": 276350,
+      "source": "Existing owner-reviewed customer Site /assets/owner-review/mojito-mahashi.jpeg",
+      "transformation": "None; byte-for-byte copy"
+    },
+    {
+      "filename": "mojito-fattah.jpeg",
+      "path": "/assets/enbishan-menu/owner-review/mojito-fattah.jpeg",
+      "sha256": "f7af7498cd4e4d5dc740f7eaa0ec86ce651d4bf2e452cc6b5905c339397e982e",
+      "bytes": 362262,
+      "source": "Existing owner-reviewed customer Site /assets/owner-review/mojito-fattah.jpeg",
+      "transformation": "None; byte-for-byte copy"
+    },
+    {
+      "filename": "ramadan-box.jpeg",
+      "path": "/assets/enbishan-menu/owner-review/ramadan-box.jpeg",
+      "sha256": "640adda702b8fcdcf1663886556d08f8480e411444313c884ef660f883f776ba",
+      "bytes": 318464,
+      "source": "Existing owner-reviewed customer Site /assets/owner-review/ramadan-box.jpeg",
+      "transformation": "None; byte-for-byte copy"
+    },
+    {
+      "filename": "crispy-small.jpeg",
+      "path": "/assets/enbishan-menu/owner-review/crispy-small.jpeg",
+      "sha256": "36354327119f311c9d2ad77f193e86badae96493665b0e8288eb479207cf61a2",
+      "bytes": 268761,
+      "source": "Existing owner-reviewed customer Site /assets/owner-review/crispy-small.jpeg",
+      "transformation": "None; byte-for-byte copy"
+    }
+  ]
+}

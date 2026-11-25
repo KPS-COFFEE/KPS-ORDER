@@ -1,0 +1,41 @@
+{
+  "candidate_sha": "90043355ac21d1216ea1c8d3ef599323d32bb10d",
+  "workflow_run_id": 40262297875,
+  "classification": "historical_smaller_resource_profile_failed_not_current_live_plan",
+  "application_cpu": 0.5,
+  "application_memory_mib": 512,
+  "postgres_cpu": 0.1,
+  "postgres_memory_mib": 256,
+  "p95_limit_ms": 5000,
+  "repetitions": [
+    {
+      "repetition": 1,
+      "status": "FAIL",
+      "users": 500,
+      "p95_ms": 21496.890,
+      "p99_ms": 23579.323,
+      "persisted_orders": 1000,
+      "http_errors": 0,
+      "artifact_id": 12624852484,
+      "artifact_name": "render-resource-budget-1",
+      "artifact_sha256": "d752203beaadf187ed0c89679f4d589081b5cb7efd78ce7f4caa6356b36b0a50",
+      "artifact_expires_at": "2027-01-24T03:05:13Z"
+    },
+    {
+      "repetition": 2,
+      "status": "FAIL",
+      "users": 500,
+      "p95_ms": 13778.433,
+      "p99_ms": 14910.140,
+      "persisted_orders": 1000,
+      "http_errors": 0,
+      "artifact_id": 12625186567,
+      "artifact_name": "render-resource-budget-2",
+      "artifact_sha256": "0219903e32a56f139f25255ac26e861eb9d63c14d5c59505f4817889e909ec61",
+      "artifact_expires_at": "2027-01-24T03:05:13Z"
+    }
+  ],
+  "historical_result_preserved": true,
+  "certifies_current_render_capacity": false,
+  "production_configuration_changed": false
+}

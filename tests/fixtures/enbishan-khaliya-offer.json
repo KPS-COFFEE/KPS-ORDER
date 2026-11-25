@@ -1,0 +1,192 @@
+{
+  "before": {
+    "id": "enbishan-menu-b912778fdbf8eeb4211ccf60",
+    "brand_id": "enbishan",
+    "name": "خلية",
+    "category": "المخبوزات",
+    "price_halalas": 1950,
+    "source_id": "enb-khalyah-owner-20261020",
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "name_en": "Size",
+        "required": true,
+        "min_select": 1,
+        "max_select": 1,
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0
+          }
+        ]
+      },
+      {
+        "code": "FLAVOUR",
+        "name": "النكهة",
+        "name_en": "Flavour",
+        "required": true,
+        "min_select": 1,
+        "max_select": 1,
+        "type": "select",
+        "values": [
+          {
+            "code": "v-b0d476f1539cd3b162a08884",
+            "name": "بيكان",
+            "name_en": "Pecan",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "v-fcdb9008ab654ee829014225",
+            "name": "سينابون",
+            "name_en": "Cinnabon",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "v-de821d9f2eb4a4cfcc4f64d0",
+            "name": "كلاسيك",
+            "name_en": "Classic",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "v-191ae8690a8717a4cea5f903",
+            "name": "مكس",
+            "name_en": "Mix",
+            "price_delta_halalas": 0
+          }
+        ]
+      }
+    ],
+    "variants": [],
+    "variant_price_matrix": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-fcdb9008ab654ee829014225"
+        },
+        "price_halalas": 1950
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-de821d9f2eb4a4cfcc4f64d0"
+        },
+        "price_halalas": 1950
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-191ae8690a8717a4cea5f903"
+        },
+        "price_halalas": 1950
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-b0d476f1539cd3b162a08884"
+        },
+        "price_halalas": 1950
+      }
+    ]
+  },
+  "after": {
+    "id": "enbishan-menu-b912778fdbf8eeb4211ccf60",
+    "brand_id": "enbishan",
+    "name": "خلية",
+    "category": "المخبوزات",
+    "price_halalas": 1950,
+    "source_id": "enb-khalyah-owner-20261020",
+    "option_groups": [
+      {
+        "code": "SIZE",
+        "name": "الحجم",
+        "name_en": "Size",
+        "required": true,
+        "min_select": 1,
+        "max_select": 1,
+        "type": "select",
+        "values": [
+          {
+            "code": "v-f956d9167fe84c3ce4bd91a8",
+            "name": "فردية",
+            "name_en": "Single",
+            "price_delta_halalas": 0
+          }
+        ]
+      },
+      {
+        "code": "FLAVOUR",
+        "name": "النكهة",
+        "name_en": "Flavour",
+        "required": true,
+        "min_select": 1,
+        "max_select": 1,
+        "type": "select",
+        "values": [
+          {
+            "code": "v-b0d476f1539cd3b162a08884",
+            "name": "بيكان",
+            "name_en": "Pecan",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "v-fcdb9008ab654ee829014225",
+            "name": "سينابون",
+            "name_en": "Cinnabon",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "v-de821d9f2eb4a4cfcc4f64d0",
+            "name": "كلاسيك",
+            "name_en": "Classic",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "v-191ae8690a8717a4cea5f903",
+            "name": "مكس",
+            "name_en": "Mix",
+            "price_delta_halalas": 0
+          }
+        ]
+      }
+    ],
+    "variants": [],
+    "variant_price_matrix": [
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-fcdb9008ab654ee829014225"
+        },
+        "price_halalas": 1950,
+        "compare_at_halalas": 2500
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-de821d9f2eb4a4cfcc4f64d0"
+        },
+        "price_halalas": 1950,
+        "compare_at_halalas": 2500
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-191ae8690a8717a4cea5f903"
+        },
+        "price_halalas": 1950,
+        "compare_at_halalas": 2500
+      },
+      {
+        "options": {
+          "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+          "FLAVOUR": "v-b0d476f1539cd3b162a08884"
+        },
+        "price_halalas": 1950,
+        "compare_at_halalas": 2500
+      }
+    ]
+  }
+}
