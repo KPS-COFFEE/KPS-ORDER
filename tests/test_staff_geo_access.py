@@ -378,3 +378,42 @@ def test_multibrand_grants_bind_canonical_identity_and_live_owner_scope(geo_clie
     with db.tx() as conn:
         conn.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id=%s AND brand_id='enbishan'", (owner['id'],))
     assert geo_client.get('/api/session').status_code == 403
+
+
+def test_egypt_committee_sms_access_is_account_and_time_bound(network, monkeypatch):
+    network.update(country_code='EG', client_ip='1.1.1.1')
+    monkeypatch.setenv('INTERVIEW_EGYPT_SMS_UNTIL', '2099-01-01T00:00:00+00:00')
+    monkeypatch.setenv('INTERVIEW_EGYPT_SMS_ACCOUNTS', 'member')
+    login = request()
+    login.scope.update(method='POST', path='/api/identity/staff/code/request')
+    member = dict(id='member', active=True, brand_id='kps', invitation_status='active', role='admin')
+    geo.require_entry(request())
+    geo.require_user(None, login, member)
+    geo.require_user(None, request(), dict(member, session_id='valid'))
+    for wrong in [dict(member, id='other'), dict(member, active=False), dict(member, brand_id='other')]:
+        with pytest.raises(HTTPException):
+            geo.require_user(None, login, wrong)
+    with pytest.raises(HTTPException):
+        geo.require_user(None, request(), member)
+    network.update(country_code='ZZ')
+    with pytest.raises(HTTPException):
+        geo.require_user(None, login, member)
+    network.update(country_code='EG')
+    monkeypatch.setenv('INTERVIEW_EGYPT_SMS_UNTIL', '2020-01-01T00:00:00+00:00')
+    with pytest.raises(HTTPException):
+        geo.require_entry(request())
+
+
+def test_interview_links_select_work_cookie_and_redirect_before_login(monkeypatch):
+    from app import interviews
+    req = request()
+    for path in ['/api/interviews', '/api/interviews/access', '/api/interviews/batch/results.pdf']:
+        req.scope['path'] = path
+        assert auth.session_context(req) == 'work'
+    req.scope['path'] = '/ops/interviews'
+    def signed_out(_):
+        raise HTTPException(401)
+    monkeypatch.setattr(auth, 'current_user', signed_out)
+    response = interviews.page(req)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/ops?interviews=1'

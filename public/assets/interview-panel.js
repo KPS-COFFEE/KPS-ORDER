@@ -3,7 +3,7 @@ const el=id=>document.getElementById(id);
 let csrf='', lobby, room, roomId, selected=-1, revision=-1, dirty=false, timer;
 const options=(select,items)=>select.replaceChildren(...items.map(([value,label])=>new Option(label,value)));
 async function api(path,body){
- const res=await fetch(path,{cache:'no-store',method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{},body:body?JSON.stringify(body):undefined});
+ const res=await fetch(path,{cache:'no-store',method:body?'POST':'GET',headers:{'X-KPS-Context':'work',...(body?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{})},body:body?JSON.stringify(body):undefined});
  const value=await res.json(); if(!res.ok)throw Error(value.detail?.message||'تعذر إتمام الطلب.');return value;
 }
 function action(id,run){el(id).onclick=async()=>{el(id).disabled=true;try{await run()}catch(e){el('status').textContent=e.message}finally{el(id).disabled=false}}}

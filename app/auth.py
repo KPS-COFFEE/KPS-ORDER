@@ -160,6 +160,8 @@ def session_context(request):
         context=request.query_params.get('context')
     if context is not None and context not in {'work','customer'}:
         raise db.error(400,'SESSION_CONTEXT_INVALID','اختر سياق الدخول الصحيح. / Invalid session context.')
+    if path == '/api/interviews' or path.startswith('/api/interviews/'):
+        return 'work'
     if path.startswith('/api/fiscal/orders/') and path.endswith('/documents'):
         return context
     if (path.startswith(('/api/auth/otp/','/api/customer/')) or path in {'/api/quote','/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
