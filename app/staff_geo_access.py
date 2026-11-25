@@ -8,6 +8,7 @@ neither raw credential is stored in PostgreSQL or the audit log.
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import secrets
 from datetime import datetime, timezone
@@ -136,6 +137,21 @@ def _token_grant(conn, token, *, entry=False, lock=False):
     return row if row and _authority_active(conn, row) else None
 
 
+def _egypt_committee(network):
+    if network['country_code'] != 'EG':
+        return ()
+    try:
+        end = datetime.fromisoformat(os.environ['INTERVIEW_EGYPT_SMS_UNTIL'])
+    except (KeyError, ValueError):
+        return ()
+    if end.tzinfo is None or datetime.now(timezone.utc) >= end:
+        return ()
+    return tuple(filter(None, os.getenv('INTERVIEW_EGYPT_SMS_ACCOUNTS', '').split(',')))
+
+
+_SMS_ENTRY = {'/api/identity/staff/code/request', '/api/identity/staff/code/verify'}
+
+
 def require_entry(request):
     """Protect the work shell and unauthenticated work endpoints abroad."""
     if not _enabled():
@@ -145,6 +161,16 @@ def require_entry(request):
         raise _denied(location=True)
     if network.get('country_code') == 'SA':
         return
+    if _egypt_committee(network):
+        from . import staff_geo
+        path = request.url.path
+        if (request.method in ('GET', 'HEAD') and path in {'/ops', '/ops.html', '/api/session', '/api/identity/staff/login-policy'} | staff_geo.WORK_ASSETS
+                or request.method == 'POST' and path in _SMS_ENTRY):
+            return
+        with db.tx() as conn:
+            member = auth._find_session(conn, request)
+            if member and member['id'] in _egypt_committee(network):
+                return
     token = request.cookies.get(COOKIE)
     if not isinstance(token, str) or not TOKEN.fullmatch(token):
         raise _denied()
@@ -163,6 +189,11 @@ def require_user(conn, request, user):
         raise _denied(location=True)
     if network.get('country_code') == 'SA':
         return
+    if (user and user['id'] in _egypt_committee(network) and user.get('brand_id') == 'kps'
+            and user.get('active') and user.get('invitation_status') == 'active'):
+        # KPS staff sessions can only be created by the verified employee SMS flow.
+        if user.get('session_id') or request.url.path in _SMS_ENTRY:
+            return
     grant = _token_grant(conn, request.cookies.get(COOKIE))
     if not user or not grant or grant['user_id'] != user['id']:
         raise _denied()

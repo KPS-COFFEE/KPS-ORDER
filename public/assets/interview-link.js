@@ -9,7 +9,11 @@ async function refreshInterviewLink(){
  try{
   const response=await fetch('/api/interviews/access',{cache:'no-store'});
   const data=await response.json();
-  if(check===accessCheck)interviewLink.hidden=!data.allowed;
+  if(check!==accessCheck)return;
+  interviewLink.hidden=!data.allowed;
+  if(data.allowed && new URLSearchParams(location.search).get('interviews')==='1'){
+   location.replace('/ops/interviews');
+  }
  }catch{}
 }
 new MutationObserver(refreshInterviewLink).observe(logoutButton,{attributes:true,attributeFilter:['hidden']});

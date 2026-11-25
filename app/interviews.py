@@ -3,8 +3,8 @@ from .interview_bank import private_bank
 import os
 from pathlib import Path
 from typing import Literal
-from fastapi import APIRouter, Depends
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from psycopg.types.json import Jsonb
 from . import auth, db
@@ -84,7 +84,13 @@ def lobby(user=Depends(auth.current_user)):
 
 
 @router.get('/ops/interviews')
-def page(user=Depends(auth.current_user)):
+def page(request: Request):
+    try:
+        user = auth.current_user(request)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return RedirectResponse('/ops?interviews=1', status_code=303, headers={'Cache-Control':'no-store'})
+        raise
     with db.tx() as c:
         if not panel(c,user) and user['role']!='owner':
             raise db.error(403,'PANEL_PRIVATE','اللجنة خاصة.')
