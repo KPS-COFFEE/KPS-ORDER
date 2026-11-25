@@ -38,13 +38,17 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
                 'customer/marketing-consent':{'brand_id':'kps','notice':None,'marketing':{'sms':False,'whatsapp':False},'affects_order_messages':False},
             }
             if path=='location/parse-map-url':
-                if request.post_data_json['url']!=link:
+                if request.post_data_json['url'] not in (link,link+'2'):
                     route.fulfill(status=422,content_type='application/json',body=json.dumps({'detail':{'code':'MAP_PIN_REQUIRED','message':'حدد دبوسًا صحيحًا'}}));return
-                data={'location':point,'source':'customer_selected','location_is_device_verified':False}
+                data={'location':point if request.post_data_json['url']==link else {'lat':28.41,'lng':45.91},'source':'customer_selected','location_is_device_verified':False}
             elif path=='auth/otp/verify':
                 session.update(user=user,csrf_token='synthetic-only',customer_verified=True);data=session
             elif path in ('quote','gifts/quote'):
-                assert request.post_data_json['customer']['location']==point
+                alternate=request.post_data_json.get('delivery_recipient')
+                if alternate:
+                    assert alternate=={'recipient_name':'مستلم اختبار','recipient_phone':'0500001002'}
+                    assert request.post_data_json['customer']['phone']==user['phone']
+                assert request.post_data_json['customer']['location']==({'lat':28.41,'lng':45.91} if alternate else point)
                 assert request.post_data_json['customer']['neighborhood']=='حي اختبار'
                 assert request.post_data_json['customer']['address']==''
                 data={'quote':{'subtotal_halalas':1000,'delivery_fee_halalas':500,'total_halalas':1500,'items':[]}}
@@ -98,6 +102,22 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
         expect(page.locator('#address')).to_have_value('')
         expect(page.locator('#clear-location')).to_be_visible()
         expect(page.locator('#checkout-button')).to_be_enabled()
+        page.locator('#other-recipient').check()
+        expect(page.locator('#neighborhood')).to_have_value('')
+        page.locator('#other-name').fill('مستلم اختبار')
+        page.locator('#other-mobile').fill('0500001002')
+        page.locator('#map-url').fill(link+'2')
+        expect(page.locator('#clear-location')).to_be_visible()
+        page.locator('#neighborhood').fill('حي اختبار')
+        expect(page.locator('#checkout-button')).to_be_enabled()
+        page.locator('#checkout-button').click()
+        expect(page.locator('#confirm-content')).to_contain_text('0500001002')
+        assert json.loads(page.evaluate("localStorage.getItem('order-location:kps:synthetic-customer')"))==point
+        page.keyboard.press('Escape')
+        page.locator('#other-recipient').uncheck()
+        expect(page.locator('#map-url')).to_have_value(link)
+        expect(page.locator('#neighborhood')).to_have_value('حي اختبار')
+        page.locator('#manual-location-button').click()
         open_link();expect(page.locator('#map-url')).to_have_value(link)
         page.locator('#map-url').fill('https://maps.app.goo.gl/INVALID-SYNTHETIC')
         expect(page.locator('#map-link-status')).to_have_class('notice error')

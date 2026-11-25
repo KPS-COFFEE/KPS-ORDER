@@ -252,15 +252,25 @@ def test_order_discount_reconciliation_and_historical_immutability(verified_cust
         assert row=={'discount_halalas':100,'total_halalas':900}
 
 
+@pytest.mark.parametrize('alternate_recipient',[False,True])
 @pytest.mark.postgres
-def test_gift_http_order_replay_preserves_buyer_and_denies_recipient_access(verified_customer,monkeypatch):
+def test_gift_http_order_replay_preserves_buyer_and_denies_recipient_access(verified_customer,monkeypatch,alternate_recipient):
     from tests.test_core import _body,_make_user,_authenticate
     from app import fiscal
     client,user=verified_customer
-    enable(monkeypatch,'gift_orders')
-    payload=_body()
+    if not alternate_recipient:
+        enable(monkeypatch,'gift_orders')
+    else:
+        manager=_make_user('delivery_manager', branches=['kps-branch-1'])
+        with db.tx() as c:
+            c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'manager',%s,'kps',%s)",
+                      (db.new_id('ms_'),manager['id'],db.json(['kps-branch-1'])))
+    kind='delivery_recipient' if alternate_recipient else 'gift'
+    payload=_body('delivery' if alternate_recipient else 'pickup')
     payload['customer']['phone']=user['phone']
-    payload['gift']={'recipient_name':'TEST RECIPIENT','recipient_phone':'+966500001099','message':'TEST GIFT ONLY'}
+    payload[kind]={'recipient_name':'TEST RECIPIENT','recipient_phone':'+966500001099'}
+    if not alternate_recipient:
+        payload[kind]['message']='TEST GIFT ONLY'
     headers={'Idempotency-Key':'test-gift-replay-0001'}
     first=client.post('/api/orders',json=payload,headers=headers)
     assert first.status_code==200,first.text
@@ -271,11 +281,13 @@ def test_gift_http_order_replay_preserves_buyer_and_denies_recipient_access(veri
         assert order['customer_id']==user['id']
         assert order['customer']['phone']=='+966500001099'
         assert order['customer']['phone_verified'] is False
-        assert order['snapshot']['gift']['purchaser']['phone']==user['phone']
-        assert 'TEST GIFT ONLY' in order['snapshot']['notes']
+        assert order['snapshot'][kind]['purchaser']['phone']==user['phone']
+        if not alternate_recipient:
+            assert 'TEST GIFT ONLY' in order['snapshot']['notes']
         assert c.execute('SELECT count(*) AS n FROM customer_addresses WHERE customer_id=%s',(user['id'],)).fetchone()['n']==0
     invoice=fiscal.build(order,'TEST-GIFT-INVOICE',datetime.now(timezone.utc))
-    assert invoice['gift_order'] and invoice['buyer']['customer_id']==user['id']
+    assert bool(invoice.get('gift_order')) is not alternate_recipient
+    assert invoice['buyer']['customer_id']==user['id']
     assert invoice['buyer']['phone']==user['phone']
     recipient=_make_user()
     with db.tx() as c:
