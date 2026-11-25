@@ -118,6 +118,10 @@ from . import branch_payments, branch_payment_renewal
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
+from . import interviews
+app.include_router(interviews.router)
+from . import interview_exam
+app.include_router(interview_exam.router)
 from . import fleet_missions, fleet_mission_reports
 app.include_router(fleet_missions.router)
 

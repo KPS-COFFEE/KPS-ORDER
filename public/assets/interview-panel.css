@@ -1,0 +1,14 @@
+@font-face{font-family:Kufi;src:url('/assets/fonts/NotoKufiArabic-Regular.ttf')}@font-face{font-family:Kufi;font-weight:700;src:url('/assets/fonts/NotoKufiArabic-Bold.ttf')}*{box-sizing:border-box}body{margin:0;background:#f4f2eb;color:#173d35;font:16px/1.85 Kufi,sans-serif}main{max-width:850px;margin:auto;padding:24px}section,article,details{background:white;border:1px solid #c7d2c7;border-radius:14px;padding:20px;margin:14px 0}h1,h2,h3{line-height:1.6}label{display:block;margin:12px 0}input,textarea,select,button{font:inherit;color:inherit;border:1px solid #9cac9f;border-radius:8px;padding:8px;width:100%}textarea{min-height:80px}button{width:auto;cursor:pointer;background:#194c40;color:white;margin:4px}summary{cursor:pointer}#live{display:block;background:#eef5ea;padding:14px}#status{position:sticky;top:0;background:#fff5d7}a{color:#194c40}@media(max-width:600px){main{padding:12px}section,article,details{padding:12px}h1{font-size:25px}}
+
+#groupRooms{border:1px solid #c7d2c7;border-radius:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+#groupRooms label{padding:8px;margin:0;background:#f4f7f3;border-radius:8px}
+#groupRooms input{width:auto}#groupLinks input{direction:ltr}
+#card>span{color:#456459}#branch{border-inline-start:4px solid #397a65;background:#f4f8f4}
+#question{margin-top:4px}#follow,#expected{margin-top:2px}
+
+#tasks fieldset{min-inline-size:0;padding:12px;border:1px solid #c7d2c7;border-radius:10px}
+#tasks legend{max-width:100%;font-weight:700;line-height:1.7}
+#tasks fieldset label{display:flex;align-items:flex-start;gap:10px;min-height:48px;padding:10px;border:1px solid #bdcabe;border-radius:8px;cursor:pointer}
+#tasks fieldset label:has(:checked){background:#e5f1e9;border-color:#397a65}
+#tasks input[type=radio]{flex:none;margin-top:8px;accent-color:#194c40}
+@media(max-width:600px){#work #send,#identify button,#intro button{width:100%;min-height:48px;margin:6px 0}}
