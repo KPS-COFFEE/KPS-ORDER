@@ -12,7 +12,7 @@ from .staff_geo_access import _target
 
 router = APIRouter()
 BASE = Path(__file__).resolve().parent
-DEADLINE = '2026-11-28T19:00:00Z'
+DEADLINE = '2026-11-28T20:00:00Z'
 
 
 def panel(c, user, *, lock=False):
